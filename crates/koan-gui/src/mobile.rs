@@ -97,6 +97,8 @@ struct SearchPage {
     _typed: Subscription,
 }
 
+type SleeveFlight = (Option<i64>, Bounds<Pixels>, transport::Flight, Task<()>);
+
 pub struct PhoneShell {
     nav: Entity<Navigator>,
     queue: Entity<QueueView>,
@@ -132,7 +134,7 @@ pub struct PhoneShell {
     now_playing: Option<(Entity<Transport>, Subscription, Subscription)>,
     /// The mini player's sleeve growing into Now Playing's art as it opens:
     /// the record, where it left, and how the page says where it goes.
-    flight: Option<(Option<i64>, Bounds<Pixels>, transport::Flight, Task<()>)>,
+    flight: Option<SleeveFlight>,
     /// A track's details over everything, while they are asked for: from a
     /// row's menu or Now Playing's title.
     info: Option<(i64, Entity<crate::library::info::TrackInfo>)>,
