@@ -144,6 +144,8 @@ pub struct PhoneShell {
     search: Option<SearchPage>,
     /// An import stopped on a question, as last drawn.
     import_asking: bool,
+    activity_shown: bool,
+    activity_leaving: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -218,13 +220,35 @@ impl PhoneShell {
                     }
                 })
             },
-            // The activity card comes and goes with what is under way.
+            // The activity card comes with what is under way, and fades out
+            // still saying it when that ends.
             {
                 let activity = cx
                     .global::<crate::library::activity::ActivityHandle>()
                     .0
                     .clone();
-                cx.observe(&activity, |_, _, cx| cx.notify())
+                cx.observe(&activity, |this, activity, cx| {
+                    let shows = activity.read(cx).shows(cx);
+                    let was = std::mem::replace(&mut this.activity_shown, shows);
+                    if shows {
+                        this.activity_leaving = None;
+                        activity.update(cx, |a, _| a.holding = false);
+                    } else if was && crate::theme::KoanTheme::motion_allowed(cx) {
+                        activity.update(cx, |a, _| a.holding = true);
+                        this.activity_leaving = Some(cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(crate::components::FadeIn::LEAVE)
+                                .await;
+                            this.update(cx, |this, cx| {
+                                this.activity_leaving = None;
+                                activity.update(cx, |a, _| a.holding = false);
+                                cx.notify();
+                            })
+                            .ok();
+                        }));
+                    }
+                    cx.notify()
+                })
             },
         ];
         Self {
@@ -238,6 +262,8 @@ impl PhoneShell {
             search: None,
             eq_watch: None,
             import_asking: false,
+            activity_shown: false,
+            activity_leaving: None,
             info: None,
             push: crate::components::Push::new(),
             elastic: crate::components::Elastic::new(),
@@ -952,6 +978,7 @@ impl Render for PhoneShell {
                 )
             });
         }
+        let leaving = self.activity_leaving.is_some();
         let activity = cx
             .global::<crate::library::activity::ActivityHandle>()
             .0
@@ -1066,7 +1093,7 @@ impl Render for PhoneShell {
                     // What the library is busy with, floating over the foot of
                     // every page while anything runs, as the iOS app has it:
                     // the sidebar foot that holds it on the desktop is gone.
-                    .children(activity.read(cx).shows(cx).then(|| {
+                    .children((activity.read(cx).shows(cx) || leaving).then(|| {
                         let card = crate::components::Shifted::new(
                             "activity-card",
                             Point::new(Pixels::ZERO, p.look.space(crate::theme::Space::Xl)),
@@ -1084,7 +1111,10 @@ impl Render for PhoneShell {
                                 crate::components::foot_inset(window, cx)
                                     + p.space(crate::theme::Space::S),
                             )
-                            .child(crate::components::FadeIn::new("activity-card-in", card))
+                            .child(
+                                crate::components::FadeIn::new("activity-card-in", card)
+                                    .leaving(leaving),
+                            )
                     })),
             )
             // The foot over the page: the mini player, its playhead along the

@@ -60,16 +60,28 @@ pub struct FadeIn {
     id: ElementId,
     child: AnyElement,
     fill: bool,
+    leaving: bool,
 }
 
 impl FadeIn {
+    /// How long something told it is `leaving` takes to go.
+    pub const LEAVE: std::time::Duration = Motion::LEAVE;
+
     /// `id` names the arrival: the fade runs once per id.
     pub fn new(id: impl Into<ElementId>, child: impl IntoElement) -> Self {
         Self {
             id: id.into(),
             child: child.into_any_element(),
             fill: false,
+            leaving: false,
         }
+    }
+
+    /// Fading back out, on the GPU, for its owner to stop drawing it `LEAVE`
+    /// later; told otherwise before then, it comes back from where it got to.
+    pub fn leaving(mut self, leaving: bool) -> Self {
+        self.leaving = leaving;
+        self
     }
 
     /// As large as what holds it, for content that fills its parent (a
@@ -93,6 +105,10 @@ impl RenderOnce for FadeIn {
         }
         if SHADED {
             let animated = arrival(self.id, false, window, cx);
+            let opacity = if self.leaving { 0.0 } else { 1.0 };
+            if animated.track(0).to != opacity {
+                animated.to(0, opacity, Self::LEAVE, Ease::InOut);
+            }
             return div()
                 .flex_none()
                 .when(fill, |d| d.size_full())
