@@ -46,6 +46,16 @@ const TABS: [(Route, &str, Icon); 4] = [
     (Route::SearchTab, "search", Icon::Search),
 ];
 
+/// The phone tab a page belongs to, by its root.
+fn tab_root(route: Route) -> Route {
+    match route {
+        Route::Queue => Route::Queue,
+        Route::Settings | Route::SettingsSection(_) => Route::Settings,
+        Route::Search | Route::SearchTab => Route::SearchTab,
+        _ => Route::Library,
+    }
+}
+
 /// The touch shell, for what opens a window on a desktop (Settings, EQ, a
 /// link Settings answers) to open its screen instead.
 struct Screens(WeakEntity<TouchShell>);
@@ -193,9 +203,14 @@ impl TouchShell {
             slot.show(&queue, QueueView::controls, cx);
             slot
         });
+        // The layout the window opens at, before its first draw: links
+        // answered at launch take this shell's way to Settings.
+        let compact = crate::theme::Look::of(window, cx).compact;
         let transport = cx.new(|cx| {
             let mut transport = Transport::new(&nav, window, cx);
-            transport.set_form(transport::Form::Mini, cx);
+            if compact {
+                transport.set_form(transport::Form::Mini, cx);
+            }
             transport
         });
         window.focus(&queue.focus_handle(cx), cx);
@@ -297,23 +312,16 @@ impl TouchShell {
             settings: None,
             search: None,
             wants_search: false,
-            compact: true,
+            compact,
             focus: cx.focus_handle(),
             arrived_at: Route::Queue,
             sidebar: None,
             sidebar_shown: crate::window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
-            sidebar_width: f32::from_bits(
-                crate::window_state::SIDEBAR_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
-            )
-            .into(),
+            sidebar_width: crate::window_state::sidebar_width(),
             lyrics: None,
             lyrics_shown: false,
             lyrics_slide: Default::default(),
-            lyrics_width: Some(f32::from_bits(
-                crate::window_state::LYRICS_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
-            ))
-            .filter(|w| *w > 0.0)
-            .map(Pixels::from),
+            lyrics_width: crate::window_state::lyrics_width(),
             eq_watch: None,
             import_asking: false,
             activity_shown: false,
@@ -522,7 +530,10 @@ impl TouchShell {
     fn see_push(&mut self, cx: &mut Context<Self>) {
         let nav = self.nav.read(cx);
         let now = (nav.tab(), nav.current());
+        // A tablet's sidebar and Settings sections replace the page in
+        // place, as the desktop's do; only a phone's tab slides a page in.
         if let Some(was) = self.seen
+            && self.compact
             && was.0 == now.0
             && was.1 != now.1
             && nav.behind() == Some(was.1)
@@ -645,13 +656,7 @@ impl TouchShell {
         }
         match route {
             Route::Settings | Route::SettingsSection(_) if !self.compact => {
-                // A section the route names (a link, back and forward, a
-                // phone's push carried across) is the pane beside the list.
-                if let Route::SettingsSection(tab) = route {
-                    let settings = self.settings(window, cx);
-                    settings.update(cx, |s, cx| s.choose(tab, window, cx));
-                }
-                self.settings_split(window, cx)
+                self.settings_split(route, window, cx)
             }
             Route::Queue => self.queue.clone().cached(full()).into_any_element(),
             Route::Library => self.sections(cx),
@@ -728,16 +733,24 @@ impl TouchShell {
     /// as a page slides in or is swiped back: `root` when the page is its
     /// tab's first, `live` for the page in front, whose controls are the
     /// ones shown (the page under a swipe draws its name and back alone).
-    fn bar(&self, route: Route, root: bool, live: bool, cx: &mut Context<Self>) -> Toolbar {
+    fn bar(
+        &self,
+        route: Route,
+        root: bool,
+        live: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Toolbar {
+        let unnamed = !self.compact && !self.sidebar_showing(window);
         // Named where the page has no heading of its own, or where its heading
         // scrolls away with its rows.
         let title = match route {
             // A tablet's sidebar names the page; only what has no row there
             // says what it is, and what the sidebar names once it is hidden.
             Route::Settings | Route::SettingsSection(_) if !self.compact => Some("settings"),
-            Route::Queue if !self.compact && !self.sidebar_shown => Some("queue"),
-            Route::History if !self.compact && !self.sidebar_shown => Some("history"),
-            Route::Downloads if !self.compact && !self.sidebar_shown => Some("downloads"),
+            Route::Queue if unnamed => Some("queue"),
+            Route::History if unnamed => Some("history"),
+            Route::Downloads if unnamed => Some("downloads"),
             Route::Albums | Route::Artists | Route::Tracks if !self.compact => None,
             Route::SearchTab => Some("search"),
             Route::Library => Some("library"),
@@ -810,15 +823,12 @@ impl TouchShell {
         self.now_playing = None;
         // A tablet has Settings as one page, its section chosen within it.
         if !self.compact {
+            let route = tab.map_or(Route::Settings, Route::SettingsSection);
             self.nav.update(cx, |nav, cx| {
-                if nav.go(Route::Settings) {
+                if nav.go(route) {
                     cx.notify();
                 }
             });
-            if let Some(tab) = tab {
-                let settings = self.settings(window, cx);
-                settings.update(cx, |s, cx| s.choose(tab, window, cx));
-            }
             return;
         }
         let at = TABS
@@ -1011,6 +1021,13 @@ impl TouchShell {
         if compact {
             self.lyrics_shown = false;
             self.lyrics = None;
+            // The tablet's one history becomes the page showing under the
+            // tab it belongs to, so the tab bar names where the page is.
+            self.nav.update(cx, |nav, _| {
+                let root = tab_root(nav.current());
+                let tab = TABS.iter().position(|(r, ..)| *r == root).unwrap_or(0);
+                nav.adopt(tab, root);
+            });
         } else {
             self.now_playing = None;
             self.closing = None;
@@ -1033,7 +1050,9 @@ impl TouchShell {
                     .iter()
                     .position(|(root, ..)| *root == Route::SearchTab)
                     .unwrap_or(0);
-                if nav.tab() != at {
+                // Back to the field from a page the results opened, so it is
+                // drawn and takes the keys now rather than on a later return.
+                if nav.tab() != at || !nav.at_root() {
                     nav.switch(at, Route::SearchTab);
                 }
             } else {
@@ -1239,7 +1258,7 @@ impl Render for TouchShell {
                 .map(|behind| (behind, nav.history_ix() == 1))
         };
         let under = behind.map(|(behind, behind_root)| {
-            let bar = self.bar(behind, behind_root, false, cx);
+            let bar = self.bar(behind, behind_root, false, window, cx);
             let page = self.under(behind, window, cx);
             under_bar(bar, page, None, false, insets.top)
         });
@@ -1252,7 +1271,7 @@ impl Render for TouchShell {
                 .child(self.banner.clone())
                 .child(self.output_wait.clone());
             under_bar(
-                self.bar(route, root, true, cx),
+                self.bar(route, root, true, window, cx),
                 stage,
                 Some(notices),
                 true,

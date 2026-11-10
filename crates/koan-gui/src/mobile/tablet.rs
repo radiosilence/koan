@@ -83,14 +83,25 @@ impl TouchShell {
     /// a section is one tap from any other.
     pub(super) fn settings_split(
         &mut self,
+        route: Route,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = Paint::of(window, cx);
         let settings = self.settings(window, cx);
         let tabs = settings.read(cx).tabs(cx);
-        // Settings opens on a section this device may not offer.
-        if !tabs.contains(&settings.read(cx).tab())
+        // The section the route names (a link, back and forward, a phone's
+        // push carried across), which Settings may show before the server
+        // has said it offers it; else the one last shown, if this device
+        // offers it. Only a section Settings refuses falls back to the
+        // first, so the two never take turns.
+        let last = settings.read(cx).tab();
+        let wanted = match route {
+            Route::SettingsSection(tab) => tab,
+            _ if tabs.contains(&last) => last,
+            _ => tabs.first().copied().unwrap_or(last),
+        };
+        if !settings.update(cx, |s, cx| s.choose(wanted, window, cx))
             && let Some(first) = tabs.first().copied()
         {
             settings.update(cx, |s, cx| s.choose(first, window, cx));
@@ -166,29 +177,24 @@ impl TouchShell {
         );
         let sidebar = self.sidebar(cx);
         let showing = self.sidebar_showing(window);
-        let foot = {
-            let transport = self.transport.clone();
-            move || {
-                div()
-                    .id("tablet-foot")
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .right_0()
-                    .occlude()
-                    .pb(insets.bottom)
-                    .child(crate::components::Frost::foot())
-                    .child(crate::components::foot_probe())
-                    .child(
-                        transport.clone().cached(
-                            StyleRefinement::default()
-                                .w_full()
-                                .h(transport::HEIGHT)
-                                .flex_shrink_0(),
-                        ),
-                    )
-            }
-        };
+        let foot = div()
+            .id("tablet-foot")
+            .absolute()
+            .bottom_0()
+            .left_0()
+            .right_0()
+            .occlude()
+            .pb(insets.bottom)
+            .child(crate::components::Frost::foot())
+            .child(crate::components::foot_probe())
+            .child(
+                self.transport.clone().cached(
+                    StyleRefinement::default()
+                        .w_full()
+                        .h(transport::HEIGHT)
+                        .flex_shrink_0(),
+                ),
+            );
         let lyrics = Slide::new(
             "lyrics-slide",
             &self.lyrics_slide,
@@ -205,14 +211,7 @@ impl TouchShell {
             cx.notify();
         }))
         .on_commit(cx.listener(move |this, width: &Pixels, window, cx| {
-            // The reset width is no width of the person's: it follows the
-            // text size.
-            this.lyrics_width = (*width != inspector).then_some(*width);
-            window_state::LYRICS_WIDTH.store(
-                this.lyrics_width.map_or(0.0, f32::from).to_bits(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            window_state::save(window.window_bounds(), cx);
+            this.lyrics_width = window_state::keep_lyrics_width(*width, inspector, window, cx);
         }))
         .when_some(self.lyrics.clone(), |slide, lyrics| {
             slide.child(
@@ -242,11 +241,10 @@ impl TouchShell {
                         .flex()
                         .flex_col()
                         .when(!washed, |d| d.bg(p.bg))
-                        // Clear of the status bar at the top, and at the foot
-                        // of the transport or the home indicator, whichever
-                        // this column reaches.
+                        // Clear of the status bar at the top and of the
+                        // transport at the foot.
                         .pt(insets.top + p.space(Space::S))
-                        .pb(if washed { foot_inset } else { insets.bottom })
+                        .pb(foot_inset)
                         .child(
                             div()
                                 .id("sidebar-region")
@@ -263,32 +261,27 @@ impl TouchShell {
                         ),
                 )
                 .trailing(
-                    div()
-                        .relative()
-                        .size_full()
-                        .child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .flex()
-                                .child(div().relative().flex_1().min_w_0().h_full().child(pages))
-                                .child(div().h_full().pt(bar_inset).pb(foot_inset).child(lyrics)),
-                        )
-                        .when(!washed, |d| d.child(foot())),
+                    div().relative().size_full().child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .child(div().relative().flex_1().min_w_0().h_full().child(pages))
+                            .child(div().h_full().pt(bar_inset).pb(foot_inset).child(lyrics)),
+                    ),
                 )
                 .on_resize(cx.listener(|this, width: &Pixels, _, cx| {
                     this.sidebar_width = *width;
                     cx.notify();
                 }))
                 .on_commit(|width: &Pixels, window, cx| {
-                    window_state::SIDEBAR_WIDTH.store(
-                        f32::from(*width).to_bits(),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    window_state::save(window.window_bounds(), cx);
+                    window_state::keep_sidebar_width(*width, window, cx)
                 }),
             )
-            .when(washed, |d| d.child(foot()))
+            // Under both columns whether or not the window is washed: a
+            // tablet's page column alone is too narrow for the bar to keep
+            // the record's name beside its controls.
+            .child(foot)
             .into_any_element()
     }
 }

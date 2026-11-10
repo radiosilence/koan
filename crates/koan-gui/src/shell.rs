@@ -178,10 +178,7 @@ impl Shell {
             downloads: None,
             koan_menu: crate::components::MenuSlot::default(),
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
-            sidebar_width: f32::from_bits(
-                window_state::SIDEBAR_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
-            )
-            .into(),
+            sidebar_width: window_state::sidebar_width(),
             arrived_at: Route::Queue,
             _arrivals: arrivals,
             _activation: activation,
@@ -192,11 +189,7 @@ impl Shell {
             lyrics: None,
             lyrics_shown: false,
             lyrics_slide: Default::default(),
-            lyrics_width: Some(f32::from_bits(
-                window_state::LYRICS_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
-            ))
-            .filter(|w| *w > 0.0)
-            .map(Pixels::from),
+            lyrics_width: window_state::lyrics_width(),
             _asking: {
                 let asking = ask::asking(cx);
                 cx.observe(&asking, |_, _, cx| cx.notify())
@@ -864,18 +857,10 @@ impl Render for Shell {
                                             ))
                                             .on_commit(cx.listener(
                                                 move |this, width: &Pixels, window, cx| {
-                                                    // The reset width is no
-                                                    // width of the person's: it
-                                                    // follows the text size.
                                                     this.lyrics_width =
-                                                        (*width != inspector).then_some(*width);
-                                                    window_state::LYRICS_WIDTH.store(
-                                                        this.lyrics_width
-                                                            .map_or(0.0, f32::from)
-                                                            .to_bits(),
-                                                        std::sync::atomic::Ordering::Relaxed,
-                                                    );
-                                                    window_state::save(window.window_bounds(), cx);
+                                                        window_state::keep_lyrics_width(
+                                                            *width, inspector, window, cx,
+                                                        );
                                                 },
                                             ))
                                             .when_some(self.lyrics.clone(), |slide, lyrics| {
@@ -917,11 +902,7 @@ impl Render for Shell {
                         cx.notify();
                     }))
                     .on_commit(|width: &Pixels, window, cx| {
-                        window_state::SIDEBAR_WIDTH.store(
-                            f32::from(*width).to_bits(),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        window_state::save(window.window_bounds(), cx);
+                        window_state::keep_sidebar_width(*width, window, cx)
                     }),
                 ),
             )

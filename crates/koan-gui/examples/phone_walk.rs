@@ -231,7 +231,10 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     if let Some(artist) = tracks.iter().find_map(|t| t.artist_id) {
         steps.push(page("artist", Route::Artist(artist)));
     }
-    steps.push(("now-playing".into(), Step::NowPlaying));
+    // A tablet has the transport bar and no Now Playing screen.
+    if width() < f32::from(koan_kit::theme::COMPACT_WIDTH) {
+        steps.push(("now-playing".into(), Step::NowPlaying));
+    }
     if !ids.is_empty() {
         steps.push(("queue-pick".into(), Step::QueuePick));
         steps.push(("playlist-sheet".into(), Step::PlaylistSheet(ids)));
