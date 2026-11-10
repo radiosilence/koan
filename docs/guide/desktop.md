@@ -115,7 +115,7 @@ History lists every play, most recent first, under a heading per day, with the t
 
 | Key | Does |
 |---|---|
-| Return | With nothing lit, or "All results…", every result on a page of its own, whose headings open each kind's whole listing; on a result, go to it: a record or an artist to its page, a track to its record's page with the track selected |
+| Return | With nothing lit, or "All results…", every result on a page of its own, whose headings open each kind's whole listing; on a result, a record or an artist opens its page and a track plays, with the other tracks listed after it |
 | ↑ ↓ | Light a result, or "All results…" after the last |
 | ⌘Return | Play next |
 | ⌥Return | Add to the queue |
@@ -124,7 +124,7 @@ History lists every play, most recent first, under a heading per day, with the t
 | ⇧Return | Every result, from anywhere in the list |
 | Escape | Clear the ticks, then empty the query, then close the box |
 
-Choosing a result never plays it: only ⌘Return, ⌥Return and ⇧⌘Return do. A click on a result does what Return does, and ⌘-click ticks it.
+A click on a result does what Return does, and ⌘-click ticks it.
 
 ## Lyrics, track info and artwork
 
