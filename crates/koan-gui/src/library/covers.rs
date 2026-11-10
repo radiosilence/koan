@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use futures::channel::mpsc;
 use koan_kit::app::image::{RenderImage, Rgba};
+use koan_kit::app::platform::AppLifecyclePhase;
 use koan_kit::app::*;
 use koan_runtime::KoanEngine;
 use parking_lot::{Condvar, Mutex};
