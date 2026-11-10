@@ -499,6 +499,11 @@ impl PhoneShell {
     /// The page under a swipe back: the library's made ahead and kept to be
     /// the page, the shell's own drawn as they are.
     fn under(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        // Settings draws one section at a time, the one in front: asked for
+        // this one as well, the two would take it from each other each draw.
+        if matches!(route, Route::SettingsSection(_)) {
+            return div().into_any_element();
+        }
         let full = || StyleRefinement::default().size_full();
         if LibraryStage::draws(route) {
             let view = self
@@ -604,6 +609,11 @@ impl PhoneShell {
                             )
                             .icon(tab.icon())
                             .on_click(move |_, window, cx| {
+                                // A second row tapped as the first slides in
+                                // would stack one section on another.
+                                if !nav.read(cx).at_root() {
+                                    return;
+                                }
                                 settings.update(cx, |s, cx| s.choose(tab, window, cx));
                                 nav.update(cx, |nav, cx| {
                                     if nav.go(Route::SettingsSection(tab)) {
