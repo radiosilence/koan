@@ -451,7 +451,7 @@ pub fn create_account(
 }
 
 /// `username` trimmed, or why it cannot name an account.
-fn valid_username(username: &str) -> Result<&str, AccountError> {
+pub fn valid_username(username: &str) -> Result<&str, AccountError> {
     let username = username.trim();
     if username.is_empty()
         || username.chars().count() > MAX_USERNAME

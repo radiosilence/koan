@@ -90,6 +90,7 @@ impl DownloadsPage {
     fn header(&self, settled: usize, cx: &mut Context<Self>) -> PageHeader {
         let used = self.cache.read(cx).0;
         let detail = match self.limit {
+            _ if used == 0 => "nothing cached".to_string(),
             // A limit of nothing keeps only what is playing and next.
             Some(0) => format!("{} cached, kept only while needed", bytes(used)),
             Some(limit) => format!("{} cached of {}", bytes(used), bytes(limit)),

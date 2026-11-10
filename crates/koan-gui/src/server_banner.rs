@@ -9,12 +9,14 @@
 use koan_kit::app::*;
 use koan_runtime::ServerStanding;
 
-use crate::components::Banner;
+use crate::components::{Banner, Hang};
 use crate::mirror::Mirror;
 use crate::theme::{Icon, Tone};
 
 pub struct ServerBanner {
     standing: ServerStanding,
+    /// What was showing while it goes back up behind the bar.
+    leaving: Option<(ServerStanding, Task<()>)>,
     _connection: Subscription,
 }
 
@@ -30,10 +32,23 @@ impl ServerBanner {
         };
         Self {
             standing: standing(&connection, cx),
+            leaving: None,
             _connection: cx.observe(&connection, move |this, connection, cx| {
                 let now = standing(&connection, cx);
                 if now != this.standing {
-                    this.standing = now;
+                    let was = std::mem::replace(&mut this.standing, now);
+                    let moves = crate::theme::KoanTheme::motion_allowed(cx);
+                    this.leaving = (now == ServerStanding::Fine && moves).then(|| {
+                        let done = cx.spawn(async |this, cx| {
+                            cx.background_executor().timer(Hang::LEAVE).await;
+                            this.update(cx, |this, cx| {
+                                this.leaving = None;
+                                cx.notify();
+                            })
+                            .ok();
+                        });
+                        (was, done)
+                    });
                     cx.notify();
                 }
             }),
@@ -43,13 +58,14 @@ impl ServerBanner {
 
 impl Render for ServerBanner {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let message = match self.standing {
+        let leaving = self.leaving.as_ref().map(|(was, _)| *was);
+        let message = match leaving.unwrap_or(self.standing) {
             ServerStanding::Fine => return div().into_any_element(),
             ServerStanding::SignedOut => "Signed out of your server",
             ServerStanding::Refused => "Your server refused kōan's sign-in",
             ServerStanding::Unreachable => "Can't reach your server. kōan keeps trying.",
         };
-        let unreachable = self.standing == ServerStanding::Unreachable;
+        let unreachable = leaving.unwrap_or(self.standing) == ServerStanding::Unreachable;
         let banner = Banner::new(
             if unreachable {
                 Icon::Offline
@@ -59,11 +75,13 @@ impl Render for ServerBanner {
             message,
             Tone::Bad,
         );
-        if unreachable {
-            return banner.into_any_element();
-        }
-        banner
-            .action("sign in", |_, _, cx| crate::settings::open_server(cx))
+        let banner = if unreachable {
+            banner
+        } else {
+            banner.action("sign in", |_, _, cx| crate::settings::open_server(cx))
+        };
+        Hang::new(banner)
+            .leaving(leaving.is_some())
             .into_any_element()
     }
 }

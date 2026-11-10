@@ -27,7 +27,7 @@ pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
 
 #[path = "transport_phone.rs"]
 mod phone;
-pub use phone::{Collapse, Expand, Form, MINI_HEIGHT, ShowInfo};
+pub use phone::{Collapse, Expand, Flight, Form, MINI_HEIGHT, SLEEVE, ShowInfo};
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
@@ -93,6 +93,8 @@ pub struct Transport {
     returning: Option<Task<()>>,
     /// How far a finger has pushed the mini player up, while it does.
     lift: Option<Pixels>,
+    /// Now Playing's art, while the mini player's sleeve grows into it.
+    pub(crate) flight: Option<phone::Flight>,
     _subscriptions: [Subscription; 8],
 }
 
@@ -212,20 +214,27 @@ impl Transport {
                         cx.notify();
                     }
                 }),
-                // Redrawn when its own sleeve lands, not for every sleeve the
-                // queue fetches as it scrolls.
+                // Redrawn when its own sleeve lands, or when the cache has
+                // dropped the one shown from the GPU, not for every sleeve
+                // the queue fetches as it scrolls.
                 cx.observe(&covers, |this, _, cx| {
-                    if !matches!(this.cover, CoverArt::Image(_)) {
-                        let album = this
-                            .playback
-                            .read(cx)
-                            .0
-                            .entry
-                            .as_ref()
-                            .and_then(|e| e.album_id);
-                        if covers::image(album, COVER, this.scale, cx).is_some() {
-                            cx.notify();
+                    let album = this
+                        .playback
+                        .read(cx)
+                        .0
+                        .entry
+                        .as_ref()
+                        .and_then(|e| e.album_id);
+                    let held = covers::image(album, COVER, this.scale, cx);
+                    let moved = match (&this.cover, &held) {
+                        (CoverArt::Image(shown), Some(held)) => {
+                            !std::sync::Arc::ptr_eq(shown, held)
                         }
+                        (CoverArt::Image(_), None) => true,
+                        (_, held) => held.is_some(),
+                    };
+                    if moved {
+                        cx.notify();
                     }
                 }),
                 // Shuffle and repeat are underlined in the accent.
@@ -271,6 +280,7 @@ impl Transport {
             pulled: crate::components::Follow::new(),
             returning: None,
             lift: None,
+            flight: None,
         };
         this.reload_eq(cx);
         this

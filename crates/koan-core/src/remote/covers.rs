@@ -262,7 +262,8 @@ fn keep_on(cfg: &Config, server: &str, id: &str, size: Option<u32>, data: &[u8],
         log::warn!("artwork directory {}: {e}", dir.display());
         return;
     }
-    let tmp = path.with_extension("part");
+    // Named apart: the preload and a page's fetch can keep one cover at once.
+    let tmp = path.with_extension(format!("{}.part", uuid::Uuid::now_v7()));
     let replaced = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     let written = std::fs::write(&tmp, data).and_then(|()| std::fs::rename(&tmp, &path));
     match written {

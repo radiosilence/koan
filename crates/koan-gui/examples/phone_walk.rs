@@ -52,6 +52,10 @@ fn height() -> f32 {
 enum Step {
     Page(Route),
     NowPlaying,
+    /// The queue while picking: ticks and the selection bar.
+    QueuePick,
+    /// The "add to playlist" sheet.
+    PlaylistSheet(Vec<i64>),
     /// A page swiped back to the page under it: pictured part way, and
     /// the settle after the release counted for the frames it asks for.
     SwipeBack(Route),
@@ -93,6 +97,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     cx.update(|cx| {
         theme::init(cx);
         theme::KoanTheme::set_touch(true, cx);
+        // Every page as it stands, none caught part way through arriving.
+        cx.set_reduce_motion(true);
         app::install(&engine, cx);
         koan_gui::library::bind_keys(cx);
     });
@@ -129,6 +135,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             Step::Page(route) => cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx))),
             Step::NowPlaying => cx.update_window(window, |_, window, cx| {
                 shell.update(cx, |s, cx| s.open_now_playing(window, cx))
+            })?,
+            Step::QueuePick => {
+                cx.update(|cx| shell.update(cx, |s, cx| s.show(Route::Queue, cx)));
+                settle(&mut cx, window)?;
+                cx.update(|cx| shell.update(cx, |s, cx| s.walk_queue_pick(cx)));
+            }
+            Step::PlaylistSheet(tracks) => cx.update_window(window, |_, window, cx| {
+                shell.update(cx, |s, cx| s.walk_playlist_sheet(tracks, window, cx))
             })?,
             Step::SwipeBack(_) | Step::Across(_) => unreachable!(),
         }
@@ -183,7 +197,7 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
         page("settings", Route::Settings),
     ];
     // Each Settings section a phone offers; those that need a signed-in
-    // server show what they show without one.
+    // server go back to Settings without one.
     {
         use koan_gui::settings::Tab;
         for (name, tab) in [
@@ -204,7 +218,7 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     if !ids.is_empty() {
         block_on(engine.clone().replace_queue(ids.clone(), None, false))?;
         block_on(engine.clone().pause())?;
-        let playlist = block_on(engine.clone().create_playlist("Walk".into(), ids))?;
+        let playlist = block_on(engine.clone().create_playlist("Walk".into(), ids.clone()))?;
         steps.push(page("playlist", Route::Playlist(playlist.id)));
     }
     if let Some(album) = tracks.iter().find_map(|t| t.album_id) {
@@ -218,6 +232,10 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
         steps.push(page("artist", Route::Artist(artist)));
     }
     steps.push(("now-playing".into(), Step::NowPlaying));
+    if !ids.is_empty() {
+        steps.push(("queue-pick".into(), Step::QueuePick));
+        steps.push(("playlist-sheet".into(), Step::PlaylistSheet(ids)));
+    }
     Ok(steps)
 }
 

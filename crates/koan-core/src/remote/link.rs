@@ -1415,7 +1415,10 @@ impl wire::Session for LinkSession<'_> {
         let envelope = match crate::remote::acks::Envelope::parse(text) {
             Ok(envelope) => envelope,
             Err(e) => {
-                log::warn!("link: not a command ({e}): {text}");
+                log::warn!(
+                    "link: not a command ({e}): {}",
+                    crate::helpers::truncate_bytes(text, 200)
+                );
                 crate::remote::acks::refuse_unread(text, |ack, outcome| {
                     report(LinkReport::Received { ack });
                     report(LinkReport::Ack { ack, outcome });

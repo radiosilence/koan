@@ -121,6 +121,10 @@ pub fn parse_lrc(content: &str) -> Vec<LrcLine> {
             let mins: f64 = tag[..colon].parse().ok()?;
             let secs: f64 = tag[colon + 1..].parse().ok()?;
             let time_secs = mins * 60.0 + secs;
+            // `parse` takes "inf", "nan" and exponents; no line is sung then.
+            if !time_secs.is_finite() || time_secs < 0.0 {
+                return None;
+            }
 
             Some(LrcLine { time_secs, text })
         })

@@ -65,6 +65,10 @@ pub struct Activity {
     last_sync: Option<SyncProgress>,
     /// The last task's failure, until another starts.
     problem: Option<SharedString>,
+    /// The rows last drawn, and whether to go on drawing them with nothing
+    /// under way: a phone's card fading out still shows what it said.
+    drawn: Vec<Row>,
+    pub holding: bool,
     _watch: [Subscription; 4],
 }
 
@@ -84,6 +88,8 @@ pub fn init(cx: &mut App) {
             syncing: 0,
             last_sync: None,
             problem: None,
+            drawn: Vec::new(),
+            holding: false,
             _watch: [
                 cx.observe(&tasks, |this: &mut Activity, tasks, cx| {
                     if this.syncing == 0 && !tasks.read(cx).0.syncing {
@@ -377,6 +383,7 @@ impl Activity {
     }
 }
 
+#[derive(Clone)]
 struct Row {
     id: &'static str,
     label: SharedString,
@@ -465,7 +472,12 @@ impl Render for Activity {
         // On a phone the rows sit in a card that pads them.
         let look = crate::theme::Look::of(window, cx);
         let flush = look.touch;
-        let rows = self.rows(cx);
+        let mut rows = self.rows(cx);
+        if rows.is_empty() && self.holding {
+            rows = self.drawn.clone();
+        } else if !rows.is_empty() {
+            self.drawn = rows.clone();
+        }
         if rows.is_empty() && self.problem.is_none() {
             return div().into_any_element();
         }

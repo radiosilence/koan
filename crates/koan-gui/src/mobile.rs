@@ -108,6 +108,8 @@ struct SearchPage {
     _typed: Subscription,
 }
 
+type SleeveFlight = (Option<i64>, Bounds<Pixels>, transport::Flight, Task<()>);
+
 pub struct TouchShell {
     nav: Entity<Navigator>,
     queue: Entity<QueueView>,
@@ -126,12 +128,16 @@ pub struct TouchShell {
     /// The page in front over the page under it, moved on the GPU: by a
     /// swipe from the edge, a page pushed, or back by the bar's button.
     push: crate::components::Push,
+    /// The page in front's ends: pans past them pull it, flings bounce off.
+    elastic: crate::components::Elastic,
     /// The page under is drawn, while a swipe or a settle moves the push.
     pushing: bool,
     /// A finger is on the swipe from the edge.
     swiping: bool,
     /// A push let go, easing the rest of the way: lands when it fires.
     settle: Option<Task<()>>,
+    /// The settle under way ends in a back.
+    backing: bool,
     /// Now Playing going back down: lets it go once it is down.
     closing: Option<Task<()>>,
     /// The tab and page last drawn, so a move forward is seen and slid in.
@@ -139,6 +145,9 @@ pub struct TouchShell {
     /// Now Playing over everything, while it is open: a transport of its own
     /// in its full form, made on opening and let go on closing.
     now_playing: Option<(Entity<Transport>, Subscription, Subscription)>,
+    /// The mini player's sleeve growing into Now Playing's art as it opens:
+    /// the record, where it left, and how the page says where it goes.
+    flight: Option<SleeveFlight>,
     /// A track's details over everything, while they are asked for: from a
     /// row's menu or Now Playing's title.
     info: Option<(i64, Entity<crate::library::info::TrackInfo>)>,
@@ -168,6 +177,10 @@ pub struct TouchShell {
     lyrics_width: Option<Pixels>,
     /// An import stopped on a question, as last drawn.
     import_asking: bool,
+    activity_shown: bool,
+    /// What each page has been scrolled by since it last stood at its top.
+    travel: std::collections::HashMap<(usize, Route), f32>,
+    activity_leaving: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -243,13 +256,35 @@ impl TouchShell {
                     }
                 })
             },
-            // The activity card comes and goes with what is under way.
+            // The activity card comes with what is under way, and fades out
+            // still saying it when that ends.
             {
                 let activity = cx
                     .global::<crate::library::activity::ActivityHandle>()
                     .0
                     .clone();
-                cx.observe(&activity, |_, _, cx| cx.notify())
+                cx.observe(&activity, |this, activity, cx| {
+                    let shows = activity.read(cx).shows(cx);
+                    let was = std::mem::replace(&mut this.activity_shown, shows);
+                    if shows {
+                        this.activity_leaving = None;
+                        activity.update(cx, |a, _| a.holding = false);
+                    } else if was && crate::theme::KoanTheme::motion_allowed(cx) {
+                        activity.update(cx, |a, _| a.holding = true);
+                        this.activity_leaving = Some(cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(crate::components::FadeIn::LEAVE)
+                                .await;
+                            this.update(cx, |this, cx| {
+                                this.activity_leaving = None;
+                                activity.update(cx, |a, _| a.holding = false);
+                                cx.notify();
+                            })
+                            .ok();
+                        }));
+                    }
+                    cx.notify()
+                })
             },
         ];
         Self {
@@ -281,14 +316,20 @@ impl TouchShell {
             .map(Pixels::from),
             eq_watch: None,
             import_asking: false,
+            activity_shown: false,
+            travel: Default::default(),
+            activity_leaving: None,
             info: None,
             push: crate::components::Push::new(),
+            elastic: crate::components::Elastic::new(),
             pushing: false,
             swiping: false,
             settle: None,
+            backing: false,
             closing: None,
             seen: None,
             now_playing: None,
+            flight: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
             output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
             _subscriptions: subscriptions,
@@ -492,6 +533,13 @@ impl TouchShell {
             let length = self.push.enter(cx);
             self.land(length, false, cx);
         }
+        if self.seen != Some(now) {
+            let page = self.travel.get(&now).copied().unwrap_or_default();
+            let left = self.elastic.swap_travelled(page);
+            if let Some(was) = self.seen {
+                self.travel.insert(was, left);
+            }
+        }
         self.seen = Some(now);
     }
 
@@ -499,11 +547,13 @@ impl TouchShell {
     /// under let go once the page in front is back in place. The one frame
     /// drawn is the layout changing.
     fn land(&mut self, after: std::time::Duration, back: bool, cx: &mut Context<Self>) {
+        self.backing = back;
         self.settle = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(after).await;
             this.update(cx, |this, cx| {
                 this.settle = None;
                 this.pushing = false;
+                this.backing = false;
                 if back {
                     this.back(cx);
                 } else if let Some(library) = &this.library {
@@ -518,6 +568,11 @@ impl TouchShell {
     /// The page under a swipe back: the library's made ahead and kept to be
     /// the page, the shell's own drawn as they are.
     fn under(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        // Settings draws one section at a time, the one in front: asked for
+        // this one as well, the two would take it from each other each draw.
+        if matches!(route, Route::SettingsSection(_)) {
+            return div().into_any_element();
+        }
         let full = || StyleRefinement::default().size_full();
         if LibraryStage::draws(route) {
             let view = self
@@ -565,6 +620,14 @@ impl TouchShell {
         self.nav.update(cx, |nav, _| nav.skip_to_root());
         self.animate_back(cx);
         true
+    }
+
+    /// The page showing has jumped back to its top: it arrives there as a
+    /// scroll would, the last stretch moved by the GPU.
+    fn rewound(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let over = window.viewport_size().height * 0.16;
+        let view = cx.entity_id();
+        self.elastic.rewound(over, view, window, cx);
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
@@ -618,6 +681,11 @@ impl TouchShell {
                             )
                             .icon(tab.icon())
                             .on_click(move |_, window, cx| {
+                                // A second row tapped as the first slides in
+                                // would stack one section on another.
+                                if !nav.read(cx).at_root() {
+                                    return;
+                                }
                                 settings.update(cx, |s, cx| s.choose(tab, window, cx));
                                 nav.update(cx, |nav, cx| {
                                     if nav.go(Route::SettingsSection(tab)) {
@@ -633,7 +701,11 @@ impl TouchShell {
             Route::SettingsSection(tab) => {
                 let settings = self.settings(window, cx);
                 // Back and forward land here too: the pane follows the route.
-                settings.update(cx, |s, cx| s.choose(tab, window, cx));
+                // A section that went away (signed out elsewhere, no longer an
+                // admin) goes back to the list of those that remain.
+                if !settings.update(cx, |s, cx| s.choose(tab, window, cx)) {
+                    cx.defer_in(window, |this, _, cx| this.animate_back(cx));
+                }
                 settings.cached(full()).into_any_element()
             }
             route if LibraryStage::draws(route) => match &self.library {
@@ -810,11 +882,45 @@ impl TouchShell {
     /// walk the pages headlessly.
     pub fn show(&mut self, route: Route, cx: &mut Context<Self>) {
         self.now_playing = None;
+        // A phone's tab roots are its tabs; a tablet's sidebar keeps one
+        // history, as the desktop's does.
+        let tab = TABS
+            .iter()
+            .position(|(root, ..)| *root == route)
+            .filter(|_| self.compact);
         self.nav.update(cx, |nav, cx| {
-            if nav.go(route) {
+            if let Some(tab) = tab {
+                // A second switch to the tab it is on goes to its root.
+                nav.switch(tab, route);
+                if !nav.at_root() {
+                    nav.switch(tab, route);
+                }
+                cx.notify();
+            } else if nav.go(route) {
                 cx.notify();
             }
         });
+    }
+
+    /// Starts picking in the queue; for tools that walk the pages headlessly.
+    pub fn walk_queue_pick(&mut self, cx: &mut Context<Self>) {
+        self.queue.update(cx, |queue, cx| queue.walk_pick(cx));
+    }
+
+    /// Opens "add to playlist" on `tracks`; for tools that walk the pages.
+    pub fn walk_playlist_sheet(
+        &mut self,
+        tracks: Vec<i64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) {
+            let items: std::sync::Arc<[_]> = tracks
+                .into_iter()
+                .map(crate::library::drag::Playable::Track)
+                .collect();
+            crate::library::pick_playlist::open(&lib, items, None, window, cx);
+        }
     }
 
     /// The page in front; for tools that walk the pages headlessly.
@@ -844,6 +950,13 @@ impl TouchShell {
             if this.closing.is_some() {
                 return;
             }
+            // The sleeve still flying gives way to the art going down.
+            if let Some((_, _, flight, _)) = this.flight.take() {
+                flight.landed.set(true);
+                if let Some((full, ..)) = &this.now_playing {
+                    full.update(cx, |_, cx| cx.notify());
+                }
+            }
             // Down on the GPU (`SlideUp`), and let go once it is down.
             let length = crate::components::settle_length(cx);
             this.closing = Some(cx.spawn(async move |this, cx| {
@@ -867,6 +980,7 @@ impl TouchShell {
             cx.notify();
         });
         self.closing = None;
+        self.start_flight(&full, window, cx);
         self.now_playing = Some((full, closed, info));
         cx.notify();
     }
@@ -894,6 +1008,7 @@ impl TouchShell {
         } else {
             self.now_playing = None;
             self.closing = None;
+            self.flight = None;
         }
         // Views cached at the other layout's width are drawn again; usually
         // called while the window draws, when a refresh is not taken.
@@ -947,6 +1062,53 @@ impl TouchShell {
         });
     }
 
+    /// As Now Playing rises, the mini player's sleeve grows into the art: the
+    /// art waits while it flies, and takes over as it lands. Without motion
+    /// Now Playing simply stands there.
+    fn start_flight(&mut self, full: &Entity<Transport>, window: &Window, cx: &mut Context<Self>) {
+        self.flight = None;
+        if !crate::theme::KoanTheme::motion_allowed(cx) {
+            return;
+        }
+        let album = self
+            .transport
+            .read(cx)
+            .now_playing_album(cx)
+            .filter(|album| album.is_some());
+        let Some(album) = album else { return };
+        let look = crate::theme::Look::of(window, cx);
+        let (side, height) = (
+            look.spaced(transport::SLEEVE),
+            look.spaced(transport::MINI_HEIGHT),
+        );
+        let insets = crate::components::system_insets(Clear::System, window);
+        let viewport = window.viewport_size();
+        let top =
+            viewport.height - crate::components::foot_inset(window, cx) + (height - side) / 2.;
+        let from = Bounds::new(
+            Point::new(insets.left + look.space(crate::theme::Space::L), top),
+            Size::new(side, side),
+        );
+        let flight = transport::Flight::new(cx.entity_id());
+        full.update(cx, |full, _| full.flight = Some(flight.clone()));
+        let landing = {
+            let (flight, full) = (flight.clone(), full.downgrade());
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(crate::components::SlideUp::RISE)
+                    .await;
+                flight.landed.set(true);
+                full.update(cx, |_, cx| cx.notify()).ok();
+                this.update(cx, |this, cx| {
+                    this.flight = None;
+                    cx.notify();
+                })
+                .ok();
+            })
+        };
+        self.flight = Some((album, from, flight, landing));
+    }
+
     fn tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let showing = self.nav.read(cx).tab();
         TABS.iter().enumerate().fold(
@@ -956,14 +1118,27 @@ impl TouchShell {
                     icon,
                     title,
                     ix == showing,
-                    cx.listener(move |this, _, _, cx| {
-                        if ix == this.nav.read(cx).tab() && this.pop_to_root(cx) {
+                    cx.listener(move |this, _, window, cx| {
+                        // A back still sliding lands first, in the tab it
+                        // was made in: the timer would step back in
+                        // whichever tab shows by then.
+                        if this.settle.take().is_some() {
+                            this.pushing = false;
+                            if std::mem::take(&mut this.backing) {
+                                this.back(cx);
+                            }
+                        }
+                        let again = ix == this.nav.read(cx).tab();
+                        if again && this.pop_to_root(cx) {
                             return;
                         }
                         this.nav.update(cx, |nav, cx| {
                             nav.switch(ix, root);
                             cx.notify();
                         });
+                        if again {
+                            this.rewound(window, cx);
+                        }
                     }),
                 )
             },
@@ -1002,6 +1177,18 @@ impl Render for TouchShell {
                 .leaving(self.closing.is_some()),
             )
         });
+        let flight = self.flight.as_ref().filter(|_| self.now_playing.is_some());
+        let flying = flight.and_then(|(album, from, flight, _)| {
+            let to = flight.to()?;
+            let art = crate::covers::art(*album, to.size.width, window.scale_factor(), cx);
+            Some(crate::components::Flying::new(
+                "sleeve-to-art",
+                *from,
+                to,
+                crate::components::SlideUp::RISE,
+                crate::components::Cover::new(art, to.size.width),
+            ))
+        });
         self.see_push(cx);
         let route = self.nav.read(cx).current();
         crate::components::page_shown(route, window, cx);
@@ -1026,6 +1213,7 @@ impl Render for TouchShell {
                 )
             });
         }
+        let leaving = self.activity_leaving.is_some();
         let activity = cx
             .global::<crate::library::activity::ActivityHandle>()
             .0
@@ -1050,6 +1238,7 @@ impl Render for TouchShell {
             under_bar(bar, page, None, false, insets.top)
         });
         let stage = {
+            let stage = self.elastic.wrap(stage, window, cx);
             let root = self.nav.read(cx).at_root();
             // What is wrong with the server and the output still opening
             // hang under the page in front's bar.
@@ -1067,7 +1256,7 @@ impl Render for TouchShell {
         // The page, its bar, and over it what the library is busy with. A
         // sidebar's foot holds that when there is one showing.
         let activity_card =
-            activity.read(cx).shows(cx) && (compact || !self.sidebar_showing(window));
+            (activity.read(cx).shows(cx) || leaving) && (compact || !self.sidebar_showing(window));
         let pages = div()
             .id("stage")
             .role(a11y::Role::Main)
@@ -1093,9 +1282,18 @@ impl Render for TouchShell {
                             div()
                                 .absolute()
                                 .inset_0()
-                                .border_l(p.look.hairline)
-                                .border_color(p.rule)
-                                .child(stage),
+                                .child(stage)
+                                // Over the page, taking no room: the page
+                                // stands where it will land.
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .left_0()
+                                        .top_0()
+                                        .bottom_0()
+                                        .w(p.look.hairline)
+                                        .bg(p.rule),
+                                ),
                         ),
                     ),
             })
@@ -1103,6 +1301,15 @@ impl Render for TouchShell {
             // every page while anything runs, as the iOS app has it:
             // the sidebar foot that holds it on the desktop is gone.
             .children(activity_card.then(|| {
+                let card = crate::components::Shifted::new(
+                    "activity-card",
+                    Point::new(Pixels::ZERO, p.look.space(crate::theme::Space::Xl)),
+                    // Even on every side, as the iOS app's card.
+                    div()
+                        .p(p.space(crate::theme::Space::M))
+                        .bg(p.look.palette.surface.hsla())
+                        .child(activity.clone()),
+                );
                 div()
                     .absolute()
                     .left(p.space(crate::theme::Space::M))
@@ -1110,13 +1317,9 @@ impl Render for TouchShell {
                     .bottom(
                         crate::components::foot_inset(window, cx) + p.space(crate::theme::Space::S),
                     )
-                    .child(crate::components::Rise::in_place(
-                        // Even on every side, as the iOS app's card.
-                        div()
-                            .p(p.space(crate::theme::Space::M))
-                            .bg(p.look.palette.surface.hsla())
-                            .child(activity.clone()),
-                    ))
+                    .child(
+                        crate::components::FadeIn::new("activity-card-in", card).leaving(leaving),
+                    )
             }))
             .into_any_element();
         let (body, phone_foot) = if compact {
@@ -1235,15 +1438,17 @@ impl Render for TouchShell {
                     .left_0()
                     .right_0()
                     .h(insets.top)
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.nav.update(cx, |nav, cx| {
                             let route = nav.current();
                             nav.choose(route);
                             cx.notify();
                         });
+                        this.rewound(window, cx);
                     })),
             )
             .children(now_playing)
+            .children(flying)
             .children(eq_sheets.map(|s| ask::layered(Layer::Sheet, s)))
             .children(eq_questions.map(|q| ask::layered(Layer::Question, q)))
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))

@@ -63,6 +63,8 @@ impl Form {
                     d.max_w(look.spaced(REGULAR_MEASURE)).mx_auto()
                 })
                 .p(look.space(Space::Xl))
+                // A phone's forms keep to the margin its pages keep to.
+                .when(look.touch, |d| d.px(super::RowMetrics::page_margin(look)))
                 .children(self.sections),
         )
     }

@@ -554,10 +554,18 @@ impl TrackList for HistoryPage {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
-                let id = self.entries[index].id;
+                // A click is dispatched against the frame last painted,
+                // whose rows the history may no longer have.
+                let Some(id) = self.entries.get(index).map(|e| e.id) else {
+                    return;
+                };
                 let m = event.modifiers();
                 // Where a ⇧-click extends from, before the click moves it.
-                let from = self.cursor.anchor.unwrap_or(index);
+                let from = self
+                    .cursor
+                    .anchor
+                    .unwrap_or(index)
+                    .min(self.entries.len() - 1);
                 // The keyboard carries on from the row clicked.
                 self.cursor.click(index, m.shift);
                 if event.click_count() >= 2 && !m.shift && !m.secondary(cx) {
@@ -584,7 +592,7 @@ impl TrackList for HistoryPage {
 impl HistoryPage {
     /// The page's controls in the window's toolbar: the pick and forgetting
     /// it, the filter, and clearing everything under ⋯.
-    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub fn controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let view = cx.entity();
         let mut group = ToolbarGroup::new();
         if !self.selected.is_empty() {
@@ -618,8 +626,11 @@ impl HistoryPage {
         // Clearing is the whole history's, so a filter matching nothing
         // does not take it away.
         let empty = self.entries.is_empty() && self.lib.browse.read(cx).search().is_none();
+        // A phone's filter field leads the list, as its browsers' do.
+        if !crate::theme::Look::of(window, cx).compact {
+            group = group.child(self.search.clone());
+        }
         group
-            .child(self.search.clone())
             .child(ToolbarMenu::new(
                 "history-more",
                 ToolbarButton::new("history-more-trigger", Icon::More, "more"),
@@ -662,7 +673,7 @@ impl Render for HistoryPage {
                 None => div().into_any_element(),
             }
         } else if self.entries.is_empty() {
-            EmptyState::new(
+            let state = EmptyState::new(
                 Icon::History,
                 if narrowed {
                     "no matches"
@@ -674,11 +685,24 @@ impl Render for HistoryPage {
                 "Try a different filter."
             } else {
                 "Everything you play lands here, most recent first."
-            })
-            .into_any_element()
+            });
+            if narrowed && crate::theme::Look::of(window, cx).compact {
+                // Still here, to change what matched nothing.
+                let p = Paint::of(window, cx);
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(chrome::with_filter(&self.search, &p))
+                    .child(div().flex_1().min_h_0().child(state))
+                    .into_any_element()
+            } else {
+                state.into_any_element()
+            }
         } else {
             let view = cx.entity();
             let head = view.clone();
+            let search = self.search.clone();
             RowList::new(&self.list, move |i, window, cx| {
                 view.update(cx, |this, cx| {
                     let p = Paint::of(window, cx);
@@ -689,7 +713,13 @@ impl Render for HistoryPage {
             .lead(move |window, cx| {
                 let look = crate::theme::Look::of(window, cx);
                 let plays = head.read(cx).entries.len();
-                crate::components::page_head(header(plays), &look).into_any_element()
+                let filter = look
+                    .compact
+                    .then(|| chrome::with_filter(&search, &Paint::of(window, cx)));
+                div()
+                    .child(crate::components::page_head(header(plays), &look))
+                    .children(filter)
+                    .into_any_element()
             })
             .follow(&self.spot)
             .into_any_element()

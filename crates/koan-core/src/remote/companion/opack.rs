@@ -166,6 +166,7 @@ pub fn unpack(data: &[u8]) -> Result<Value, Malformed> {
         data,
         pos: 0,
         seen: Vec::new(),
+        depth: 0,
     };
     r.value()
 }
@@ -175,7 +176,17 @@ struct Reader<'a> {
     pos: usize,
     /// Values a later back-reference can name, in the order read.
     seen: Vec<Value>,
+    /// How many containers deep the value being read is.
+    depth: usize,
 }
+
+/// Deeper nesting than any message has, and far short of the stack: a frame
+/// is read before its sender has proved anything.
+const MAX_DEPTH: usize = 32;
+
+/// More values than a message names again. Each new one is looked for among
+/// those before it, so the count bounds that work too.
+const MAX_SEEN: usize = 4096;
 
 impl Reader<'_> {
     fn take(&mut self, n: usize) -> Result<&[u8], Malformed> {
@@ -192,6 +203,16 @@ impl Reader<'_> {
     }
 
     fn value(&mut self) -> Result<Value, Malformed> {
+        if self.depth == MAX_DEPTH {
+            return Err(Malformed(self.pos));
+        }
+        self.depth += 1;
+        let value = self.read();
+        self.depth -= 1;
+        value
+    }
+
+    fn read(&mut self) -> Result<Value, Malformed> {
         let at = self.pos;
         let tag = self.take(1)?[0];
         let (value, remembered) = match tag {
@@ -252,6 +273,9 @@ impl Reader<'_> {
             _ => return Err(Malformed(at)),
         };
         if remembered && !self.seen.contains(&value) {
+            if self.seen.len() == MAX_SEEN {
+                return Err(Malformed(at));
+            }
             self.seen.push(value.clone());
         }
         Ok(value)
@@ -284,6 +308,14 @@ impl Reader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nesting_past_the_limit_is_malformed() {
+        assert!(unpack(&[0xD1; 1 << 20]).is_err());
+        let mut nested = vec![0xD1; MAX_DEPTH - 1];
+        nested.push(0x01);
+        assert!(unpack(&nested).is_ok());
+    }
 
     #[test]
     fn a_message_packs_as_pyatv_packs_it() {

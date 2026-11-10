@@ -299,6 +299,51 @@ impl Animated {
         );
     }
 
+    /// Track `k` thrown from where it stands at `velocity` (units per
+    /// second) and drawn back to `to` on a spring: a bounce off a list's end.
+    /// Returns how long it takes to settle. Under `still` it stands at `to`.
+    pub fn throw(
+        &self,
+        k: usize,
+        to: f32,
+        velocity: f32,
+        stiffness: f32,
+        damping: f32,
+    ) -> Duration {
+        let mut settles = Duration::ZERO;
+        self.0.uniforms.publish(|| {
+            self.rebase();
+            let t = time_at(&self.0.uniforms, Self::now());
+            let from = track_of(&self.0.uniforms, k).at(t);
+            let reach = velocity.abs() / stiffness.max(1e-3).sqrt();
+            let length = super::track::spring_length(
+                (from - to).abs().max(reach),
+                velocity,
+                stiffness,
+                damping,
+            );
+            settles = Duration::from_secs_f32(length);
+            self.put(
+                k,
+                Track {
+                    from,
+                    to,
+                    start: t,
+                    length,
+                    curve: TrackCurve::Spring {
+                        stiffness,
+                        damping,
+                        velocity,
+                    },
+                    repeat: Repeat::Once,
+                },
+            );
+        });
+        self.refresh_liveness();
+        self.wake();
+        settles
+    }
+
     /// Track `k` as a whole segment, for a value whose start is known: an
     /// analyser frame at its own time, a playhead from its anchor, a drift
     /// that breathes (`Repeat::Alternate`).

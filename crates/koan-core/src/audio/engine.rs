@@ -501,7 +501,7 @@ unsafe extern "C" fn render_callback(
     }
 
     // SAFETY: Accessing the first buffer in the CoreAudio-provided AudioBufferList.
-    // We configured a non-interleaved float format, so mNumberBuffers >= 1.
+    // The format is interleaved float, so there is one buffer.
     let buf = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
     let channels = buf.mNumberChannels;
 

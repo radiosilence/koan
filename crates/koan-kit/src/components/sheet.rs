@@ -209,6 +209,16 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
 /// keyboard while it is up, as an iOS sheet does; its `Rise` brings it up
 /// from there.
 pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful<Div> {
+    scrim_leaving(id, false, look, window)
+}
+
+/// `scrim`, its veil lifting while what it holds goes back down.
+fn scrim_leaving(
+    id: impl Into<ElementId>,
+    leaving: bool,
+    look: &Look,
+    window: &Window,
+) -> Stateful<Div> {
     if !look.compact {
         // A tablet's safe area and keyboard, nothing on the desktop.
         let insets = super::system_insets(super::Clear::Keyboard, window);
@@ -239,7 +249,7 @@ pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful
         .pt(insets.top + look.space(Space::L))
         .pb(insets.bottom + look.space(Space::L))
         .occlude()
-        .child(Veil::new(look.veil(0.6)))
+        .child(Veil::new(look.veil(0.6)).leaving(leaving))
 }
 
 /// A scrim with the panel hung near the top on every platform: the search
@@ -362,8 +372,9 @@ pub struct Asking {
 fn let_go(cx: &mut App) {
     let host = asking(cx);
     let started = Instant::now();
+    let length = Fading::length(cx);
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(Fading::LENGTH).await;
+        cx.background_executor().timer(length).await;
         cx.update(|cx| {
             host.update(cx, |a, cx| {
                 let sheet = a.leaving_sheet.take_if(|(_, f)| f.began_by(started));
@@ -494,7 +505,8 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         }
     };
     let look = Look::of(window, cx);
-    let scrim = scrim("sheet", &look, window)
+    let leaving = fading.is_some();
+    let scrim = scrim_leaving("sheet", leaving, &look, window)
         // The window's bare keys are bound outside `Ask`.
         .key_context("Ask")
         .when_some(focus.as_ref(), |d, focus| d.track_focus(focus))
@@ -512,7 +524,7 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             }
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(Rise::new(view));
+        .child(Rise::new(view).leaving(leaving));
     match fading {
         Some(fading) => Some(fading.draw(scrim)),
         None => Some(trapped(scrim, focus.as_ref(), cx)),
@@ -711,7 +723,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .map(|line| note(line, Tone::Ink, &look).into_any_element())
         .collect();
     let focus = ask.focus.clone().filter(|_| live);
-    let scrim = scrim("ask", &look, window)
+    let scrim = scrim_leaving("ask", !live, &look, window)
         .key_context("Ask")
         .when_some(focus.as_ref(), |d, focus| d.track_focus(focus))
         .when(live, |d| {
@@ -726,23 +738,26 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             )
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(Rise::new(
-            panel(ask.title.as_ref(), &look)
-                .child(head(
-                    ask.title.as_ref(),
-                    vec![cancel.into_any_element(), verb.into_any_element()],
-                    &look,
-                ))
-                .child(
-                    body("ask-body", &look)
-                        .pt(look.space(Space::M))
-                        .when_some(ask.name.as_ref(), |d, input| d.child(TextField::new(input)))
-                        .children(rows)
-                        .when_some(ask.note.clone(), |d, n| {
-                            d.child(note(n, Tone::Muted, &look))
-                        }),
-                ),
-        ));
+        .child(
+            Rise::new(
+                panel(ask.title.as_ref(), &look)
+                    .child(head(
+                        ask.title.as_ref(),
+                        vec![cancel.into_any_element(), verb.into_any_element()],
+                        &look,
+                    ))
+                    .child(
+                        body("ask-body", &look)
+                            .pt(look.space(Space::M))
+                            .when_some(ask.name.as_ref(), |d, input| d.child(TextField::new(input)))
+                            .children(rows)
+                            .when_some(ask.note.clone(), |d, n| {
+                                d.child(note(n, Tone::Muted, &look))
+                            }),
+                    ),
+            )
+            .leaving(!live),
+        );
     match fading {
         Some(fading) => Some(fading.draw(scrim)),
         None => Some(trapped(scrim, focus.as_ref(), cx)),
