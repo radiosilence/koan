@@ -190,9 +190,10 @@ impl RenderOnce for NavRow {
             cx,
         );
         let on_click = self.on_click;
-        // Under touch a row that opens a page says so with a chevron at its
-        // end, as iOS lists do; a pointer reads it from the sidebar's place.
-        let pushes = look.touch && on_click.is_some() && self.trailing.is_none();
+        // At a phone's width a row that opens a page says so with a chevron
+        // at its end, as iOS lists do; a sidebar's row is a place, read from
+        // where it stands.
+        let pushes = look.compact && on_click.is_some() && self.trailing.is_none();
         let answers = super::Answerer::of(&self.id, window, cx);
         let accent = look.accent.hsla();
         let mut base = self.base;

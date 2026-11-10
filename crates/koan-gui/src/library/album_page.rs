@@ -335,7 +335,7 @@ impl AlbumPage {
             if !rest.is_empty() {
                 // A phone's narrow header gives the facts a line under the
                 // credit, as the iOS app's does.
-                details = if crate::mobile::phone() {
+                details = if p.look.compact {
                     div()
                         .flex()
                         .flex_col()

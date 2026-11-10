@@ -247,7 +247,7 @@ fn open(saved: Option<window_state::Saved>, show: bool, cx: &mut App) {
     if show {
         open_window(saved, cx);
         // The guide is a window of its own, which a phone has no room for.
-        if !crate::mobile::phone() {
+        if !crate::mobile::handheld() {
             crate::setup::offer_at_launch(cx);
         }
     } else {
@@ -278,8 +278,8 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
                 window_state::write(window.window_bounds());
                 true
             });
-            if crate::mobile::phone() {
-                let shell = cx.new(|cx| crate::mobile::PhoneShell::new(window, cx));
+            if crate::mobile::handheld() {
+                let shell = cx.new(|cx| crate::mobile::TouchShell::new(window, cx));
                 return cx.new(|cx| WindowRoot::new(shell, window, cx));
             }
             let shell = cx.new(|cx| Shell::new(window, cx));

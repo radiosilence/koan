@@ -221,7 +221,7 @@ impl RowMetrics {
     /// whatever the window's width, so a resize never moves it.
     pub fn header_art(look: &Look) -> Pixels {
         // On a phone the header stacks, and the sleeve heads the page.
-        let side = if look.touch { 220.0 } else { 132.0 };
+        let side = if look.compact { 220.0 } else { 132.0 };
         px((side * look.scale.size).round())
     }
 

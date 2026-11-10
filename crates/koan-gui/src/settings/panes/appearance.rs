@@ -258,7 +258,7 @@ impl Render for AppearancePane {
                 .into_any_element(),
         ];
         // A phone's shell has no sidebar or toolbar ground to wash or not.
-        if record_colours && !crate::mobile::phone() {
+        if record_colours && !look.compact {
             colour_rows.push(
                 Toggle::new("wash-window", "Wash the whole window", wash_window)
                     .on_change({

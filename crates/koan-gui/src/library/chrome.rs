@@ -191,8 +191,12 @@ impl Render for SearchField {
 /// A browser's controls in the window's toolbar: the filter field first, then
 /// what the caller adds. On a phone the field is the list's (`with_filter`)
 /// and the bar holds the buttons alone.
-pub fn browser_controls(search: &Entity<SearchField>) -> crate::components::ToolbarGroup {
-    if crate::mobile::phone() {
+pub fn browser_controls(
+    search: &Entity<SearchField>,
+    window: &Window,
+    cx: &App,
+) -> crate::components::ToolbarGroup {
+    if crate::theme::Look::of(window, cx).compact {
         crate::components::ToolbarGroup::new()
     } else {
         crate::components::ToolbarGroup::new()
@@ -602,7 +606,7 @@ pub fn selection_bar<V: Picking>(
             },
             verb(actions::favourite),
         )
-        .when(!crate::mobile::phone(), |bar| {
+        .when(!crate::mobile::handheld(), |bar| {
             bar.verb("sel-organise", "organise…", organise)
         })
         .on_done(move |_, _, cx| end(cx))

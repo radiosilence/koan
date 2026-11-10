@@ -89,7 +89,7 @@ impl Render for ControlsSlot {
             .min_w_0()
             // A phone gives the controls a row of their own, the filter
             // field taking what the buttons leave.
-            .when(crate::mobile::phone(), |d| d.flex_1())
+            .when(crate::theme::Look::of(window, cx).compact, |d| d.flex_1())
             .children(controls)
     }
 }

@@ -866,8 +866,8 @@ impl AlbumGrid {
     }
 
     /// The grid's controls, in the window's toolbar.
-    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        chrome::browser_controls(&self.search)
+    pub fn controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        chrome::browser_controls(&self.search, window, cx)
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .child(chrome::album_sort_button(&self.lib, cx))
             .children(chrome::reshuffle_button(&self.lib, cx))
@@ -947,7 +947,7 @@ impl Render for AlbumGrid {
         // A phone's bar names the page: its list leads with the filter field
         // alone.
         let away_header = away.then(|| {
-            if crate::mobile::phone() {
+            if p.look.compact {
                 chrome::with_filter(&self.search, p)
             } else {
                 header.into_any_element()

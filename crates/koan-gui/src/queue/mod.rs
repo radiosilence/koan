@@ -1115,7 +1115,7 @@ fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut Context<Menu>) -> Men
             .item(actions::playlist_entry(lib, picked, None));
     }
     // A phone keeps no folders of its own to organise, as on iOS.
-    if !crate::mobile::phone() {
+    if !crate::mobile::handheld() {
         menu = menu
             .separator()
             .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click({

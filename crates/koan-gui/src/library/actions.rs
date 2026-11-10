@@ -380,7 +380,7 @@ pub fn menu(
     }
     // Moving the pick's files where a pattern puts them, previewed first. A
     // phone keeps no folders of its own to organise, as on iOS.
-    if !crate::mobile::phone() {
+    if !crate::mobile::handheld() {
         let (organise_lib, organise_items, organise_after) =
             (lib.clone(), items.clone(), after.clone());
         menu = menu

@@ -10,13 +10,14 @@
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example phone_walk -- target/phone-walk
 //! `KOAN_WALK_PAGES=library,now-playing` walks only those, and
-//! `KOAN_WALK_WIDTH=375` walks a narrower phone, an iPhone mini.
+//! `KOAN_WALK_WIDTH=375` walks a narrower phone, an iPhone mini, and
+//! `KOAN_WALK_WIDTH=1366 KOAN_WALK_HEIGHT=1024` a tablet.
 
 use std::error::Error;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use koan_gui::mobile::PhoneShell;
+use koan_gui::mobile::TouchShell;
 use koan_gui::navigator::Route;
 use koan_gui::{app, root::WindowRoot, theme};
 use koan_kit::app::{AppContext, Entity, Modifiers, ScrollEvent};
@@ -39,6 +40,14 @@ fn width() -> f32 {
         .unwrap_or(WIDTH)
 }
 const HEIGHT: f32 = 874.0;
+
+/// The height walked: an iPhone 17 Pro's, or `KOAN_WALK_HEIGHT`'s.
+fn height() -> f32 {
+    std::env::var("KOAN_WALK_HEIGHT")
+        .ok()
+        .and_then(|h| h.parse().ok())
+        .unwrap_or(HEIGHT)
+}
 
 enum Step {
     Page(Route),
@@ -85,14 +94,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let mut shell = None;
-    let window = cx.open_window(size(px(width()), px(HEIGHT)), |window, cx| {
-        let made = cx.new(|cx| PhoneShell::new(window, cx));
+    let window = cx.open_window(size(px(width()), px(height())), |window, cx| {
+        let made = cx.new(|cx| TouchShell::new(window, cx));
         shell = Some(made.clone());
         let root = cx.new(|cx| WindowRoot::new(made, window, cx));
         koan_kit::components::host(root, window, cx)
     })?;
     let window: AnyWindowHandle = window.into();
-    let shell: Entity<PhoneShell> = shell.ok_or("the shell was not made")?;
+    let shell: Entity<TouchShell> = shell.ok_or("the shell was not made")?;
     cx.allow_parking();
     settle(&mut cx, window)?;
 
@@ -208,7 +217,7 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
 fn swipe_back(
     cx: &mut HeadlessAppContext,
     window: AnyWindowHandle,
-    shell: &Entity<PhoneShell>,
+    shell: &Entity<TouchShell>,
     route: Route,
     out: &std::path::Path,
 ) -> Result<(), Box<dyn Error>> {

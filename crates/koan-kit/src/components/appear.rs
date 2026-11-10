@@ -110,7 +110,7 @@ impl Rise {
 
 impl RenderOnce for Rise {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        if Look::of(window, cx).touch && !self.in_place {
+        if Look::of(window, cx).compact && !self.in_place {
             return SlideUp::new(self.child).fits().into_any_element();
         }
         if !moves(cx) {
