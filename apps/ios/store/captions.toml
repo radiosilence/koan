@@ -1,5 +1,5 @@
 # App Store screenshot captions, in the order the screenshots appear. Keys are
-# the page names `just ios-walk` exports; `just ios-store-shots` frames them.
+# the captured pages' file names; `just ios-store-shots` frames them.
 "06-now-playing" = "Your music, from your own server"
 "04-album" = "Every record, as its tags describe it"
 "03-albums" = "The whole library, fast"
