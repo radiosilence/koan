@@ -17,14 +17,9 @@ struct AlbumGridCell: View {
     @State private var hovering = false
 
     var body: some View {
-        #if os(tvOS)
         television
-        #else
-        tile
-        #endif
     }
 
-    #if os(tvOS)
     /// The tile as one card a remote focuses and clicks to open the record.
     /// Playing it is a click away on the record's page, or in the menu a long
     /// press brings up.
@@ -51,7 +46,6 @@ struct AlbumGridCell: View {
         }
     }
 
-    #endif
 
     private var tile: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -91,13 +85,6 @@ struct AlbumGridCell: View {
                             .padding(6)
                     }
                 }
-                #if os(iOS)
-                .overlay {
-                    if album.onDevice != nil {
-                        DownloadedBar(album: album)
-                    }
-                }
-                #endif
                 .overlay(alignment: .bottomTrailing) {
                     AlbumTileHeart(albumId: album.id, hovering: hovering)
                 }

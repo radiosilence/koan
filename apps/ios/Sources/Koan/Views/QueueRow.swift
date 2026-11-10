@@ -195,13 +195,11 @@ struct QueueRow: View {
 
             // A phone has no width to spare for it, and the album heading
             // above already names the codec when the record has one.
-            #if os(tvOS)
             if let codec = item.codec {
                 Text(codec.uppercased())
                     .font(.role(.fine, system: .caption2.monospaced()))
                     .foregroundStyle(played ? .quaternary : .tertiary)
             }
-            #endif
 
             if let ms = item.durationMs {
                 // At least the width of "59:59", so durations line up down the
@@ -296,11 +294,7 @@ struct QueueRow: View {
         case .queued:
             // On a desktop or a phone, where rows are picked out; a television
             // has no selection for the mark to belong to.
-            #if os(tvOS)
             Color.clear
-            #else
-            KoanIcon(Icon.pending).foregroundStyle(KoanTheme.style(.rule, system: .quaternary))
-            #endif
         }
     }
 }

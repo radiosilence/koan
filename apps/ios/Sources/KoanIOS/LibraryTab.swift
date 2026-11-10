@@ -42,9 +42,7 @@ struct LibraryTab: View {
         .listLink()
         // A television's lists are words alone, as its tabs are; elsewhere
         // the glyph follows "Show icons".
-        #if os(tvOS)
         .environment(\.koanIcons, false)
-        #endif
     }
 }
 
@@ -74,10 +72,6 @@ struct LibraryStatus: View {
     }
 
     private static var device: String {
-        #if os(tvOS)
         "Apple TV"
-        #else
-        UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
-        #endif
     }
 }

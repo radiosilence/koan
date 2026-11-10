@@ -17,26 +17,6 @@ struct AssistantsSettings: View {
             if let assistants {
                 LabeledContent("Address", value: assistants.mcpUrl)
                     .selectableText()
-                #if os(iOS)
-                Button {
-                    Pasteboard.write(text: assistants.mcpUrl)
-                    copied = true
-                } label: {
-                    KoanLabel(copied ? "Copied" : "Copy Address", icon: Icon.copy)
-                }
-                .koanButton(.bordered)
-                .task(id: copied) {
-                    guard copied else { return }
-                    try? await Task.sleep(for: .seconds(1.5))
-                    copied = false
-                }
-                if let connect = URL(string: assistants.connectUrl) {
-                    Link(destination: connect) {
-                        KoanLabel("How to Connect an Assistant", icon: Icon.openExternal)
-                    }
-                    .koanButton(.link)
-                }
-                #endif
             } else if error == nil {
                 ProgressView()
             }

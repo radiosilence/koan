@@ -160,15 +160,6 @@ struct NewSecretSheet: View {
                 Section {
                     LabeledContent(kind, value: secret)
                         .selectableText()
-                    #if os(iOS)
-                    Button {
-                        Pasteboard.write(text: secret)
-                        copied = true
-                    } label: {
-                        KoanLabel(copied ? "Copied" : "Copy \(kind)", icon: Icon.copy)
-                    }
-                    .koanButton(.bordered)
-                    #endif
                 } header: {
                     KoanSectionHeader("\(kind) for \(name)")
                 } footer: {

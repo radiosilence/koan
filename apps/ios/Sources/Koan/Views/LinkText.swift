@@ -27,10 +27,6 @@ struct LinkText: View {
     var drags = true
 
     @Environment(Navigator.self) private var nav
-    #if os(iOS)
-    /// A list picking rows takes a tap on any of it as a tick.
-    @Environment(\.editMode) private var editMode
-    #endif
     @State private var hovering = false
 
     private var rest: AnyShapeStyle {
@@ -39,9 +35,6 @@ struct LinkText: View {
     }
 
     private var followed: Target? {
-        #if os(iOS)
-        if editMode?.wrappedValue.isEditing == true { return nil }
-        #endif
         return target
     }
 
@@ -53,49 +46,14 @@ struct LinkText: View {
     }
 
     var body: some View {
-        #if os(tvOS)
         // A row is one focusable thing on a television; a link inside it can
         // never be reached, so it reads as the name it is.
         Text(text)
             .font(font ?? .role(.control, system: .callout))
             .foregroundStyle(rest)
             .lineLimit(lines)
-        #else
-        if let target = followed {
-            if drags {
-                // Dragging the name drags what it names, which is not
-                // necessarily what the surrounding row or tile stands for: the
-                // artist link on an album tile queues the whole artist, while
-                // the artwork beside it queues just that record.
-                link(target).dragSource(transfer(for: target))
-            } else {
-                link(target)
-            }
-        } else {
-            Text(text)
-                .font(font ?? .role(.control, system: .callout))
-                .foregroundStyle(rest)
-                .lineLimit(lines)
-        }
-        #endif
     }
 
-    #if os(iOS)
-    private func link(_ target: Target) -> some View {
-        Text(text)
-            .font(font ?? .role(.control, system: .callout))
-            .underline(hovering)
-            .foregroundStyle(hovering ? KoanTheme.style(.ink, system: .primary) : rest)
-            .lineLimit(lines)
-            .contentShape(.rect)
-            .pointerHover { hovering = $0 }
-            // A row that scrolls or filters away while hovered never sees
-            // the exit, so it would come back still underlined.
-            .onDisappear { hovering = false }
-            .onTapGesture { Trace.event("tap"); nav.follow(target) }
-            .help("Go to \(text)")
-    }
-    #endif
 }
 
 extension Navigator {

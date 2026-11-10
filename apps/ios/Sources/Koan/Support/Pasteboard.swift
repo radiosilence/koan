@@ -15,37 +15,18 @@ enum Pasteboard {
 
     static func write(trackIds: [Int64], text: String) {
         let ids = try? JSONEncoder().encode(trackIds)
-        #if os(tvOS)
         _ = (ids, text)
-        #else
-        // One item carrying both representations. Setting them separately
-        // clears what went before.
-        var item: [String: Any] = [UTType.utf8PlainText.identifier: text]
-        if let ids { item[trackType] = ids }
-        UIPasteboard.general.setItems([item])
-        #endif
     }
 
     /// Plain text, for things that are only ever text — a share link.
     static func write(text: String) {
-        #if os(tvOS)
         _ = text
-        #else
-        UIPasteboard.general.string = text
-        #endif
     }
 
     /// Rich text with a plain fallback, so a paste into a mail client keeps
     /// the formatting and a paste anywhere else still reads.
     static func write(html: String, text: String) {
-        #if os(tvOS)
         _ = (html, text)
-        #else
-        UIPasteboard.general.setItems([[
-            UTType.html.identifier: html,
-            UTType.utf8PlainText.identifier: text,
-        ]])
-        #endif
     }
 
     static func readTrackIds() -> [Int64] {
@@ -56,10 +37,6 @@ enum Pasteboard {
     }
 
     private static func trackData() -> Data? {
-        #if os(tvOS)
         nil
-        #else
-        UIPasteboard.general.data(forPasteboardType: trackType)
-        #endif
     }
 }

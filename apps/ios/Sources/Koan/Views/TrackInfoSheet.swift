@@ -45,33 +45,7 @@ struct TrackInfoHost: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        #if os(tvOS)
         content
-        #else
-        content
-            .environment(\.showTrackInfo, ShowTrackInfo {
-                shown = Shown(id: $0)
-                presented = true
-            })
-            #if os(iOS)
-            .tray(isPresented: $presented) {
-                if let shown { TrackInfoLoader(trackId: shown.id) }
-            }
-            #else
-            .sheet(item: $shown) { shown in
-                NavigationStack {
-                    ScrollView { TrackInfoLoader(trackId: shown.id) }
-                        .toolbar {
-                            KoanSheetAction(placement: .confirmationAction) {
-                                Button("Done") { self.shown = nil }
-                            }
-                        }
-                }
-                .koanSheetStack()
-                .resizableWindow("TrackInfo", min: CGSize(width: 420, height: 360), ideal: CGSize(width: 560, height: 720))
-            }
-            #endif
-        #endif
     }
 }
 

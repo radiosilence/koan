@@ -74,8 +74,4 @@ struct PageHeader<Art: View, Lead: View, Detail: View, Actions: View, Trailing: 
     }
 }
 
-#if os(tvOS)
 let pageTitleSize: CGFloat = 48
-#else
-let pageTitleSize: CGFloat = 26
-#endif
