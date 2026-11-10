@@ -477,6 +477,21 @@ impl PhoneShell {
         cx.notify();
     }
 
+    /// The tab showing, chosen again from a page within it: the page slides
+    /// away over the tab's root, as back does. Whether it did: at the root,
+    /// mid-slide or without motion the tab's own rule applies.
+    fn pop_to_root(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.nav.read(cx).at_root()
+            || self.settle.is_some()
+            || !crate::components::Push::moves(cx)
+        {
+            return false;
+        }
+        self.nav.update(cx, |nav, _| nav.skip_to_root());
+        self.animate_back(cx);
+        true
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {
             if nav.back() {
@@ -748,13 +763,20 @@ impl PhoneShell {
         TABS.iter().enumerate().fold(
             TabStrip::new().bar(),
             |strip, (ix, &(root, title, icon))| {
-                let nav = self.nav.clone();
-                strip.tab(icon, title, ix == showing, move |_, _, cx| {
-                    nav.update(cx, |nav, cx| {
-                        nav.switch(ix, root);
-                        cx.notify();
-                    });
-                })
+                strip.tab(
+                    icon,
+                    title,
+                    ix == showing,
+                    cx.listener(move |this, _, _, cx| {
+                        if ix == this.nav.read(cx).tab() && this.pop_to_root(cx) {
+                            return;
+                        }
+                        this.nav.update(cx, |nav, cx| {
+                            nav.switch(ix, root);
+                            cx.notify();
+                        });
+                    }),
+                )
             },
         )
     }

@@ -110,11 +110,11 @@ impl Rise {
 
 impl RenderOnce for Rise {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        if !moves(cx) {
-            return self.child;
-        }
         if Look::of(window, cx).touch && !self.in_place {
             return SlideUp::new(self.child).fits().into_any_element();
+        }
+        if !moves(cx) {
+            return self.child;
         }
         let step = Look::of(window, cx).space(Space::S);
         let device = f32::from(step) * window.scale_factor();
@@ -164,8 +164,27 @@ impl SlideUp {
 
 impl RenderOnce for SlideUp {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        if !moves(cx) {
-            return self.child;
+        let moving = moves(cx);
+        // A sheet's panel takes no more than the room above the keyboard and
+        // the system's insets, a step in, shrinking its body to scroll; Now
+        // Playing takes the whole screen.
+        let inner = if self.fits {
+            let room = super::sheet::room(&Look::of(window, cx), window);
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .max_h(room)
+                .child(self.child)
+                .into_any_element()
+        } else if moving {
+            div().size_full().child(self.child).into_any_element()
+        } else {
+            self.child
+        };
+        if !moving {
+            return inner;
         }
         let height = f32::from(window.viewport_size().height) * window.scale_factor();
         let state = window.use_keyed_state("slide-up", cx, |_, _| {
@@ -187,21 +206,6 @@ impl RenderOnce for SlideUp {
             animated.to(2, height, Motion::SETTLE, Ease::InOut);
             state.update(cx, |state, _| state.1 = true);
         }
-        // A sheet's panel takes no more than the room above the keyboard and
-        // the system's insets, a step in, shrinking its body to scroll; Now
-        // Playing takes the whole screen.
-        let inner = if self.fits {
-            let room = super::sheet::room(&Look::of(window, cx), window);
-            div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .items_center()
-                .max_h(room)
-                .child(self.child)
-        } else {
-            div().size_full().child(self.child)
-        };
         AnimatedLayer::new(&animated, inner).into_any_element()
     }
 }
