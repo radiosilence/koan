@@ -147,8 +147,9 @@ pub use form::{
 pub use guide::{Check, CheckItem, ChoiceCards, Steps};
 pub use heart::Heart;
 pub use insets::{
-    Clear, Frost, KoanFrosted, KoanInsets, bar_inset, bar_probe, foot_inset, foot_probe,
-    keep_clear, page_shown, report_scroll_edges, set_bar_inset, set_foot_inset, system_insets,
+    Clear, Frost, KoanFrosted, KoanInsets, bar_inset, bar_probe, bounds_probe, foot_inset,
+    foot_probe, keep_clear, page_shown, report_scroll_edges, set_bar_inset, set_foot_inset,
+    system_insets,
 };
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};

@@ -27,7 +27,7 @@ pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
 
 #[path = "transport_phone.rs"]
 mod phone;
-pub use phone::{Collapse, Expand, Form, MINI_HEIGHT, ShowInfo};
+pub use phone::{Collapse, Expand, Flight, Form, MINI_HEIGHT, SLEEVE, ShowInfo};
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
@@ -94,7 +94,7 @@ pub struct Transport {
     /// How far a finger has pushed the mini player up, while it does.
     lift: Option<Pixels>,
     /// Now Playing's art, while the mini player's sleeve grows into it.
-    pub(crate) flight: Option<transport_phone::Flight>,
+    pub(crate) flight: Option<phone::Flight>,
     _subscriptions: [Subscription; 8],
 }
 

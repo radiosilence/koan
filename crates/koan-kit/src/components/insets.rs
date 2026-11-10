@@ -189,6 +189,14 @@ pub fn bar_probe() -> impl IntoElement {
     .size_full()
 }
 
+/// An element filling its parent that tells `told` its bounds as it is laid
+/// out: where something stands, for what moves to it.
+pub fn bounds_probe(told: impl FnOnce(Bounds<Pixels>, &mut App) + 'static) -> impl IntoElement {
+    canvas(move |bounds, _, cx| told(bounds, cx), |_, _, _, _| {})
+        .absolute()
+        .size_full()
+}
+
 /// An element filling its parent that keeps `foot_inset` at the parent's
 /// height: in what a shell draws over the foot of its pages.
 pub fn foot_probe() -> impl IntoElement {

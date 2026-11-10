@@ -9,6 +9,7 @@
 //!   Playing pulled down, a queue row swiped).
 //! - `SwipeAction`: a row slid toward the leading edge over an action that
 //!   fills the room it leaves, both moved by one `Follow`.
+//! - `Elastic`: a phone page's ends giving under a pan and bouncing a fling.
 //! - `Push`: a navigation stack's page sliding over the one under it, which
 //!   shows a third of its way behind and dimmed, by one progress track (a
 //!   page pushed, swiped back, or sent back by the bar's button).

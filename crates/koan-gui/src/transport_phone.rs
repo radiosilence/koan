@@ -284,14 +284,11 @@ impl Transport {
                     Some(flight) => {
                         let flight = flight.clone();
                         div()
+                            .relative()
                             .size(side)
-                            .child(
-                                canvas(
-                                    move |bounds, _, cx| flight.told(bounds, cx),
-                                    |_, _, _, _| {},
-                                )
-                                .size_full(),
-                            )
+                            .child(crate::components::bounds_probe(move |bounds, cx| {
+                                flight.told(bounds, cx)
+                            }))
                             .into_any_element()
                     }
                     None => Cover::new(self.cover.clone(), side).into_any_element(),

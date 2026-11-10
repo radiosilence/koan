@@ -325,9 +325,12 @@ impl QueueView {
                 }
             }
             self.closings += 1;
+        }
+        let closed = !self.closing.is_empty();
+        self.order = queue.base.iter().map(|i| i.queue_item_id.clone()).collect();
+        if closed {
             self.let_go_of_moves(cx);
         }
-        self.order = queue.base.iter().map(|i| i.queue_item_id.clone()).collect();
         landed.extend(
             std::mem::take(&mut self.moved)
                 .into_iter()
