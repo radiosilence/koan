@@ -671,7 +671,11 @@ impl Render for SettingsWindow {
                     tab.icon(),
                     tab.title(),
                     tab == self.tab,
-                    move |_, window, cx| entity.update(cx, |this, cx| this.choose(tab, window, cx)),
+                    move |_, window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.choose(tab, window, cx);
+                        })
+                    },
                 )
             });
         let status = status_line(self.ctx.model.read(cx));
