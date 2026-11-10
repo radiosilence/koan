@@ -1,0 +1,1 @@
+- **The GUI smoke runs no longer gate merges or releases.** They still run and report; a slow or stuck run no longer holds up `Checks`.

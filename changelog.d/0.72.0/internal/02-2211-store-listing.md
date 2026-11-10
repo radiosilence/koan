@@ -1,0 +1,1 @@
+- **The App Store listing describes the GPUI app.** Review notes no longer mention an iPad sidebar, and the description no longer claims a Live Activity.

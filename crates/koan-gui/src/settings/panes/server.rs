@@ -6,7 +6,7 @@ use crate::components::{
     Button, ButtonKind, ChoiceCards, CopyText, Picker, Segmented, Stepper, TextField, Toggle,
 };
 use crate::theme::{Icon, Look, Tone, TypeRole, label};
-use koan_kit::app::input::{InputEvent, InputState};
+use koan_kit::app::input::{InputEvent, InputState, TextContentType};
 use koan_kit::app::*;
 use koan_runtime::{ConnectionInfo, Settings};
 
@@ -57,14 +57,15 @@ impl ServerPane {
     pub fn new(ctx: Ctx, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = ctx.model.read(cx).settings().cloned();
         let field = |placeholder: &'static str,
-                     secret: bool,
+                     content: TextContentType,
                      value: String,
                      window: &mut Window,
                      cx: &mut Context<Self>| {
             cx.new(|cx| {
                 InputState::new(window, cx)
                     .placeholder(crate::theme::label(placeholder))
-                    .masked(secret)
+                    .masked(content == TextContentType::CurrentPassword)
+                    .content(content)
                     .default_value(value)
             })
         };
@@ -78,10 +79,28 @@ impl ServerPane {
                 )
             })
             .unwrap_or_default();
-        let url = field("Server URL", false, url_value, window, cx);
-        let username = field("Username", false, user_value, window, cx);
-        let secret = field("Password", true, String::new(), window, cx);
-        let cache_limit = field("50", false, limit_value, window, cx);
+        let url = field(
+            "Server URL",
+            TextContentType::Unspecified,
+            url_value,
+            window,
+            cx,
+        );
+        let username = field(
+            "Username",
+            TextContentType::Username,
+            user_value,
+            window,
+            cx,
+        );
+        let secret = field(
+            "Password",
+            TextContentType::CurrentPassword,
+            String::new(),
+            window,
+            cx,
+        );
+        let cache_limit = field("50", TextContentType::Unspecified, limit_value, window, cx);
         let cache = cx.global::<Mirror>().cache.clone();
         let share = super::share::ShareForm::new(&ctx, window, cx);
         let subscriptions = vec![
@@ -173,12 +192,7 @@ impl ServerPane {
         let url = self.url.read(cx).value().trim().to_owned();
         let username = self.username.read(cx).value().trim().to_owned();
         let secret = self.secret.read(cx).value().to_string();
-        let signing_in = self
-            .ctx
-            .model
-            .read(cx)
-            .running()
-            .any(|label| label.as_ref() == crate::settings::model::SIGNING_IN);
+        let signing_in = self.ctx.model.read(cx).signing_in();
         if signing_in || url.is_empty() || username.is_empty() || secret.is_empty() {
             return;
         }
@@ -256,6 +270,27 @@ impl ServerPane {
         let sheet = Sheet::new(title)
             .message(message)
             .action(Action::new("Sign In", join));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
+    }
+
+    /// Signs in to the demonstration server, once the person has seen what
+    /// that brings to this device.
+    pub fn try_demo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !crate::settings::demo_offered(cx) {
+            return;
+        }
+        let (url, username, _) = crate::settings::model::DEMO;
+        let model = self.ctx.model.clone();
+        let sheet = Sheet::new("Try the demo server?")
+            .message(format!(
+                "kōan signs in to {} as {username}. The demo's library, favourites and history appear on this device, beside anything already here. Signing out removes them.",
+                host(url)
+            ))
+            .action(Action::new("Sign In", move |_, _, cx| {
+                model.update(cx, |m, cx| m.sign_in_demo(cx))
+            }));
         self.ctx
             .sheets
             .update(cx, |s, cx| s.show(sheet, window, cx));
@@ -466,9 +501,7 @@ impl ServerPane {
             }
             sections.push(offers(connection, look));
         } else {
-            let signing_in = model
-                .running()
-                .any(|label| label.as_ref() == crate::settings::model::SIGNING_IN);
+            let signing_in = model.signing_in();
             let ready = !signing_in
                 && [&self.url, &self.username, &self.secret]
                     .iter()
@@ -492,6 +525,14 @@ impl ServerPane {
                                     let with_key = *index == 1;
                                     entity.update(cx, |pane, cx| {
                                         pane.with_key = with_key;
+                                        // A key is not a saved password.
+                                        pane.secret.update(cx, |s, _| {
+                                            s.set_content(if with_key {
+                                                TextContentType::Unspecified
+                                            } else {
+                                                TextContentType::CurrentPassword
+                                            })
+                                        });
                                         cx.notify();
                                     })
                                 }
@@ -525,6 +566,21 @@ impl ServerPane {
                                     entity.update(cx, |pane, cx| {
                                         pane.join(&pasted, false, window, cx)
                                     })
+                                }
+                            })
+                            .into_any_element(),
+                    ],
+                    look,
+                ),
+                buttons(
+                    vec![
+                        Button::new("try-demo", ButtonKind::Link)
+                            .label("Try the demo server")
+                            .disabled(signing_in || !crate::settings::demo_offered(cx))
+                            .on_click({
+                                let entity = entity.clone();
+                                move |_, window, cx| {
+                                    entity.update(cx, |pane, cx| pane.try_demo(window, cx))
                                 }
                             })
                             .into_any_element(),

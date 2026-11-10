@@ -194,7 +194,7 @@ def submit(app_id, platform, version_id, answered):
     else:
         submission = create("reviewSubmissions", {"platform": platform}, {"app": rel("apps", app_id)})
         # Screenshots still processing refuse the item for a minute or two.
-        for attempt in range(12):
+        for attempt in range(45):
             try:
                 create(
                     "reviewSubmissionItems",
@@ -206,7 +206,7 @@ def submit(app_id, platform, version_id, answered):
                 )
                 break
             except SystemExit as e:
-                if "ASSET_IN_POST_PROCESSING" not in str(e) or attempt == 11:
+                if "ASSET_IN_POST_PROCESSING" not in str(e) or attempt == 44:
                     raise
                 time.sleep(20)
     patch("reviewSubmissions", submission["id"], {"submitted": True})

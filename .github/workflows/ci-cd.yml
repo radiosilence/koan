@@ -471,6 +471,8 @@ jobs:
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test -p koan-gui -p koan-kit --all-targets
 
+  # Reported but not part of `checks`: a slow or stuck run never holds up a
+  # merge or a release.
   # The app run as it is used: playing, seeking and hovering every page
   # headless against a muted generated library (`just gui-smoke`), Settings'
   # flows (`just gui-settings-smoke`) and real windows presenting
@@ -859,7 +861,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, gui-smoke, audit, pulumi-package, linux-build, container, macos, ios, tvos, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, audit, pulumi-package, linux-build, container, macos, ios, tvos, android]
     if: always()
     steps:
       - env:

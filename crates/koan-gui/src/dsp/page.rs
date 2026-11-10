@@ -63,6 +63,13 @@ impl EqPage {
         self.body.update(cx, |b, cx| b.show(device, cx));
     }
 
+    /// The sheets over `page` alone, for a shell that draws an import's
+    /// questions wherever it is.
+    pub fn sheets(page: &Entity<Self>, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let sheets = page.read(cx).sheets.clone();
+        Sheets::render(&sheets, window, cx)
+    }
+
     /// The sheets and import questions over `page`, for a shell that draws
     /// over its pages to draw over everything, as a phone's does: its sheet
     /// layer, then its question layer.
@@ -280,8 +287,13 @@ impl EqBody {
             prompt: None,
         });
         cx.spawn(async move |cx| {
-            let Ok(Ok(Some(paths))) = paths.await else {
-                return;
+            let paths = match paths.await {
+                Ok(Ok(Some(paths))) => paths,
+                Ok(Err(e)) => {
+                    log::warn!("the file picker did not open: {e}");
+                    return;
+                }
+                _ => return,
             };
             dsp.update(cx, |dsp, cx| dsp.import_files(paths, None, None, into, cx));
         })
