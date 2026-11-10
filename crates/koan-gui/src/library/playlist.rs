@@ -1020,6 +1020,7 @@ impl PlaylistPage {
                     picked: selected,
                     waiting: false,
                     pick: None,
+                    pick_in: 0,
                 };
                 let frame = queue_rows::heading(
                     TableRow::new(ElementId::Name(id.clone()), RowKind::Heading),
@@ -1041,6 +1042,7 @@ impl PlaylistPage {
                     picked: selected,
                     waiting: false,
                     pick: None,
+                    pick_in: 0,
                 };
                 let playing =
                     base.playlist_entry_id.is_some() && base.playlist_entry_id == self.playing;

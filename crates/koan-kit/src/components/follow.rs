@@ -99,6 +99,271 @@ impl Follow {
     }
 }
 
+/// How much of the finger's travel past a list's end shows, UIKit's constant.
+const RUBBER: f32 = 0.55;
+/// A bounce off a list's end: how hard it is drawn back, critically damped.
+const BOUNCE_STIFFNESS: f32 = 140.0;
+/// A pan let go past a list's end: firmer than a bounce, it has less to do.
+const RETURN_STIFFNESS: f32 = 190.0;
+
+fn damped(stiffness: f32) -> f32 {
+    2.0 * stiffness.sqrt()
+}
+
+/// How far a page shows pulled for a finger `raw` past its end, in a
+/// viewport `dimension` tall: it gives less the further it goes.
+fn rubber(raw: f32, dimension: f32) -> f32 {
+    raw.signum() * (1.0 - 1.0 / (raw.abs() * RUBBER / dimension + 1.0)) * dimension
+}
+
+/// The finger travel that shows a page pulled `shown`: `rubber` undone.
+fn unrubber(shown: f32, dimension: f32) -> f32 {
+    let shown = shown.abs().min(dimension * 0.99) * shown.signum();
+    shown.signum() * dimension * (1.0 / (1.0 - shown.abs() / dimension) - 1.0) / RUBBER
+}
+
+#[derive(Default)]
+struct ElasticState {
+    /// Finger travel past the end, in points; zero while none.
+    pulled: f32,
+    finger: bool,
+    /// The layer is mounted: pulled, or settling back.
+    layered: bool,
+    /// When the settle under way lands; a fling's remaining steps are not
+    /// bounced off the end again before it has.
+    settling: Option<std::time::Instant>,
+    /// The last scroll step's time, and the speed it moved at in points per
+    /// second: a fling's, as it reaches the end.
+    last: Option<std::time::Instant>,
+    speed: f32,
+    /// What the finger has moved the page by since it last stood at its top.
+    travelled: f32,
+}
+
+/// A page whose ends give, as a UIKit scroll view's: a vertical pan the page
+/// has no more of to show pulls the page off its place, less the further it
+/// goes, and a fling that reaches an end bounces. The whole page is the
+/// layer the GPU moves, so a list of any kind has it without knowing, and
+/// nothing is drawn while it moves. One per stage; the page goes in through
+/// `wrap`.
+#[derive(Clone)]
+pub struct Elastic {
+    follow: Follow,
+    state: std::rc::Rc<std::cell::RefCell<ElasticState>>,
+}
+
+impl Default for Elastic {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Elastic {
+    pub fn new() -> Self {
+        Self {
+            follow: Follow::new(),
+            state: Default::default(),
+        }
+    }
+
+    /// `page`, its ends giving.
+    pub fn wrap(&self, page: impl IntoElement, window: &mut Window, _: &mut App) -> AnyElement {
+        let layered = self.state.borrow().layered;
+        let view = window.current_view();
+        let page = page.into_any_element();
+        let page = if layered {
+            self.follow.layer(page).into_any_element()
+        } else {
+            page
+        };
+        let this = self.clone();
+        div()
+            .relative()
+            .size_full()
+            .child(page)
+            .child(
+                canvas(
+                    |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+                    move |bounds, hitbox, window, _| {
+                        let this = this.clone();
+                        let dimension = f32::from(bounds.size.height);
+                        window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
+                            if event.source == ScrollSource::Touch
+                                && hitbox.should_handle_scroll(window)
+                            {
+                                this.heard(event, phase, dimension, view, window, cx);
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
+            .into_any_element()
+    }
+
+    /// Whether the page has been scrolled since it last stood at its top: a
+    /// rewind has somewhere to come from.
+    pub fn scrolled(&self) -> bool {
+        self.state.borrow().travelled.abs() > 1.0
+    }
+
+    /// Back at its top by a jump: the page comes the last part of the way as
+    /// a scroll arriving there would, on the GPU. `over` is how far, in
+    /// points. Nothing happens if it had not been scrolled.
+    pub fn rewound(&self, over: Pixels, view: EntityId, window: &Window, cx: &mut App) {
+        let scrolled = {
+            let mut state = self.state.borrow_mut();
+            std::mem::take(&mut state.travelled).abs() > 1.0
+        };
+        if !scrolled || !moves(cx) {
+            return;
+        }
+        self.follow.follow(point(Pixels::ZERO, -over), window);
+        let length = self.follow.settle(Point::default(), window, cx);
+        self.land(length, view, cx);
+    }
+
+    fn land(&self, after: Duration, view: EntityId, cx: &mut App) {
+        let at = std::time::Instant::now() + after;
+        {
+            let mut state = self.state.borrow_mut();
+            state.settling = Some(at);
+            state.layered = true;
+        }
+        cx.notify(view);
+        let state = self.state.clone();
+        cx.spawn(async move |cx| {
+            cx.background_executor().timer(after).await;
+            let landed = {
+                let mut state = state.borrow_mut();
+                let landed = state.settling == Some(at) && state.pulled == 0.0 && !state.finger;
+                if landed {
+                    state.settling = None;
+                    state.layered = false;
+                }
+                landed
+            };
+            if landed {
+                cx.update(|cx| cx.notify(view));
+            }
+        })
+        .detach();
+    }
+
+    fn heard(
+        &self,
+        event: &ScrollEvent,
+        phase: DispatchPhase,
+        dimension: f32,
+        view: EntityId,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let dy = f32::from(event.delta.pixel_delta(px(16.)).y);
+        if phase == DispatchPhase::Capture {
+            let now = std::time::Instant::now();
+            let mut state = self.state.borrow_mut();
+            if let Some(last) = state.last.replace(now) {
+                let dt = now.duration_since(last).as_secs_f32();
+                if dt > 0.001 && dy != 0.0 {
+                    state.speed = dy / dt;
+                }
+            }
+            match event.touch_phase {
+                TouchPhase::Started => {
+                    state.finger = true;
+                    // A finger landing on a bounce holds it where it stands.
+                    if state.settling.take().is_some() {
+                        let shown = self.follow.at().y / window.scale_factor();
+                        state.pulled = unrubber(shown, dimension);
+                        self.follow.follow(point(Pixels::ZERO, px(shown)), window);
+                    }
+                    return;
+                }
+                TouchPhase::Moved if state.finger && state.pulled != 0.0 => {
+                    let next = state.pulled + dy;
+                    // Past the place it stands at rest, the page has its
+                    // ordinary pan back.
+                    state.pulled = if next * state.pulled <= 0.0 {
+                        0.0
+                    } else {
+                        next
+                    };
+                    let shown = rubber(state.pulled, dimension);
+                    self.follow.follow(point(Pixels::ZERO, px(shown)), window);
+                    cx.stop_propagation();
+                    return;
+                }
+                TouchPhase::Ended | TouchPhase::Cancelled if state.finger => {
+                    state.finger = false;
+                    if state.layered && state.settling.is_none() {
+                        state.pulled = 0.0;
+                        let length = if moves(cx) {
+                            self.follow.animated().throw(
+                                2,
+                                0.0,
+                                0.0,
+                                RETURN_STIFFNESS,
+                                damped(RETURN_STIFFNESS),
+                            )
+                        } else {
+                            self.follow.follow(Point::default(), window);
+                            Duration::ZERO
+                        };
+                        drop(state);
+                        self.land(length, view, cx);
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
+                _ => {
+                    if dy != 0.0 {
+                        state.travelled += dy;
+                    }
+                    return;
+                }
+            }
+        }
+        // Bubbling: nothing under the finger could take this step.
+        let mut state = self.state.borrow_mut();
+        state.travelled -= dy;
+        match event.touch_phase {
+            TouchPhase::Moved if state.finger && dy != 0.0 => {
+                state.pulled += dy;
+                let shown = rubber(state.pulled, dimension);
+                let layered = std::mem::replace(&mut state.layered, true);
+                self.follow.follow(point(Pixels::ZERO, px(shown)), window);
+                if !layered {
+                    drop(state);
+                    cx.notify(view);
+                }
+            }
+            TouchPhase::Moved if !state.finger && dy != 0.0 && !state.layered => {
+                let settling = state
+                    .settling
+                    .is_some_and(|at| at > std::time::Instant::now());
+                if settling || !moves(cx) {
+                    return;
+                }
+                let velocity = state.speed * window.scale_factor();
+                drop(state);
+                let length = self.follow.animated().throw(
+                    2,
+                    0.0,
+                    velocity,
+                    BOUNCE_STIFFNESS,
+                    damped(BOUNCE_STIFFNESS),
+                );
+                self.land(length, view, cx);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// What fills the room a row slid toward the leading edge leaves: drawn
 /// whole under the row and shown only on the strip the row uncovers, moved
 /// so that its middle stays in the middle of that strip. Track 1 is the

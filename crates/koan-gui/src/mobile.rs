@@ -108,6 +108,8 @@ pub struct PhoneShell {
     /// The page in front over the page under it, moved on the GPU: by a
     /// swipe from the edge, a page pushed, or back by the bar's button.
     push: crate::components::Push,
+    /// The page in front's ends: pans past them pull it, flings bounce off.
+    elastic: crate::components::Elastic,
     /// The page under is drawn, while a swipe or a settle moves the push.
     pushing: bool,
     /// A finger is on the swipe from the edge.
@@ -121,6 +123,9 @@ pub struct PhoneShell {
     /// Now Playing over everything, while it is open: a transport of its own
     /// in its full form, made on opening and let go on closing.
     now_playing: Option<(Entity<Transport>, Subscription, Subscription)>,
+    /// The mini player's sleeve growing into Now Playing's art as it opens:
+    /// the record, where it left, and how the page says where it goes.
+    flight: Option<(Option<i64>, Bounds<Pixels>, transport::Flight, Task<()>)>,
     /// A track's details over everything, while they are asked for: from a
     /// row's menu or Now Playing's title.
     info: Option<(i64, Entity<crate::library::info::TrackInfo>)>,
@@ -214,12 +219,14 @@ impl PhoneShell {
             eq_watch: None,
             info: None,
             push: crate::components::Push::new(),
+            elastic: crate::components::Elastic::new(),
             pushing: false,
             swiping: false,
             settle: None,
             closing: None,
             seen: None,
             now_playing: None,
+            flight: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
             output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
             _subscriptions: subscriptions,
@@ -492,6 +499,14 @@ impl PhoneShell {
         true
     }
 
+    /// The page showing has jumped back to its top: it arrives there as a
+    /// scroll would, the last stretch moved by the GPU.
+    fn rewound(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let over = window.viewport_size().height * 0.16;
+        let view = cx.entity_id();
+        self.elastic.rewound(over, view, window, cx);
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {
             if nav.back() {
@@ -704,6 +719,22 @@ impl PhoneShell {
         });
     }
 
+    /// Starts picking in the queue; for tools that walk the pages headlessly.
+    pub fn walk_queue_pick(&mut self, cx: &mut Context<Self>) {
+        self.queue.update(cx, |queue, cx| queue.walk_pick(cx));
+    }
+
+    /// Opens "add to playlist" on `tracks`; for tools that walk the pages.
+    pub fn walk_playlist_sheet(&self, tracks: Vec<i64>, window: &mut Window, cx: &mut App) {
+        if let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) {
+            let items: std::sync::Arc<[_]> = tracks
+                .into_iter()
+                .map(crate::library::drag::Playable::Track)
+                .collect();
+            crate::library::pick_playlist::open(&lib, items, None, window, cx);
+        }
+    }
+
     /// The page in front; for tools that walk the pages headlessly.
     pub fn route(&self, cx: &App) -> Route {
         self.nav.read(cx).current()
@@ -754,8 +785,56 @@ impl PhoneShell {
             cx.notify();
         });
         self.closing = None;
+        self.start_flight(&full, window, cx);
         self.now_playing = Some((full, closed, info));
         cx.notify();
+    }
+
+    /// As Now Playing rises, the mini player's sleeve grows into the art: the
+    /// art waits while it flies, and takes over as it lands. Without motion
+    /// Now Playing simply stands there.
+    fn start_flight(&mut self, full: &Entity<Transport>, window: &Window, cx: &mut Context<Self>) {
+        self.flight = None;
+        if !crate::theme::KoanTheme::motion_allowed(cx) {
+            return;
+        }
+        let album = self
+            .transport
+            .read(cx)
+            .now_playing_album(cx)
+            .filter(|album| album.is_some());
+        let Some(album) = album else { return };
+        let look = crate::theme::Look::of(window, cx);
+        let (side, height) = (
+            look.spaced(transport::SLEEVE),
+            look.spaced(transport::MINI_HEIGHT),
+        );
+        let insets = crate::components::system_insets(Clear::System, window);
+        let viewport = window.viewport_size();
+        let top =
+            viewport.height - crate::components::foot_inset(window, cx) + (height - side) / 2.;
+        let from = Bounds::new(
+            Point::new(insets.left + look.space(crate::theme::Space::L), top),
+            Size::new(side, side),
+        );
+        let flight = transport::Flight::new(cx.entity_id());
+        full.update(cx, |full, _| full.flight = Some(flight.clone()));
+        let landing = {
+            let (flight, full) = (flight.clone(), full.downgrade());
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(crate::components::SlideUp::RISE)
+                    .await;
+                flight.landed.set(true);
+                full.update(cx, |_, cx| cx.notify()).ok();
+                this.update(cx, |this, cx| {
+                    this.flight = None;
+                    cx.notify();
+                })
+                .ok();
+            })
+        };
+        self.flight = Some((album, from, flight, landing));
     }
 
     fn tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -767,14 +846,18 @@ impl PhoneShell {
                     icon,
                     title,
                     ix == showing,
-                    cx.listener(move |this, _, _, cx| {
-                        if ix == this.nav.read(cx).tab() && this.pop_to_root(cx) {
+                    cx.listener(move |this, _, window, cx| {
+                        let again = ix == this.nav.read(cx).tab();
+                        if again && this.pop_to_root(cx) {
                             return;
                         }
                         this.nav.update(cx, |nav, cx| {
                             nav.switch(ix, root);
                             cx.notify();
                         });
+                        if again {
+                            this.rewound(window, cx);
+                        }
                     }),
                 )
             },
@@ -810,6 +893,17 @@ impl Render for PhoneShell {
                 )
                 .leaving(self.closing.is_some()),
             )
+        });
+        let flying = self.flight.as_ref().and_then(|(album, from, flight, _)| {
+            let to = flight.to()?;
+            let art = crate::covers::art(*album, to.size.width, window.scale_factor(), cx);
+            Some(crate::components::Flying::new(
+                "sleeve-to-art",
+                *from,
+                to,
+                crate::components::SlideUp::RISE,
+                crate::components::Cover::new(art, to.size.width),
+            ))
         });
         self.see_push(cx);
         let route = self.nav.read(cx).current();
@@ -853,6 +947,7 @@ impl Render for PhoneShell {
             under_bar(bar, page, None, false, insets.top)
         });
         let stage = {
+            let stage = self.elastic.wrap(stage, window, cx);
             let root = self.nav.read(cx).at_root();
             // What is wrong with the server and the output still opening
             // hang under the page in front's bar.
@@ -943,6 +1038,15 @@ impl Render for PhoneShell {
                     // every page while anything runs, as the iOS app has it:
                     // the sidebar foot that holds it on the desktop is gone.
                     .children(activity.read(cx).shows(cx).then(|| {
+                        let card = crate::components::Shifted::new(
+                            "activity-card",
+                            Point::new(Pixels::ZERO, p.look.space(crate::theme::Space::Xl)),
+                            // Even on every side, as the iOS app's card.
+                            div()
+                                .p(p.space(crate::theme::Space::M))
+                                .bg(p.look.palette.surface.hsla())
+                                .child(activity.clone()),
+                        );
                         div()
                             .absolute()
                             .left(p.space(crate::theme::Space::M))
@@ -951,13 +1055,7 @@ impl Render for PhoneShell {
                                 crate::components::foot_inset(window, cx)
                                     + p.space(crate::theme::Space::S),
                             )
-                            .child(crate::components::Rise::in_place(
-                                // Even on every side, as the iOS app's card.
-                                div()
-                                    .p(p.space(crate::theme::Space::M))
-                                    .bg(p.look.palette.surface.hsla())
-                                    .child(activity.clone()),
-                            ))
+                            .child(crate::components::FadeIn::new("activity-card-in", card))
                     })),
             )
             // The foot over the page: the mini player, its playhead along the
@@ -1000,15 +1098,17 @@ impl Render for PhoneShell {
                     .left_0()
                     .right_0()
                     .h(insets.top)
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.nav.update(cx, |nav, cx| {
                             let route = nav.current();
                             nav.choose(route);
                             cx.notify();
                         });
+                        this.rewound(window, cx);
                     })),
             )
             .children(now_playing)
+            .children(flying)
             .children(eq_sheets.map(|s| ask::layered(Layer::Sheet, s)))
             .children(eq_questions.map(|q| ask::layered(Layer::Question, q)))
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))

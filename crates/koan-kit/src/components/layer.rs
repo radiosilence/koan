@@ -52,6 +52,46 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
     prepare: None,
 };
 
+/// A layer scaled about a point and moved: tracks 0 the opacity, 1 the
+/// scale and 2 and 3 the offset, the point in device pixels from the layer's
+/// origin in uniforms 0 and 1. The layer is drawn at its full size and
+/// scaled down, so nothing is enlarged.
+pub static ZOOM: ShaderProgram = ShaderProgram {
+    name: "koan-zoom",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float scale = max(koan_track(u, 1, time), 0.001);
+    float2 origin = float2(u[0], u[1]);
+    float2 offset = float2(koan_track(u, 2, time), koan_track(u, 3, time));
+    float2 uv = ((position - offset - origin) / scale + origin) / size;
+    if (any(uv < 0.0) || any(uv > 1.0)) {
+        return float4(0.0);
+    }
+    float4 c = koan_sample(image, tile, uv);
+    float3 rgb = c.a > 0.0 ? c.rgb / c.a : float3(0.0);
+    return float4(rgb, c.a * koan_track(u, 0, time));
+}
+"#,
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    let scale = max(koan_track(u, 1u, time), 0.001);
+    let origin = u[0].xy;
+    let offset = vec2<f32>(koan_track(u, 2u, time), koan_track(u, 3u, time));
+    let uv = ((position - offset - origin) / scale + origin) / size;
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
+        return vec4<f32>(0.0);
+    }
+    let c = koan_sample(tile, uv);
+    var rgb = vec3<f32>(0.0);
+    if (c.a > 0.0) {
+        rgb = c.rgb / c.a;
+    }
+    return vec4<f32>(rgb, c.a * koan_track(u, 0u, time));
+}
+"#,
+    prepare: None,
+};
+
 /// What writes a layer's placement uniforms: its bounds and the window's scale.
 type Placed = Box<dyn Fn(Bounds<Pixels>, f32)>;
 
@@ -100,6 +140,13 @@ impl AnimatedLayer {
     pub fn program(mut self, program: &'static ShaderProgram) -> Self {
         self.program = program;
         self.always = true;
+        self
+    }
+
+    /// Composed by `program` rather than `LAYER` while it moves, and painted
+    /// plainly at rest.
+    pub fn moving_program(mut self, program: &'static ShaderProgram) -> Self {
+        self.program = program;
         self
     }
 

@@ -93,6 +93,8 @@ pub struct Transport {
     returning: Option<Task<()>>,
     /// How far a finger has pushed the mini player up, while it does.
     lift: Option<Pixels>,
+    /// Now Playing's art, while the mini player's sleeve grows into it.
+    pub(crate) flight: Option<transport_phone::Flight>,
     _subscriptions: [Subscription; 8],
 }
 
@@ -271,6 +273,7 @@ impl Transport {
             pulled: crate::components::Follow::new(),
             returning: None,
             lift: None,
+            flight: None,
         };
         this.reload_eq(cx);
         this

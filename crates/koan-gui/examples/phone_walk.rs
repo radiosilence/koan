@@ -43,6 +43,10 @@ const HEIGHT: f32 = 874.0;
 enum Step {
     Page(Route),
     NowPlaying,
+    /// The queue while picking: ticks and the selection bar.
+    QueuePick,
+    /// The "add to playlist" sheet.
+    PlaylistSheet(Vec<i64>),
     /// A page swiped back to the page under it: pictured part way, and
     /// the settle after the release counted for the frames it asks for.
     SwipeBack(Route),
@@ -112,6 +116,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             Step::Page(route) => cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx))),
             Step::NowPlaying => cx.update_window(window, |_, window, cx| {
                 shell.update(cx, |s, cx| s.open_now_playing(window, cx))
+            })?,
+            Step::QueuePick => {
+                cx.update(|cx| shell.update(cx, |s, cx| s.show(Route::Queue, cx)));
+                settle(&mut cx, window)?;
+                cx.update(|cx| shell.update(cx, |s, cx| s.walk_queue_pick(cx)));
+            }
+            Step::PlaylistSheet(tracks) => cx.update_window(window, |_, window, cx| {
+                shell.read(cx).walk_playlist_sheet(tracks, window, cx)
             })?,
             Step::SwipeBack(_) => unreachable!(),
         }
@@ -198,6 +210,10 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
         steps.push(page("artist", Route::Artist(artist)));
     }
     steps.push(("now-playing".into(), Step::NowPlaying));
+    if !ids.is_empty() {
+        steps.push(("queue-pick".into(), Step::QueuePick));
+        steps.push(("playlist-sheet".into(), Step::PlaylistSheet(ids)));
+    }
     Ok(steps)
 }
 

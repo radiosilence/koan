@@ -572,6 +572,55 @@ pub fn selection_bar<V: Picking>(
             end(cx);
         }
     };
+    // On a phone the verbs are icons over their words, sharing the width;
+    // five written out in full would not fit along it.
+    if cx.global::<crate::theme::KoanTheme>().touch {
+        let fav_all =
+            !picked.is_empty() && picked.iter().all(|i| lib.feed.read(cx).is_favourite(*i));
+        let none = picked.is_empty();
+        return SelectionBar::new(count(n as u64, "picked", "picked"))
+            .icon_verb(
+                "sel-play",
+                Icon::Play,
+                "play",
+                none,
+                verb(|lib, p, cx| actions::play(lib, p, false, cx).detach()),
+            )
+            .icon_verb(
+                "sel-next",
+                Icon::Next,
+                "next",
+                none,
+                verb(|lib, p, cx| {
+                    actions::queue(lib, p, koan_runtime::Placement::Next, cx).detach()
+                }),
+            )
+            .icon_verb(
+                "sel-queue",
+                Icon::QueueSection,
+                "queue",
+                none,
+                verb(|lib, p, cx| {
+                    actions::queue(lib, p, koan_runtime::Placement::Append, cx).detach()
+                }),
+            )
+            .icon_verb(
+                "sel-playlist",
+                Icon::Playlist,
+                "playlist",
+                none,
+                to_playlist,
+            )
+            .icon_verb(
+                "sel-fav",
+                Icon::Favourite,
+                if fav_all { "unlike" } else { "like" },
+                none,
+                verb(actions::favourite),
+            )
+            .on_done(move |_, _, cx| end(cx))
+            .done_help("stop selecting");
+    }
     SelectionBar::new(count(n as u64, "picked", "picked"))
         .verb_help(
             "sel-play",

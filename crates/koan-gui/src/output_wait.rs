@@ -10,12 +10,14 @@
 use koan_kit::app::*;
 use koan_runtime::OutputWait;
 
-use crate::components::Banner;
+use crate::components::{Banner, Hang};
 use crate::mirror::Mirror;
 use crate::theme::{Icon, Tone};
 
 pub struct OutputWaitBanner {
     wait: Option<OutputWait>,
+    /// What was showing while it goes back up behind the bar.
+    leaving: Option<(OutputWait, Task<()>)>,
     _playback: Subscription,
 }
 
@@ -24,10 +26,22 @@ impl OutputWaitBanner {
         let playback = cx.global::<Mirror>().playback.clone();
         Self {
             wait: playback.read(cx).0.output_wait.clone(),
+            leaving: None,
             _playback: cx.observe(&playback, |this, playback, cx| {
                 let now = &playback.read(cx).0.output_wait;
                 if *now != this.wait {
-                    this.wait = now.clone();
+                    let was = std::mem::replace(&mut this.wait, now.clone());
+                    this.leaving = was.filter(|_| this.wait.is_none()).map(|was| {
+                        let done = cx.spawn(async |this, cx| {
+                            cx.background_executor().timer(Hang::LEAVE).await;
+                            this.update(cx, |this, cx| {
+                                this.leaving = None;
+                                cx.notify();
+                            })
+                            .ok();
+                        });
+                        (was, done)
+                    });
                     cx.notify();
                 }
             }),
@@ -37,7 +51,8 @@ impl OutputWaitBanner {
 
 impl Render for OutputWaitBanner {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let Some(wait) = &self.wait else {
+        let leaving = self.leaving.as_ref().map(|(was, _)| was);
+        let Some(wait) = leaving.or(self.wait.as_ref()) else {
             return div().into_any_element();
         };
         let device = match &wait.device {
@@ -60,12 +75,13 @@ impl Render for OutputWaitBanner {
                 crate::engine::command(cx, "retry the output", |e| e.retry_output_open())
             });
         }
-        banner
-            .action("cancel", |_, _, cx| {
-                crate::engine::command(cx, "stop waiting for the output", |e| {
-                    e.cancel_output_open()
-                })
+        let banner = banner.action("cancel", |_, _, cx| {
+            crate::engine::command(cx, "stop waiting for the output", |e| {
+                e.cancel_output_open()
             })
+        });
+        Hang::new(banner)
+            .leaving(self.leaving.is_some())
             .into_any_element()
     }
 }

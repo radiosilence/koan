@@ -20,6 +20,39 @@ pub enum Form {
     Full,
 }
 
+/// Where Now Playing's art stands while the mini player's sleeve flies to
+/// it: what the page tells the shell, which draws the flight.
+#[derive(Clone)]
+pub struct Flight {
+    /// Where the art goes, once the page has been laid out.
+    to: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    /// Told when the art's place is known.
+    shell: EntityId,
+    /// The flight has landed: the art draws itself again.
+    pub landed: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl Flight {
+    pub fn new(shell: EntityId) -> Self {
+        Self {
+            to: Default::default(),
+            shell,
+            landed: Default::default(),
+        }
+    }
+
+    pub fn to(&self) -> Option<Bounds<Pixels>> {
+        self.to.get()
+    }
+
+    fn told(&self, bounds: Bounds<Pixels>, cx: &mut App) {
+        if self.to.get() != Some(bounds) {
+            self.to.set(Some(bounds));
+            cx.notify(self.shell);
+        }
+    }
+}
+
 /// The mini player, tapped: Now Playing is asked for.
 pub struct Expand;
 /// Now Playing's close, tapped.
@@ -35,7 +68,7 @@ impl EventEmitter<ShowInfo> for Transport {}
 /// theme's size.
 pub const MINI_HEIGHT: f32 = 56.0;
 /// The mini player's sleeve.
-const SLEEVE: f32 = 30.0;
+pub const SLEEVE: f32 = 30.0;
 
 impl Transport {
     /// Draws the transport as `form` from now on. The phone's forms follow
@@ -48,6 +81,17 @@ impl Transport {
             cx.observe(&playhead, |_, _, cx| cx.notify())
         });
         cx.notify();
+    }
+
+    /// The record playing, for the flight from the mini player's sleeve:
+    /// `None` when nothing is playing.
+    pub fn now_playing_album(&self, cx: &App) -> Option<Option<i64>> {
+        self.playback
+            .read(cx)
+            .0
+            .entry
+            .as_ref()
+            .map(|entry| entry.album_id)
     }
 
     pub(super) fn mini(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -90,7 +134,7 @@ impl Transport {
         let has_entry = entry.is_some();
         let album_id = entry.and_then(|e| e.album_id).unwrap_or(0) as u64;
         let track_id = entry.and_then(|e| e.track_id).unwrap_or(0) as u64;
-        div()
+        let bar = div()
             .id("mini-player")
             .relative()
             .w_full()
@@ -194,8 +238,21 @@ impl Transport {
                         }
                         cx.stop_propagation();
                     }))
-            })
-            .into_any_element()
+            });
+        // A first track's bar rises into the foot over "nothing playing".
+        crate::components::Shifted::new(
+            ElementId::NamedInteger("mini-arrives".into(), has_entry as u64),
+            Point::new(
+                Pixels::ZERO,
+                if has_entry {
+                    p.look.spaced(MINI_HEIGHT)
+                } else {
+                    Pixels::ZERO
+                },
+            ),
+            bar,
+        )
+        .into_any_element()
     }
 
     pub(super) fn full(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -219,13 +276,34 @@ impl Transport {
                 .clone()
                 .cached(StyleRefinement::default().size_full())
                 .into_any_element(),
-            _ => div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(Cover::new(self.cover.clone(), side))
-                .into_any_element(),
+            _ => {
+                // While the mini player's sleeve grows into this place the
+                // art itself waits, a canvas telling the flight where it goes.
+                let flying = self.flight.as_ref().filter(|f| !f.landed.get());
+                let art = match flying {
+                    Some(flight) => {
+                        let flight = flight.clone();
+                        div()
+                            .size(side)
+                            .child(
+                                canvas(
+                                    move |bounds, _, cx| flight.told(bounds, cx),
+                                    |_, _, _, _| {},
+                                )
+                                .size_full(),
+                            )
+                            .into_any_element()
+                    }
+                    None => Cover::new(self.cover.clone(), side).into_any_element(),
+                };
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(art)
+                    .into_any_element()
+            }
         };
         let titles = entry.map(|e| {
             let heart = e

@@ -138,6 +138,18 @@ impl RenderOnce for ScrollArea {
         let typing = window
             .use_keyed_state(child(&self.id, "typing"), cx, |_, _| None)
             .clone();
+        // The content's last part of the way clear of the keyboard, moved by
+        // the GPU on the keyboard's own curve, so the jump below is not seen.
+        let clearing = window
+            .use_keyed_state(child(&self.id, "clearing"), cx, |_, _| {
+                let animated = super::Animated::new();
+                super::layer::standing(&animated);
+                animated
+            })
+            .read(cx)
+            .clone();
+        let clear_moves = super::SHADED && crate::theme::KoanTheme::motion_allowed(cx);
+        let cleared = clearing.clone();
         let under_bar = if self.under_bar {
             super::bar_inset(window, cx)
         } else {
@@ -239,6 +251,18 @@ impl RenderOnce for ScrollArea {
                 let by = (field.bottom() - clear).min(field.top() - area.top());
                 let offset = scrolling.offset();
                 scrolling.set_offset(point(offset.x, offset.y - by));
+                if clear_moves {
+                    let device = f32::from(by) * window.scale_factor();
+                    cleared.segment(
+                        2,
+                        device,
+                        0.0,
+                        super::Animated::now(),
+                        std::time::Duration::from_millis(250),
+                        super::Ease::Bezier(0.17, 0.59, 0.4, 0.77),
+                        super::Repeat::Once,
+                    );
+                }
                 window.refresh();
             },
             |_, _, _, _| {},
@@ -249,24 +273,27 @@ impl RenderOnce for ScrollArea {
             .relative()
             .size_full()
             .when(self.shrinks, |d| d.flex_1().min_h_0().flex().flex_col())
-            .child(match self.content {
-                Content::Column(column) if !spaced => scrolled.child(*column),
-                Content::Column(column) => scrolled
-                    .flex()
-                    .flex_col()
-                    .children(spacer(under_bar))
-                    .child(column.flex_none())
-                    .children(spacer(under_foot)),
-                // Each item at its own height: a column taller than the
-                // view scrolls, and no item (an empty spacer least of all)
-                // is shrunk to fit.
-                Content::Items(items) => scrolled
-                    .flex()
-                    .flex_col()
-                    .children(spacer(under_bar))
-                    .children(items.into_iter().map(|item| div().flex_none().child(item)))
-                    .children(spacer(under_foot)),
-            })
+            .child(super::AnimatedLayer::new(
+                &clearing,
+                match self.content {
+                    Content::Column(column) if !spaced => scrolled.child(*column),
+                    Content::Column(column) => scrolled
+                        .flex()
+                        .flex_col()
+                        .children(spacer(under_bar))
+                        .child(column.flex_none())
+                        .children(spacer(under_foot)),
+                    // Each item at its own height: a column taller than the
+                    // view scrolls, and no item (an empty spacer least of all)
+                    // is shrunk to fit.
+                    Content::Items(items) => scrolled
+                        .flex()
+                        .flex_col()
+                        .children(spacer(under_bar))
+                        .children(items.into_iter().map(|item| div().flex_none().child(item)))
+                        .children(spacer(under_foot)),
+                },
+            ))
             .children(follow)
             .child(clear_of_keyboard)
             .child(

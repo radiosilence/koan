@@ -16,6 +16,7 @@ pub struct Viewer {
     art: CoverArt,
     title: SharedString,
     detail: Option<SharedString>,
+    from: Option<Point<Pixels>>,
 }
 
 impl Viewer {
@@ -30,7 +31,14 @@ impl Viewer {
             art,
             title: title.into(),
             detail: None,
+            from: None,
         }
+    }
+
+    /// Opens out of `from`, in window coordinates: the sleeve that was tapped.
+    pub fn from_point(mut self, from: Option<Point<Pixels>>) -> Self {
+        self.from = from;
+        self
     }
 
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
@@ -87,19 +95,31 @@ impl RenderOnce for Viewer {
             .items_center()
             .justify_center()
             .gap(look.space(Space::L))
-            .bg(look.veil(0.85))
             .occlude()
             .cursor_pointer()
-            .child(Cover::new(self.art, side))
-            .child(
-                div()
-                    .w(side)
+            .child(super::Veil::new(look.veil(0.85)))
+            .child({
+                let picture = div()
+                    .relative()
                     .flex()
                     .flex_col()
-                    .gap(look.spaced(3.0))
-                    .child(line(self.title, TypeRole::TitleSmall, p.strong.hsla()))
-                    .children(self.detail.map(|d| line(d, TypeRole::Meta, p.muted.hsla()))),
-            )
+                    .items_center()
+                    .gap(look.space(Space::L))
+                    .child(Cover::new(self.art, side))
+                    .child(
+                        div()
+                            .w(side)
+                            .flex()
+                            .flex_col()
+                            .gap(look.spaced(3.0))
+                            .child(line(self.title, TypeRole::TitleSmall, p.strong.hsla()))
+                            .children(self.detail.map(|d| line(d, TypeRole::Meta, p.muted.hsla()))),
+                    );
+                match self.from {
+                    Some(from) => super::ZoomIn::new(from, picture).into_any_element(),
+                    None => picture.into_any_element(),
+                }
+            })
     }
 }
 
