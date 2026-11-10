@@ -65,7 +65,7 @@ PRIVATE
 kōan has no account of its own, no analytics and no advertising. It talks to your server, and to public music \
 databases for artist information and lyrics.
 
-kōan is open source under the MIT licence. You need a Subsonic-compatible music server with your own music on it; \
+kōan is open source under the GNU AGPL. You need a Subsonic-compatible music server with your own music on it; \
 kōan does not provide music.\
 """
 
@@ -142,7 +142,7 @@ PRIVATE
 kōan has no account of its own, no analytics and no advertising. It talks to your server, and to public music \
 databases for artist information and lyrics.
 
-kōan is open source under the MIT licence. You need a Subsonic-compatible music server with your own music on it; \
+kōan is open source under the GNU AGPL. You need a Subsonic-compatible music server with your own music on it; \
 kōan does not provide music.\
 """
 

@@ -204,6 +204,16 @@ impl Navigator {
         Chosen::Moved
     }
 
+    /// Leaves only the tab's root behind the page showing, so that going
+    /// back from it lands on the root.
+    pub fn skip_to_root(&mut self) {
+        if self.cursor > 0 {
+            self.history.drain(1..self.cursor);
+            self.cursor = 1;
+            self.history.truncate(2);
+        }
+    }
+
     pub fn back(&mut self) -> bool {
         let moved = self.can_go_back();
         if moved {
@@ -445,6 +455,22 @@ mod tests {
         assert_eq!(nav.rewinds(QUEUE), 0);
         nav.switch(0, QUEUE);
         assert_eq!(nav.rewinds(QUEUE), 1);
+    }
+
+    #[test]
+    fn skipping_to_the_root_puts_the_root_behind_the_page_showing() {
+        let mut nav = Navigator::default();
+        nav.go(ALBUMS);
+        nav.go(TRACKS);
+        nav.go(PLAYLIST);
+        nav.back();
+        nav.skip_to_root();
+        assert_eq!(nav.behind(), Some(QUEUE));
+        assert_eq!(nav.current(), TRACKS);
+        assert!(!nav.can_go_forward());
+        nav.back();
+        assert_eq!(nav.current(), QUEUE);
+        assert!(nav.at_root());
     }
 
     #[test]

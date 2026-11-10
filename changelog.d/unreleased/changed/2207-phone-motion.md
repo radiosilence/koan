@@ -1,0 +1,1 @@
+- **Fewer snaps on the phone.** The mini player fades to a new sleeve and new names, and tapping the tab showing slides the page away to the tab's root.

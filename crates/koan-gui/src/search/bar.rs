@@ -6,7 +6,7 @@
 //! | Key | Does |
 //! |---|---|
 //! | ↑ ↓ | light a row, or "All results…" after the last |
-//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, go to it: a record or an artist to its page, a track to its record's, picked |
+//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, go to it: a record or an artist to its page; a track plays, the other tracks listed after it |
 //! | ⌘Return | play next |
 //! | ⌥Return | add to the queue |
 //! | ⇧⌘Return | replace the queue, asking first when it holds anything |
@@ -409,22 +409,23 @@ impl Found {
             crate::library::actions::queue(&lib, &items, placement, cx).detach()
         };
         match verb {
-            // Choosing goes to the thing and plays nothing: a record or an
-            // artist to its page, a track to its record's with the track
-            // picked.
+            // A track plays, as a tap on it does on the results page; a
+            // record or an artist opens.
+            Verb::Take if !picking && first.kind == Kind::Track => {
+                let tracks: Vec<i64> = rows
+                    .iter()
+                    .filter(|row| row.kind == Kind::Track)
+                    .map(|row| row.id)
+                    .collect();
+                let index = tracks.iter().position(|id| *id == first.id).unwrap_or(0);
+                crate::library::actions::play_list(&self.lib, tracks, index, cx);
+            }
             Verb::Take if !picking => {
-                let (page, pick) = match first.kind {
-                    Kind::Album => (Page::Album(first.id), None),
-                    Kind::Artist => (Page::Artist(first.id), None),
-                    Kind::Track => match first.art {
-                        Some(Art::Album(album)) => (Page::Album(album), Some((album, first.id))),
-                        _ => return,
-                    },
+                let page = match first.kind {
+                    Kind::Album => Page::Album(first.id),
+                    _ => Page::Artist(first.id),
                 };
-                // The pick is announced whether or not the page moves: a
-                // record already showing takes it at once.
                 self.lib.nav.update(cx, |nav, cx| {
-                    nav.pick = pick;
                     nav.open(page, cx);
                     cx.notify();
                 });
@@ -631,6 +632,8 @@ impl Render for Found {
         } else {
             let bar = if picking {
                 bar
+            } else if self.lit.and_then(|i| rows.get(i)).map(|r| r.kind) == Some(Kind::Track) {
+                bar.key("↩", "play")
             } else {
                 bar.key("↩", "go to")
             };

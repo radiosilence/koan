@@ -1,0 +1,1 @@
+- **A search hit on a track plays it.** In the desktop app's search box and on a phone's shelves, choosing a track plays it with the tracks listed after it, where it used to open the record with the row selected.

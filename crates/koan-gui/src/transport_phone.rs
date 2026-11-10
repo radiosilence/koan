@@ -88,6 +88,8 @@ impl Transport {
             .map(|e| e.title.clone())
             .unwrap_or_else(|| theme::label("nothing playing").to_string());
         let has_entry = entry.is_some();
+        let album_id = entry.and_then(|e| e.album_id).unwrap_or(0) as u64;
+        let track_id = entry.and_then(|e| e.track_id).unwrap_or(0) as u64;
         div()
             .id("mini-player")
             .relative()
@@ -107,27 +109,38 @@ impl Transport {
                         .glide(&self.mini_glide),
                 ),
             )
-            .child(Cover::new(self.cover.clone(), sleeve))
+            // A new record's sleeve and a new track's names fade in over
+            // what they replace, as Now Playing's do.
+            .child(crate::components::FadeIn::new(
+                ElementId::NamedInteger("mini-sleeve".into(), album_id),
+                Cover::new(self.cover.clone(), sleeve),
+            ))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(
+                    .child(crate::components::FadeIn::new(
+                        ElementId::NamedInteger("mini-titles".into(), track_id),
                         div()
-                            .text_role(TypeRole::Meta, &p.look)
-                            .text_color(p.strong)
-                            .truncate()
-                            .child(title),
-                    )
-                    .children(detail.map(|detail| {
-                        div()
-                            .text_role(TypeRole::Fine, &p.look)
-                            .text_color(p.muted)
-                            .truncate()
-                            .child(detail)
-                    })),
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_role(TypeRole::Meta, &p.look)
+                                    .text_color(p.strong)
+                                    .truncate()
+                                    .child(title),
+                            )
+                            .children(detail.map(|detail| {
+                                div()
+                                    .text_role(TypeRole::Fine, &p.look)
+                                    .text_color(p.muted)
+                                    .truncate()
+                                    .child(detail)
+                            })),
+                    )),
             )
             // Where the music plays, a thumb away on every page, as on iOS.
             .child(
