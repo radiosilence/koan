@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 use futures_channel::mpsc;
 use futures_util::StreamExt as _;
 use koan_kit::app::{App, AsyncApp, Global};
+#[cfg(target_os = "ios")]
+use koan_runtime::RepeatMode;
 use koan_runtime::{Anchor, KoanEngine, NowPlaying, PlayState, StateSlice};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
@@ -49,6 +51,7 @@ enum Command {
     Previous,
     Stop,
     Seek(u64),
+    Shuffle(bool),
     Raise,
     Quit,
 }
@@ -75,6 +78,18 @@ fn playback_of(state: PlayState, anchor: Option<Anchor>, now: Instant) -> MediaP
         PlayState::Playing => MediaPlayback::Playing { progress },
         PlayState::Paused => MediaPlayback::Paused { progress },
         PlayState::Stopped => MediaPlayback::Stopped,
+    }
+}
+
+/// How fast the system is told the playhead moves: a transport that plays
+/// but a playhead that holds still, waiting on a download or run dry at a
+/// track's end, is 0.
+#[cfg(any(target_os = "ios", test))]
+fn rate_of(state: PlayState, playhead_moving: bool, waiting: bool) -> f64 {
+    if state == PlayState::Playing && playhead_moving && !waiting {
+        1.0
+    } else {
+        0.0
     }
 }
 
@@ -111,6 +126,7 @@ fn command_of(event: MediaControlEvent, position_ms: Option<u64>) -> Option<Comm
             Command::Seek(step(direction, by.as_millis() as u64)?)
         }
         MediaControlEvent::Seek(direction) => Command::Seek(step(direction, SEEK_STEP_MS)?),
+        MediaControlEvent::SetShuffle(on) => Command::Shuffle(on),
         MediaControlEvent::Raise => Command::Raise,
         MediaControlEvent::Quit => Command::Quit,
         _ => return None,
@@ -210,6 +226,11 @@ struct Media {
     generation: u64,
     /// The cover file the system was last pointed at.
     cover: Option<PathBuf>,
+    #[cfg(target_os = "ios")]
+    waiting: bool,
+    /// The shuffle and repeat modes last shown on the system's controls.
+    #[cfg(target_os = "ios")]
+    modes: Option<(bool, RepeatMode)>,
 }
 
 impl Media {
@@ -246,6 +267,29 @@ impl Media {
         if let Err(e) = controls.set_playback(playback) {
             log::warn!("media controls: setting the transport: {e:?}");
         }
+        #[cfg(target_os = "ios")]
+        super::ios::publish_rate(rate_of(
+            self.state,
+            self.anchor.is_some_and(|a| a.playing),
+            self.waiting,
+        ));
+    }
+
+    /// Shows `now`'s play modes on the system's controls if they moved, and
+    /// says whether what the rate is worked out from moved.
+    #[cfg(target_os = "ios")]
+    fn follow_ios(&mut self, now: &NowPlaying) -> bool {
+        let modes = (now.shuffle, now.repeat_mode);
+        if self.modes != Some(modes) {
+            self.modes = Some(modes);
+            if let Some(controls) = self.controls.as_mut()
+                && let Err(e) = controls.set_shuffle(Some(now.shuffle))
+            {
+                log::warn!("media controls: setting shuffle: {e:?}");
+            }
+            super::ios::publish_repeat(now.repeat_mode);
+        }
+        std::mem::replace(&mut self.waiting, now.waiting) != now.waiting
     }
 }
 
@@ -269,6 +313,10 @@ pub fn start(engine: Arc<KoanEngine>, cx: &mut App) {
         anchor: None,
         generation: 0,
         cover: None,
+        #[cfg(target_os = "ios")]
+        waiting: false,
+        #[cfg(target_os = "ios")]
+        modes: None,
     }));
 
     let stream = engine.observe();
@@ -336,6 +384,7 @@ async fn answer(
             Command::Previous => Box::pin(engine.previous()),
             Command::Stop => Box::pin(engine.stop()),
             Command::Seek(at) => Box::pin(engine.seek(at)),
+            Command::Shuffle(on) => Box::pin(engine.set_shuffle(on)),
             Command::Raise => {
                 cx.update(super::to_front);
                 continue;
@@ -366,6 +415,8 @@ fn apply(
             let mut m = media.borrow_mut();
             let state_moved = m.state != now_playing.state;
             m.state = now_playing.state;
+            #[cfg(target_os = "ios")]
+            let state_moved = m.follow_ios(&now_playing) || state_moved;
             if shown != m.shown {
                 let new_track = shown.as_ref().and_then(|s| s.track_id)
                     != m.shown.as_ref().and_then(|s| s.track_id);
@@ -571,6 +622,23 @@ mod tests {
         assert_eq!(
             playback_of(PlayState::Paused, None, later),
             MediaPlayback::Paused { progress: None }
+        );
+    }
+
+    #[test]
+    fn only_a_playhead_that_moves_has_a_rate() {
+        assert_eq!(rate_of(PlayState::Playing, true, false), 1.0);
+        assert_eq!(rate_of(PlayState::Playing, true, true), 0.0, "waiting");
+        assert_eq!(rate_of(PlayState::Playing, false, false), 0.0, "stalled");
+        assert_eq!(rate_of(PlayState::Paused, true, false), 0.0);
+        assert_eq!(rate_of(PlayState::Stopped, false, false), 0.0);
+    }
+
+    #[test]
+    fn a_shuffle_request_is_passed_on() {
+        assert_eq!(
+            command_of(MediaControlEvent::SetShuffle(true), None),
+            Some(Command::Shuffle(true))
         );
     }
 

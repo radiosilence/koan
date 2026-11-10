@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.72.0
+
+### Security
+
+- **rmcp 3.9.** The MCP client no longer buffers an unbounded response body from a server (RUSTSEC-2026-0462).
+
+### Changed
+
+- **Licence.** kōan moves from MIT to AGPL-3.0-or-later, with an additional permission for app store distribution. Releases up to 0.71.4 remain under MIT.
+- **A shorter koan.rocks.** The homepage now leads with kōan as one player across server, desktop, phone, TV and terminal, and with the GPUI apps, and says what recent releases added; setup detail moves to the documentation. The compare page loses padding and its kōan cells follow the desktop app onto Linux.
+- **Fewer snaps on the phone.** The mini player fades to a new sleeve and new names, and tapping the tab showing slides the page away to the tab's root.
+- **A search hit on a track plays it.** In the desktop app's search box and on a phone's shelves, choosing a track plays it with the tracks listed after it, where it used to open the record with the row selected.
+- **The iOS app is now the GPUI app.** It updates the SwiftUI app in place under the same bundle id, keeping the library, sign-in and downloads; view preferences such as sort order start again.
+- **koan.rocks leads with the GPUI apps.** The homepage presents kōan as your player, server, remote and EQ on every device, with current screenshots, and the compare page and guides drop what described the SwiftUI Mac app.
+
+### Fixed
+
+- **Sheets on a phone stay on screen with Reduce Motion.** A sheet taller than the room above the keyboard now scrolls its body with motion off, as it already did with motion on.
+- **Read-only playlists on the phone.** The phone's playlists page listed only those a pick can be added to, so smart playlists and a server's read-only ones were missing.
+- **Live Activities are back on the iPhone.** While the phone controls another device, the lock screen and Dynamic Island show what is playing there, with working skip and play-pause buttons, kept up to date through the push relay.
+- **The iOS app is easier to try and to sign in to.** A signed-out app offers the demo server without typing, password fields use the secure keyboard and Password AutoFill, an invite or pairing link that launches the app answers in its one window, EQ import questions appear from any tab, and the EQ page can import files.
+- **The iPhone app recovers from interruptions and follows the system again.** Music comes back after Siri on AirPods or a call iOS never ends, the lock screen's scrubber stops when playback stops or waits on a download, Control Center has shuffle and repeat, a refused audio start says to tap to play, and a second shared EQ file in one session is imported at once.
+
+### Internal
+
+- **The GUI smoke runs no longer gate merges or releases.** They still run and report; a slow or stuck run no longer holds up `Checks`.
+- **The App Store listing describes the GPUI app.** Review notes no longer mention an iPad sidebar, and the description no longer claims a Live Activity.
+
 ## 0.71.4
 
 ### Fixed

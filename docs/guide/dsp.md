@@ -11,7 +11,7 @@ plays bit-perfect as before.
 The processing runs on the decode thread, before the ring buffer, so the audio
 callback is the same whether anything is processed or not. A device that is
 flat, with no correction and no tuning, runs nothing at all: the samples reach
-it untouched, and the format badge says when they did not ("FLAC 24/96 · FIR").
+it untouched, and the terminal UI's format badge says when they did not ("FLAC 24/96 · FIR").
 There is no switch to turn processing off; a device is made flat instead, and
 a preset brings back what it played.
 
@@ -230,9 +230,7 @@ The originals are not needed again.
 
 ## The EQ page
 
-![The EQ page on the Mac: a headphone correction and a tuning as curves with their total, and the device and preset chosen above](../../site/public/screens/mac-eq.webp)
-
-![The same page lower down: the chain from music in, through a correction and a tuning, to the output device](../../site/public/screens/mac-eq-target.webp)
+![The EQ page in the desktop app: a headphone correction and tunings as curves with their total, and the device and preset chosen above](../../site/public/screens/gui-eq.webp)
 
 The apps' EQ page is the chain a device plays, read top to bottom: music in,
 the correction, the filters' EQs, the device out. **Device** at the top picks
@@ -412,7 +410,7 @@ was already set from a preset and not changed since.
 
 ## On every device
 
-![The EQ page on an iPhone, for the phone's speaker](../../site/public/screens/ios-eq.webp)
+![The EQ screen on an iPhone](../../site/public/screens/gui-phone-eq.webp)
 
 Signed in to a kōan server, an EQ can be kept on every device of the
 account. Each EQ's **Sync** is either **Everywhere** or **This device**,
@@ -543,7 +541,7 @@ the accent whenever the output is set to anything but Flat; the menu names the
 preset. On the Mac the transport bar also names it beside the glyph, for the
 output playing, and the slider button beside each output under the speaker
 sets that output whether or not it is the one playing. While what is heard is processed,
-the speaker carries a dot and the format badge names the processing. Each EQ's
+the speaker carries a dot and the terminal UI's format badge names the processing. Each EQ's
 page shows exactly what it
 holds — every response's rate, channels, length, where it peaks and whether it
 mixes or delays channels, any bands, the headroom, and where it was imported

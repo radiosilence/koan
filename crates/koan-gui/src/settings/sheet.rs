@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
-use koan_kit::app::input::{InputEvent, InputState};
+use koan_kit::app::input::{InputEvent, InputState, TextContentType};
 use koan_kit::app::*;
 
 type Run = Rc<dyn Fn(&[String], &mut Window, &mut App)>;
@@ -143,10 +143,10 @@ impl Sheet {
     }
 }
 
-/// A field for a sheet's prompt.
-pub fn field(
+/// A field for a password in a sheet's prompt.
+pub fn secret_field(
     placeholder: &str,
-    secret: bool,
+    content: TextContentType,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<InputState> {
@@ -154,7 +154,8 @@ pub fn field(
     cx.new(|cx| {
         InputState::new(window, cx)
             .placeholder(placeholder)
-            .masked(secret)
+            .masked(true)
+            .content(content)
     })
 }
 

@@ -52,6 +52,8 @@ pub struct Feed {
     reach: Option<(Option<String>, bool, Option<String>)>,
     /// The playlists a pick can be added to: every one not read-only.
     pub playlists: Vec<(i64, SharedString)>,
+    /// Every playlist, read-only ones included: what a list of them shows.
+    pub all_playlists: Vec<(i64, SharedString)>,
     /// The newest read of the playlists asked for: an older one landing
     /// after it is dropped.
     playlists_read: u64,
@@ -111,6 +113,7 @@ impl Feed {
             connection_epoch: 0,
             reach: None,
             playlists: Vec::new(),
+            all_playlists: Vec::new(),
             playlists_read: 0,
             favourites: Favourites::default(),
             favourites_reading: false,
@@ -255,8 +258,12 @@ impl Feed {
                     return;
                 }
                 feed.playlists = playlists
-                    .into_iter()
+                    .iter()
                     .filter(|p| !p.readonly)
+                    .map(|p| (p.id, p.name.clone().into()))
+                    .collect();
+                feed.all_playlists = playlists
+                    .into_iter()
                     .map(|p| (p.id, p.name.into()))
                     .collect();
                 cx.notify();

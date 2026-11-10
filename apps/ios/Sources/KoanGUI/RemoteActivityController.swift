@@ -1,6 +1,6 @@
 import ActivityKit
 import KoanFFI
-import SwiftUI
+import UIKit
 
 /// Starts, updates and ends the lock screen's Live Activity as this phone
 /// starts and stops controlling another device. See `RemoteActivity`.
@@ -15,18 +15,17 @@ import SwiftUI
 @MainActor
 final class RemoteActivityController {
     private let engine: KoanEngine
-    private let mirror: EngineMirror
-    private let art: CoverArtCache
     private var activity: Activity<RemoteActivity>?
     private var tokens: Task<Void, Never>?
     private var shown: RemoteActivity.ContentState?
     /// The sleeve as the activity carries it, and which record it is of.
     private var sleeve: (album: Int64, data: Data?)?
+    private var devices: [DeviceInfo] = []
+    private var devicesAt = Date.now
+    private var target: String?
 
-    init(engine: KoanEngine, mirror: EngineMirror, art: CoverArtCache) {
+    init(engine: KoanEngine) {
         self.engine = engine
-        self.mirror = mirror
-        self.art = art
         Task {
             await RemoteActivityCommands.shared.set { device, command in
                 try await engine.commandDevice(id: device, command: command)
@@ -36,26 +35,35 @@ final class RemoteActivityController {
             activity = left
             follow(left)
         }
-        mirror.follow { [weak self] in self?.refresh() }
+        let stream = engine.observeDevices()
+        Task { [weak self] in
+            while let batch = await stream.next() {
+                guard let self else { return }
+                for case .devices(let devices, let target, _) in batch {
+                    self.devices = devices
+                    self.devicesAt = .now
+                    self.target = target
+                    self.refresh()
+                }
+            }
+        }
     }
 
     private func refresh() {
-        guard let target = mirror.target,
-              let device = mirror.devices.first(where: { $0.id == target })
-        else {
-            if mirror.target == nil { end() }
+        guard let target, let device = devices.first(where: { $0.id == target }) else {
+            if target == nil { end() }
             return
         }
         let state = RemoteActivity.ContentState(
             device: device.name,
             linked: device.awake,
             title: device.title,
-            artist: device.artistCredit.isEmpty ? nil : device.artistCredit.text,
+            artist: device.artistCredit.isEmpty ? nil : device.artistCredit.map(\.text).joined(),
             album: device.album,
             playing: device.state == .playing,
             positionMs: device.positionMs,
             durationMs: device.durationMs,
-            at: mirror.devicesAt.timeIntervalSince1970,
+            at: devicesAt.timeIntervalSince1970,
             art: thumbnail(for: device.albumId)
         )
         if let activity, activity.attributes.deviceId == target {
@@ -76,26 +84,26 @@ final class RemoteActivityController {
     private func thumbnail(for album: Int64?) -> Data? {
         guard let album else { return nil }
         if let sleeve, sleeve.album == album { return sleeve.data }
-        if let image = art.cached(.album(album), size: .thumb) {
-            let data = Self.jpeg(image)
-            sleeve = (album, data)
-            return data
-        }
         sleeve = (album, nil)
+        let engine = engine
         Task {
-            guard let image = await art.image(for: .album(album), size: .thumb),
+            guard let art = try? await engine.albumCoverArt(albumId: album, size: 144),
+                  let small = await Task.detached(operation: { Self.jpeg(art.data) }).value,
                   sleeve?.album == album
             else { return }
-            sleeve = (album, Self.jpeg(image))
+            sleeve = (album, small)
             refresh()
         }
         return nil
     }
 
     /// Small enough for the 4 KB Apple allows an activity's state.
-    private static func jpeg(_ image: UIImage) -> Data? {
-        let side: CGFloat = 72
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side))
+    private nonisolated static func jpeg(_ data: Data) -> Data? {
+        guard let image = UIImage(data: data) else { return nil }
+        let side: CGFloat = 96
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
         let small = renderer.image { _ in
             image.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
         }

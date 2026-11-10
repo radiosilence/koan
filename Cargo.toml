@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-runtime", "crates/koan-gui", "crates/koan-kit", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "tools/uniffi-bindgen"]
 
 [workspace.package]
-version = "0.71.4"
+version = "0.72.0"
 edition = "2024"
 homepage = "https://github.com/radiosilence/koan"
 repository = "https://github.com/radiosilence/koan"
@@ -14,16 +14,16 @@ license = "AGPL-3.0-or-later"
 # with koan's commits, each proposed upstream, published as gpui-koan-*.
 # Pinned to a revision; the library names stay Zed's (`gpui`,
 # `gpui_platform`).
-gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "6d00c3ebf108aeec498394e3a52e220014f29309" }
+gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "700d2e14fa85244547d4cb96ac16cebf1524fe56" }
 # `font-kit` is the macOS text system: without it GPUI draws no text.
-gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "6d00c3ebf108aeec498394e3a52e220014f29309", features = ["font-kit"] }
+gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "700d2e14fa85244547d4cb96ac16cebf1524fe56", features = ["font-kit"] }
 # kōan's push relay's client: radiosilence/koan-push-relay.
 koan-relay-client = "0.1.2"
 # Internal crates. Keep the version in step with [workspace.package] above —
 # a stale pin here publishes members that resolve against the wrong sibling.
-koan-core = { path = "crates/koan-core", version = "0.71.4" }
-koan-server = { path = "crates/koan-server", version = "0.71.4" }
-koan-tui = { path = "crates/koan-tui", version = "0.71.4" }
+koan-core = { path = "crates/koan-core", version = "0.72.0" }
+koan-server = { path = "crates/koan-server", version = "0.72.0" }
+koan-tui = { path = "crates/koan-tui", version = "0.72.0" }
 # Feature set is the union every member needs; `default-tls` is an alias for
 # `rustls`, so there is exactly one TLS stack.
 reqwest = { version = "0.13", default-features = false, features = [

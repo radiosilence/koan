@@ -15,10 +15,10 @@ use koan_kit::app::*;
 use koan_runtime::{CreditPart, EntryStatus, QueueItem, QueueLock};
 
 use crate::components::{
-    Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
-    KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind, RowList,
-    RowListState, RowMetrics, RowOffset, SelectionBar, TableRow, ToolbarButton, ToolbarGroup,
-    ToolbarMenu, ToolbarSelection,
+    Availability, AvailabilityMark, Button, ButtonKind, Cover, DragChip, EmptyState, INSERTION,
+    IconToggle, KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind,
+    RowList, RowListState, RowMetrics, RowOffset, SelectionBar, TableRow, ToolbarButton,
+    ToolbarGroup, ToolbarMenu, ToolbarSelection,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -186,10 +186,35 @@ pub struct QueueView {
     landed: HashSet<String>,
     landing: u64,
     _settle: Option<Task<()>>,
+    /// On a phone able to sign in to the demonstration server: the empty
+    /// queue offers it, this being the first page such a phone shows.
+    demo_offered: bool,
+    _demo: Vec<Subscription>,
     _subscriptions: [Subscription; 6],
 }
 
 impl QueueView {
+    fn follow_demo(&mut self, cx: &mut Context<Self>) {
+        let offered = crate::settings::demo_offered(cx);
+        if offered != self.demo_offered {
+            self.demo_offered = offered;
+            cx.notify();
+        }
+    }
+
+    fn empty_state(&self) -> EmptyState {
+        let empty = EmptyState::new(Icon::QueueSection, "queue is empty")
+            .detail("Find something to play from albums or artists.");
+        if !self.demo_offered {
+            return empty;
+        }
+        empty.action(
+            Button::new("try-demo", ButtonKind::Link)
+                .label("Try the demo server")
+                .on_click(|_, _, cx| crate::settings::answer(crate::settings::Incoming::Demo, cx)),
+        )
+    }
+
     pub fn new(nav: &Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         let queue = cx.global::<Mirror>().queue.clone();
         let covers = cx.global::<CoversHandle>().0.clone();
@@ -242,7 +267,20 @@ impl QueueView {
         list.on_scroll(move |start, _, cx| {
             weak.update(cx, |this, cx| this.keep_top(start, cx)).ok();
         });
+        let follow_demo = crate::mobile::handheld()
+            .then(|| cx.try_global::<crate::settings::Settings>())
+            .flatten()
+            .map(|settings| (settings.model.clone(), settings.sharing.clone()))
+            .map(|(model, sharing)| {
+                vec![
+                    cx.observe(&model, |this, _, cx| this.follow_demo(cx)),
+                    cx.observe(&sharing, |this, _, cx| this.follow_demo(cx)),
+                ]
+            })
+            .unwrap_or_default();
         let mut view = Self {
+            demo_offered: crate::mobile::handheld() && crate::settings::demo_offered(cx),
+            _demo: follow_demo,
             queue,
             focus: cx.focus_handle().tab_stop(true),
             list,
@@ -2162,9 +2200,7 @@ impl Render for QueueView {
                     Page::new(self.header(cx))
                 }
                 .body(if count == 0 {
-                    EmptyState::new(Icon::QueueSection, "queue is empty")
-                        .detail("Find something to play from albums or artists.")
-                        .into_any_element()
+                    self.empty_state().into_any_element()
                 } else {
                     let rows = view.clone();
                     let head = view.clone();

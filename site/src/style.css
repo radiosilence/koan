@@ -162,8 +162,8 @@
 }
 
 /*
- * The iPhone screenshots under the introduction, and the Apple TV ones in its section, sit in a row that scrolls by
- * touch, trackpad, arrow keys or its buttons, and settles on a screenshot. Nothing moves until asked to.
+ * The iPhone screenshots sit in a row that scrolls by touch, trackpad, arrow keys or its buttons, and settles on a
+ * screenshot. Nothing moves until asked to.
  */
 @layer components {
   .carousel {
@@ -224,7 +224,7 @@
 
 /*
  * The comparison tables at /compare/. Each scrolls in its own box, so the header row and the feature column stay in
- * view on both axes. A cell holds a mark (yes, partial, no, unknown, in an open pull request, or planned) and an optional note.
+ * view on both axes. A cell holds a mark (yes, partial, no, unknown or planned) and an optional note.
  */
 @layer components {
   .cmp {
@@ -268,7 +268,7 @@
     @apply mt-0.5 block text-muted;
   }
 
-  .cmp :is(.y, .p, .n, .q, .s) {
+  .cmp :is(.y, .p, .n, .q) {
     @apply font-semibold;
   }
 
@@ -278,10 +278,6 @@
 
   .cmp :is(.n, .q) {
     @apply text-muted;
-  }
-
-  .cmp .s {
-    @apply rounded-sm border border-brand px-1 text-[11px] text-brand;
   }
 
   .cmp .l {

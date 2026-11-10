@@ -52,6 +52,13 @@ struct Screens(WeakEntity<TouchShell>);
 
 impl Global for Screens {}
 
+/// Whether the phone's shell is up in its window.
+pub fn shell_open(cx: &App) -> bool {
+    cx.try_global::<Screens>()
+        .is_some_and(|s| s.0.upgrade().is_some())
+        && crate::app::main_window(cx).is_some()
+}
+
 /// On a phone, runs `f` on the shell in its window: whether it did.
 fn on_shell(
     cx: &mut App,
@@ -159,6 +166,8 @@ pub struct TouchShell {
     lyrics_shown: bool,
     lyrics_slide: crate::components::SlideState,
     lyrics_width: Option<Pixels>,
+    /// An import stopped on a question, as last drawn.
+    import_asking: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -223,6 +232,17 @@ impl TouchShell {
                 let asking = ask::asking(cx);
                 cx.observe(&asking, |_, _, cx| cx.notify())
             },
+            // An import's questions come and go wherever the phone is.
+            {
+                let dsp = crate::dsp::model(cx);
+                cx.observe(&dsp, |this, dsp, cx| {
+                    let asking = dsp.read(cx).asking();
+                    if asking || std::mem::replace(&mut this.import_asking, false) {
+                        this.import_asking = asking;
+                        cx.notify();
+                    }
+                })
+            },
             // The activity card comes and goes with what is under way.
             {
                 let activity = cx
@@ -260,6 +280,7 @@ impl TouchShell {
             .filter(|w| *w > 0.0)
             .map(Pixels::from),
             eq_watch: None,
+            import_asking: false,
             info: None,
             push: crate::components::Push::new(),
             pushing: false,
@@ -407,7 +428,7 @@ impl TouchShell {
         let playlists = self
             .library
             .as_ref()
-            .map(|library| library.read(cx).lib().feed.read(cx).playlists.clone())
+            .map(|library| library.read(cx).lib().feed.read(cx).all_playlists.clone())
             .unwrap_or_default();
         let nav = self.nav.clone();
         ScrollArea::new(
@@ -761,14 +782,14 @@ impl TouchShell {
         self.settings.as_ref()?.read(cx).eq_page()
     }
 
-    /// EQ's sheets and questions, drawn over everything while its section
-    /// shows; the shell watches the page so that they come and go with it.
-    fn eq_overlay(
+    /// EQ's sheets, drawn over everything while its section shows; the shell
+    /// watches the page so that they come and go with it.
+    fn eq_sheets(
         &mut self,
         route: Route,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (Option<AnyElement>, Option<AnyElement>) {
+    ) -> Option<AnyElement> {
         let showing = route == Route::SettingsSection(crate::settings::Tab::Eq)
             || (!self.compact && matches!(route, Route::Settings | Route::SettingsSection(_)));
         let page = (showing && self.now_playing.is_none())
@@ -776,13 +797,13 @@ impl TouchShell {
             .flatten();
         let Some(page) = page else {
             self.eq_watch = None;
-            return (None, None);
+            return None;
         };
         if self.eq_watch.as_ref().map(|(id, _)| *id) != Some(page.entity_id()) {
             let watch = cx.observe(&page, |_, _, cx| cx.notify());
             self.eq_watch = Some((page.entity_id(), watch));
         }
-        crate::dsp::EqPage::overlay(&page, window, cx)
+        crate::dsp::EqPage::sheets(&page, window, cx)
     }
 
     /// Goes to `route` on the tab showing, as a link would; for tools that
@@ -988,7 +1009,10 @@ impl Render for TouchShell {
         if !compact {
             self.take_keys(route, window, cx);
         }
-        let (eq_sheets, eq_questions) = self.eq_overlay(route, window, cx);
+        let eq_sheets = self.eq_sheets(route, window, cx);
+        // An import shared from another app stops on these wherever the
+        // phone is: they are not the EQ page's.
+        let eq_questions = crate::dsp::prompts::render(&crate::dsp::model(cx), window, cx);
         let wanted = self
             .library
             .as_ref()

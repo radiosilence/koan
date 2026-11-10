@@ -140,9 +140,7 @@ it is reachable while it is running.
 
 The desktop app on macOS and Linux is the machine itself, named after it,
 with the machine's device id; the terminal UI on the same machine is a device
-of its own beside it. On a Mac it replaces the SwiftUI Mac app released
-before 0.70; see [The desktop app](desktop.md#replacing-the-mac-app).
-One runs per configuration directory.
+of its own beside it. One runs per configuration directory.
 
 Its devices button, in the transport beside the output menu, is Play on: it
 lists this computer and every other device, each with what it is playing, and

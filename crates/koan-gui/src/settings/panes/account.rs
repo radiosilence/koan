@@ -4,6 +4,7 @@
 
 use crate::components::{Button, ButtonKind};
 use crate::theme::Look;
+use koan_kit::app::input::TextContentType;
 use koan_kit::app::*;
 
 use super::keys::{Keys, Kind};
@@ -94,8 +95,13 @@ impl AccountPane {
     }
 
     fn change_password(&self, window: &mut Window, cx: &mut App) {
-        let current = sheet::field("Current password", true, window, cx);
-        let new = sheet::field("New password", true, window, cx);
+        let current = sheet::secret_field(
+            "Current password",
+            TextContentType::CurrentPassword,
+            window,
+            cx,
+        );
+        let new = sheet::secret_field("New password", TextContentType::NewPassword, window, cx);
         let model = self.ctx.model.clone();
         let sheet = Sheet::new("Change your password")
             .message("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.")

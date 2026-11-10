@@ -1042,6 +1042,17 @@ impl KoanEngine {
     /// (`LinkIdentity::desktop`). `device_name` is as for `open`; on iOS the
     /// system's name for the phone, which the hostname is not.
     pub async fn open_desktop(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
+        Self::start_desktop(device_name, |_| {}).await
+    }
+
+    /// `open_desktop`, begun by this call rather than by the future's first
+    /// poll, telling `opened` from the opening thread. For a launch that may
+    /// have no user interface to await it: iOS can start the app with no
+    /// scene, for a Live Activity's button or a background push.
+    pub fn start_desktop(
+        device_name: Option<String>,
+        opened: impl FnOnce(&Arc<Self>) + Send + 'static,
+    ) -> impl Future<Output = Result<Arc<Self>, KoanError>> + Send + 'static {
         offload::offload(move || {
             init_logging();
             let identity = match device_name.clone() {
@@ -1053,9 +1064,9 @@ impl KoanEngine {
                 .state
                 .downloads()
                 .set_reading_gap(DESKTOP_READING_GAP);
+            opened(&engine);
             Ok(engine)
         })
-        .await
     }
 }
 
@@ -1395,6 +1406,11 @@ impl KoanEngine {
     /// state, so there is nothing to seed from separately.
     pub fn observe(&self) -> Arc<state::StateStream> {
         state::StateStream::new(&self.out)
+    }
+
+    /// `observe`, for a client that reads only the `Devices` slice.
+    pub fn observe_devices(&self) -> Arc<state::StateStream> {
+        state::StateStream::devices(&self.out)
     }
 
     /// Forget the transfers that have already settled. Running ones are left

@@ -1,0 +1,1 @@
+- **The iPhone app recovers from interruptions and follows the system again.** Music comes back after Siri on AirPods or a call iOS never ends, the lock screen's scrubber stops when playback stops or waits on a download, Control Center has shuffle and repeat, a refused audio start says to tap to play, and a second shared EQ file in one session is imported at once.
