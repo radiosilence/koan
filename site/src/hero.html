@@ -1,14 +1,19 @@
 <!doctype html>
 <!--
-  The homepage's top image, public/screens/hero.webp: the web UI, the desktop app and the iPhone app together. This page
-  at 1600x1000, screenshotted by a headless Chrome from site/ with a transparent background, then saved as WebP. It
-  draws on public/screens, so make it again when those change:
+  The homepage's top image, public/screens/hero.webp: the desktop app and the iPhone app together. This page at
+  1600x1000, screenshotted by a headless Chrome from site/ with a transparent background, then saved as WebP. It draws
+  on public/screens, so make it again when those change:
     chrome --headless --hide-scrollbars --force-device-scale-factor=2 --window-size=1600,1000 \
       --default-background-color=00000000 --allow-file-access-from-files --screenshot=hero.png "file://$PWD/src/hero.html"
+  At phone widths the page shows public/screens/hero-narrow.webp instead: the same command with --window-size=780,900
+  and #narrow on the URL.
 -->
 <html lang="en-GB">
 <head>
   <meta charset="utf-8">
+  <script>
+    if (location.hash === "#narrow") document.documentElement.classList.add("narrow");
+  </script>
   <style>
     html, body {
       margin: 0;
@@ -23,35 +28,43 @@
       display: block;
     }
 
-    .web {
-      left: 20px;
-      top: 50px;
-      width: 780px;
-      border-radius: 12px;
-      box-shadow: 0 24px 60px rgb(0 0 0 / 0.5);
-      opacity: 0.92;
-    }
-
     .mac {
-      left: 170px;
-      top: 250px;
-      width: 1130px;
+      left: 20px;
+      top: 150px;
+      width: 1230px;
       border-radius: 16px;
       box-shadow: 0 40px 100px rgb(0 0 0 / 0.6);
     }
 
     .phone {
-      left: 1215px;
-      top: 90px;
-      width: 360px;
-      border-radius: 54px;
+      left: 1180px;
+      top: 60px;
+      width: 390px;
+      border-radius: 58px;
       border: 1px solid rgb(255 255 255 / 0.14);
       box-shadow: 0 40px 90px rgb(0 0 0 / 0.65);
+    }
+
+    .narrow, .narrow body {
+      width: 780px;
+      height: 900px;
+    }
+
+    .narrow .mac {
+      left: 16px;
+      top: 40px;
+      width: 1130px;
+    }
+
+    .narrow .phone {
+      left: 370px;
+      top: 90px;
+      width: 372px;
+      border-radius: 54px;
     }
   </style>
 </head>
 <body>
-  <img class="web" src="../public/screens/web-search.webp" alt="">
   <img class="mac" src="../public/screens/gui-album.webp" alt="">
   <img class="phone" src="../public/screens/gui-phone-now-playing.webp" alt="">
 </body>

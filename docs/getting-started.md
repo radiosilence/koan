@@ -18,15 +18,11 @@ On Linux, each release carries an AppImage and a `.deb`. See [The desktop app](g
 
 The first launch opens a setup guide that asks where your music is and sets up the rest from there; Settings → Library opens it again. Everything it sets is in Settings too: **Library** adds folders and scans them, **Server** signs in to a kōan, Navidrome or Subsonic server, or [shares the computer's own library](guide/sharing-your-mac.md) with your phone. On a Mac it needs macOS 26 or later. It shares its config and library with the terminal UI.
 
-The SwiftUI Mac app is no longer released. The desktop app replaces it on the same configuration, as described in [The desktop app](guide/desktop.md#replacing-the-mac-app).
-
 An output device can take a while to open: a DAC waking from sleep, or the Mac's audio system busy. kōan goes on taking commands meanwhile, so a seek, pause or skip applies once the device is ready, and after two seconds a line across the top of the window says which device it is waiting for. **Retry** asks the device again. **Cancel** plays on the system's default output until another device is chosen, or stops if the default is the one that will not open. The desktop app and the iOS app do the same.
 
 ## The iOS app
 
 The iOS app plays from a server; a phone has no music folder to scan. It is in public beta on [TestFlight](https://testflight.apple.com/join/96w2gjFz) until it is on the App Store, or can be built from source onto a phone plugged into a Mac with `just ios-phone`, signed with your own Apple developer team. Sign in under Settings → Server, or open an invite link from the server's admin. It needs iOS 26 or later.
-
-On an iPad with room for it, the iOS app's sidebar is the Mac's: Queue, the library's sections, the playlists and Settings, each opening its page beside it. Narrower, in Split View or Slide Over, the app folds back into the iPhone's tabs, with the sections under Library.
 
 ### Sample rates on iOS
 
@@ -45,7 +41,7 @@ The Apple TV app is in the same TestFlight beta as the iOS app and needs tvOS 26
 
 ## History and Recently played
 
-The apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's and the iPad's sidebar and the Library tab on iPhone and Android, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
+The apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the desktop app's sidebar and a phone's Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
 
 Recently Played and Favourites show the first few of each kind. Each section's heading gives how many there are in all and opens the Albums, Artists or Tracks browser filtered to the shelf, in the shelf's order; the filter shows in the browser's filter control and is cleared there. Search's sections do the same.
 
@@ -71,7 +67,7 @@ After upgrading, the next scan reads every file's tags again and the next sync w
 
 ## Downloaded and offline
 
-**Downloaded**, in the Mac's and the iPad's sidebar and the Library tab on iPhone and Android, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
+**Downloaded**, in the desktop app's sidebar and a phone's Library tab, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
 
 On iOS and Android, when the server cannot be reached for a few seconds while the app is open, kōan goes offline: every list, from Albums and search to Favourites and playlists, shows only what is on the device, the queue greys out tracks that are not, and the Library tab (on an iPad, the sidebar) says so. It goes back online by itself when the server answers again. **Settings → Offline mode** turns it on by hand, for a train with a signal that comes and goes. A server without kōan's link (Navidrome) gives no signal for this, so there only the switch applies.
 
