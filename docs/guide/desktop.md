@@ -22,10 +22,6 @@ Installed from the DMG or run as an AppImage, the app keeps itself up to date: i
 
 The desktop app is this computer to the server and the network: named after it (`studio`), with the computer's device id, saved session and the devices it knows. The terminal UI on the same library is a device of its own, `studio (terminal)`, with a session of its own, so one can control the other. Only one desktop app runs per configuration directory: opening it again, or opening files with it, brings the running one to the front and hands it the files.
 
-## Replacing the Mac app
-
-From 0.70 the desktop app is kōan on the Mac, and the SwiftUI Mac app is no longer released. The desktop app uses the same configuration directory, device id and saved queue, so the phones, the TV and the server go on seeing one Mac. Quit the old app and replace it rather than running both: the two would be the same device.
-
 ## Files from outside
 
 Files and folders dropped on the queue are added to the library where they lie and appended to the queue; dropped on a playlist, they are added to it. Folders are walked, so dropping a rip queues the album. On Linux, files opened with the app from the file manager, and on both, files named on the command line (`koan-gui ~/Music/new/*.flac`), are queued the same way. Nothing is moved: [organize](file-organization.md) is what puts them under a library folder.
@@ -50,7 +46,7 @@ The same shortcuts on both, with `Ctrl` for `⌘` on Linux. Linux has no global 
 
 ## Configuration and the log
 
-If the library cannot be opened (a database a newer kōan has upgraded, another desktop app already running on the same configuration, or, on a Mac, the Mac app running as this device), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
+If the library cannot be opened (a database a newer kōan has upgraded, or another desktop app already running on the same configuration), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
 
 The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal. `KOAN_LOG=debug` adds kōan's debug lines, such as how many covers are being fetched at once.
 
