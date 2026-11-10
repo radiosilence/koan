@@ -96,7 +96,11 @@ public-domain music and resets every day at midnight UTC:
 
 Background audio: kōan is a music player, and the audio background mode keeps music playing when the app is in the \
 background or the screen is locked. To check it, sign in as above, start an album with the device's media volume up, \
-then go to the Home Screen or lock the device: the music continues, with its controls on the lock screen.
+then go to the Home Screen or lock the device: the music continues, with its controls on the lock screen. The \
+attached recording was made in the iOS Simulator with a development build, not on a physical device: an album from \
+the demo server plays, another app comes to the front for about 30 seconds while the music continues, and kōan \
+returns with the playhead moved on. Its picture and the app's own audio were captured together and combined into one \
+file.
 
 Accounts: kōan has no registration and no account of its own. The user signs in with an account their server issued. \
 An administrator signed in to a kōan server sees that server's accounts in Settings, with Add, Invite and Delete; the \
