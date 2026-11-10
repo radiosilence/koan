@@ -645,6 +645,12 @@ impl TouchShell {
         }
         match route {
             Route::Settings | Route::SettingsSection(_) if !self.compact => {
+                // A section the route names (a link, back and forward, a
+                // phone's push carried across) is the pane beside the list.
+                if let Route::SettingsSection(tab) = route {
+                    let settings = self.settings(window, cx);
+                    settings.update(cx, |s, cx| s.choose(tab, window, cx));
+                }
                 self.settings_split(window, cx)
             }
             Route::Queue => self.queue.clone().cached(full()).into_any_element(),

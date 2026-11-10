@@ -8,6 +8,7 @@ use koan_kit::app::*;
 
 use super::TouchShell;
 use crate::components::{Clear, NavRow, RowMetrics, ScrollArea, Slide, SplitView};
+use crate::navigator::Route;
 use crate::paint::Paint;
 use crate::sidebar::Sidebar;
 use crate::theme::{self, Space};
@@ -97,7 +98,7 @@ impl TouchShell {
         let showing = settings.read(cx).tab();
         let shell = cx.entity();
         let sections = tabs.into_iter().map(|tab| {
-            let (settings, shell) = (settings.clone(), shell.clone());
+            let (settings, shell, nav) = (settings.clone(), shell.clone(), self.nav.clone());
             NavRow::new(
                 SharedString::from(format!("settings-{}", tab.title())),
                 tab.title().to_lowercase(),
@@ -105,7 +106,9 @@ impl TouchShell {
             .icon(tab.icon())
             .selected(tab == showing)
             .on_click(move |_, window, cx| {
+                // The route names the section, so the stage keeps it.
                 settings.update(cx, |s, cx| s.choose(tab, window, cx));
+                nav.update(cx, |nav, _| nav.go(Route::SettingsSection(tab)));
                 shell.update(cx, |_, cx| cx.notify());
             })
         });
