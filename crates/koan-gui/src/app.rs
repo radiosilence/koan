@@ -57,6 +57,11 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
 /// Hands each link waiting to Settings, as an invite or a pairing; anything
 /// else is not koan's and is dropped.
 fn answer_links(cx: &mut App) {
+    // A phone has one window: a link that came with the launch waits for its
+    // shell (`open_window`), or Settings would open a window behind it.
+    if crate::mobile::phone() && !crate::mobile::shell_open(cx) {
+        return;
+    }
     for link in crate::platform::Links::take(cx) {
         let engine = crate::engine::engine(cx);
         let incoming = if let Some(pairing) = engine.parse_pairing_link(link.clone()) {
@@ -293,6 +298,7 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
             cx.quit();
         }
     }
+    answer_links(cx);
     crate::platform::residency::window_opening();
     cx.activate(true);
 }
