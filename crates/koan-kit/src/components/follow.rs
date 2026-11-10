@@ -598,7 +598,28 @@ impl Push {
 
 #[cfg(test)]
 mod tests {
-    use super::{Animated, Duration, Motion, Push};
+    use super::{Animated, Duration, Motion, Push, rubber, unrubber};
+
+    #[test]
+    fn the_band_gives_less_the_further_it_is_pulled() {
+        let (first, second) = (
+            rubber(100.0, 800.0),
+            rubber(200.0, 800.0) - rubber(100.0, 800.0),
+        );
+        assert!(second < first, "{first} then {second}");
+        assert!(rubber(1e6, 800.0) < 800.0);
+        assert_eq!(rubber(-100.0, 800.0), -first);
+    }
+
+    #[test]
+    fn a_pull_read_back_is_the_finger_travel_that_made_it() {
+        for raw in [1.0, 40.0, 400.0, -120.0] {
+            assert!(
+                (unrubber(rubber(raw, 800.0), 800.0) - raw).abs() < 1e-2,
+                "{raw}"
+            );
+        }
+    }
 
     #[test]
     fn a_push_follows_then_settles_where_it_was_sent() {

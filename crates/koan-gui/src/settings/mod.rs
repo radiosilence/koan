@@ -533,11 +533,22 @@ impl SettingsWindow {
         self.screen = true;
     }
 
-    pub fn choose(&mut self, tab: Tab, window: &mut Window, cx: &mut koan_kit::app::Context<Self>) {
+    /// Shows `tab`, and says whether it could: one the account and the
+    /// server no longer offer is left for the Server pane it gave way to.
+    pub fn choose(
+        &mut self,
+        tab: Tab,
+        window: &mut Window,
+        cx: &mut koan_kit::app::Context<Self>,
+    ) -> bool {
+        if !self.tabs(cx).contains(&tab) {
+            return false;
+        }
         if tab != self.tab {
             self.show(tab, window, cx);
             cx.notify();
         }
+        true
     }
 
     pub fn answer(

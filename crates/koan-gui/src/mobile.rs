@@ -619,7 +619,11 @@ impl PhoneShell {
             Route::SettingsSection(tab) => {
                 let settings = self.settings(window, cx);
                 // Back and forward land here too: the pane follows the route.
-                settings.update(cx, |s, cx| s.choose(tab, window, cx));
+                // A section that went away (signed out elsewhere, no longer an
+                // admin) goes back to the list of those that remain.
+                if !settings.update(cx, |s, cx| s.choose(tab, window, cx)) {
+                    cx.defer_in(window, |this, _, cx| this.animate_back(cx));
+                }
                 settings.cached(full()).into_any_element()
             }
             route if LibraryStage::draws(route) => match &self.library {

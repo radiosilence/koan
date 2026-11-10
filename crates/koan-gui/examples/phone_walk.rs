@@ -178,7 +178,7 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
         page("settings", Route::Settings),
     ];
     // Each Settings section a phone offers; those that need a signed-in
-    // server show what they show without one.
+    // server go back to Settings without one.
     {
         use koan_gui::settings::Tab;
         for (name, tab) in [
