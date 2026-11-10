@@ -1,7 +1,7 @@
 //! Where the desktop app meets the operating system: media controls, menus
 //! and shortcuts, file drops, one instance per configuration, the log.
 //!
-//! macOS and Linux. Windows waits on koan-core building there (#1600).
+//! macOS, Linux and iOS. Windows waits on koan-core building there (#1600).
 
 pub mod about;
 pub mod actions;
@@ -131,7 +131,18 @@ pub fn init(
             cx.update(|cx| {
                 to_front(cx);
                 match next {
+                    // The only files iOS hands kōan are EQ and filter files.
+                    #[cfg(target_os = "ios")]
+                    Opened::Paths(paths) => ios::import_opened(paths, cx),
+                    #[cfg(not(target_os = "ios"))]
                     Opened::Paths(paths) => drop::queue_files(&engine, paths, cx),
+                    #[cfg(target_os = "ios")]
+                    Opened::Links(links) if links.iter().any(|l| l == ios::SHARE_INBOX_LINK) => {
+                        ios::collect_shared(cx);
+                        cx.default_global::<Links>()
+                            .0
+                            .extend(links.into_iter().filter(|l| l != ios::SHARE_INBOX_LINK));
+                    }
                     Opened::Links(links) if !links.is_empty() => {
                         cx.default_global::<Links>().0.extend(links)
                     }

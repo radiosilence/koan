@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The kōan GUI app, drawn with GPUI over koan-runtime: macOS and Linux for now."
+description = "The kōan GUI app, drawn with GPUI over koan-runtime: macOS, Linux and iOS."
 publish = false
 
 [lib]
@@ -92,9 +92,16 @@ objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSGeom
 
 # The audio session the engine plays through on iOS.
 [target.'cfg(target_os = "ios")'.dependencies]
+# The app's Swift (push, App Attest) drives the same engine, through the
+# uniffi bindings linked into this library.
+koan-ffi = { path = "../koan-ffi" }
+gpui_ios = { package = "gpui-koan-ios", git = "https://github.com/radiosilence/zed", rev = "6d00c3ebf108aeec498394e3a52e220014f29309" }
+objc2 = "0.6"
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "UIApplication", "UIDevice", "UIResponder"] }
 objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
   "std",
   "AVAudioSession",
+  "AVAudioSessionRoute",
   "AVAudioSessionTypes",
 ] }
 # Its interruptions and route changes, heard as notifications.
@@ -102,9 +109,13 @@ block2 = "0.6"
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
   "std",
   "block2",
+  "NSArray",
   "NSDictionary",
+  "NSFileManager",
   "NSNotification",
   "NSOperation",
+  "NSPathUtilities",
   "NSString",
+  "NSURL",
   "NSValue",
 ] }

@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     // The desktop app's own device, so a queue saved here is the one the
     // app restores (`KOAN_SHOT_TRACKS`).
-    let engine = futures::executor::block_on(KoanEngine::open_desktop())?;
+    let engine = futures::executor::block_on(KoanEngine::open_desktop(None))?;
     if let Some(count) = std::env::var("KOAN_SHOT_TRACKS")
         .ok()
         .and_then(|n| n.parse::<usize>().ok())

@@ -6,16 +6,22 @@
 //! another app taking the audio pauses the music and, when iOS says to,
 //! resumes it; headphones unplugged pause it.
 
+use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use futures_channel::mpsc;
 use futures_util::StreamExt as _;
+use objc2::MainThreadMarker;
+use objc2::rc::Retained;
+use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2_avf_audio::AVAudioSessionPortDescription;
 use objc2_foundation::{
-    NSNotification, NSNotificationCenter, NSNumber, NSOperationQueue, NSString,
+    NSFileManager, NSNotification, NSNotificationCenter, NSNumber, NSOperationQueue, NSString,
 };
+use objc2_ui_kit::{UIApplicationDelegate, UIDevice};
 
 use koan_kit::app::App;
 use koan_kit::app::platform::AppLifecyclePhase;
@@ -119,6 +125,8 @@ enum Heard {
     RouteGone,
     /// iOS reset its media services, and every audio object with them.
     Reset,
+    /// The port audio goes to may have changed.
+    Route,
 }
 
 /// `AVAudioSessionInterruptionType.began`.
@@ -173,8 +181,14 @@ fn listen() -> mpsc::UnboundedReceiver<Heard> {
             })
         });
         observe(AVAudioSessionRouteChangeNotification, |note| {
-            (number(note, AVAudioSessionRouteChangeReasonKey) == Some(OLD_DEVICE_UNAVAILABLE))
-                .then_some(Heard::RouteGone)
+            Some(
+                if number(note, AVAudioSessionRouteChangeReasonKey) == Some(OLD_DEVICE_UNAVAILABLE)
+                {
+                    Heard::RouteGone
+                } else {
+                    Heard::Route
+                },
+            )
         });
         observe(AVAudioSessionMediaServicesWereResetNotification, |_| {
             Some(Heard::Reset)
@@ -253,6 +267,7 @@ fn follow(engine: Arc<KoanEngine>, cx: &mut App) {
                     end(resume, &mut was_playing);
                 }
                 Heard::RouteGone => {
+                    report_route(&engine);
                     route_lost_at = Some(Instant::now());
                     if here {
                         let engine = engine.clone();
@@ -263,21 +278,199 @@ fn follow(engine: Arc<KoanEngine>, cx: &mut App) {
                     configure();
                     end(false, &mut was_playing);
                 }
+                Heard::Route => report_route(&engine),
             }
         }
     })
     .detach();
 }
 
+/// Tells the engine the name of the port audio now goes to ("AirPods Pro",
+/// "Speaker"), which DSP profiles are chosen by.
+fn report_route(engine: &Arc<KoanEngine>) {
+    // SAFETY: the shared session is safe to use from any thread.
+    let name = unsafe {
+        let outputs = AVAudioSession::sharedInstance().currentRoute().outputs();
+        outputs
+            .firstObject()
+            .map(|port: Retained<AVAudioSessionPortDescription>| port.portName().to_string())
+    };
+    if let Some(name) = name {
+        let engine = engine.clone();
+        std::thread::spawn(move || {
+            futures::executor::block_on(engine.set_audio_route(name)).ok();
+        });
+    }
+}
+
+/// What the system calls this phone, for the account's other devices.
+pub fn device_name() -> Option<String> {
+    let main = MainThreadMarker::new()?;
+    Some(UIDevice::currentDevice(main).name().to_string())
+}
+
+/// What the share extension opens after leaving something in the app group.
+pub const SHARE_INBOX_LINK: &str = "koan://dsp-inbox";
+
+/// The app group the share extension leaves its files in.
+const SHARE_GROUP: &str = "group.cc.blit.koan";
+
+/// Imports EQ and filter files iOS opened in kōan.
+pub fn import_opened(paths: Vec<PathBuf>, cx: &mut App) {
+    let dsp = crate::dsp::model(cx);
+    dsp.update(cx, |dsp, cx| dsp.import_files(paths, None, None, None, cx));
+}
+
+/// What the share extension left in the app group, one folder per share:
+/// each moved to a temporary directory first, so it is taken exactly once,
+/// and an import that stops to ask about it still has its files.
+pub fn collect_shared(cx: &mut App) {
+    let dsp = crate::dsp::model(cx);
+    cx.spawn(async move |cx: &mut koan_kit::app::AsyncApp| {
+        let shares = cx
+            .background_executor()
+            .spawn(async { take_shares(&group_inbox()?) })
+            .await
+            .unwrap_or_default();
+        for files in shares {
+            dsp.update(cx, |dsp, cx| dsp.import_files(files, None, None, None, cx));
+        }
+    })
+    .detach();
+}
+
+fn group_inbox() -> Option<PathBuf> {
+    let group = NSString::from_str(SHARE_GROUP);
+    let container = NSFileManager::defaultManager()
+        .containerURLForSecurityApplicationGroupIdentifier(&group)?;
+    Some(PathBuf::from(container.path()?.to_string()).join("Inbox"))
+}
+
+fn take_shares(inbox: &Path) -> Option<Vec<Vec<PathBuf>>> {
+    let mut taken = Vec::new();
+    for (n, share) in std::fs::read_dir(inbox).ok()?.flatten().enumerate() {
+        let to = std::env::temp_dir().join(format!("shared-{}-{n}", std::process::id()));
+        if std::fs::rename(share.path(), &to).is_err() {
+            continue;
+        }
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&to)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|file| file.path())
+            .collect();
+        files.sort();
+        if files.is_empty() {
+            let _ = std::fs::remove_dir_all(&to);
+        } else {
+            taken.push(files);
+        }
+    }
+    Some(taken)
+}
+
+/// What the app's Swift asked to be told. Set before the app runs.
+#[derive(Clone, Copy)]
+struct Told {
+    /// The engine is open: `opened_engine` answers.
+    engine: extern "C" fn(),
+    /// The server signed in to can send notifications.
+    alerts: extern "C" fn(),
+}
+
+static TOLD: OnceLock<Told> = OnceLock::new();
+
+/// The app's entry point, from its Swift `main`. Does not return.
+#[unsafe(no_mangle)]
+pub extern "C" fn koan_gui_main() {
+    crate::launch::run();
+}
+
+/// Sends `delegate` the application delegate messages GPUI does not handle
+/// itself: push registration, and the background pushes that wake the app.
+///
+/// # Safety
+/// `delegate` is an object implementing `UIApplicationDelegate`, passed on
+/// the main thread before `koan_gui_main`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn koan_gui_forward_delegate(delegate: *mut AnyObject) {
+    // SAFETY: per the function's contract.
+    let delegate = unsafe { Retained::retain(delegate) }.expect("a delegate");
+    // SAFETY: per the function's contract, it implements the protocol.
+    let delegate: Retained<ProtocolObject<dyn UIApplicationDelegate>> =
+        unsafe { Retained::cast_unchecked(delegate) };
+    gpui_ios::ios::forward_application_delegate(&delegate);
+}
+
+/// The callbacks the app's Swift is told through, set before `koan_gui_main`.
+#[unsafe(no_mangle)]
+pub extern "C" fn koan_gui_on_events(engine: extern "C" fn(), alerts: extern "C" fn()) {
+    let _ = TOLD.set(Told { engine, alerts });
+}
+
+/// The name the server lists when it can send notifications.
+const PUSH_EXTENSION: &str = "koanPush";
+
+/// Asks the Swift side to request permission for notifications whenever the
+/// app is in front and the signed-in server can send them.
+fn ask_for_alerts(front: bool, cx: &mut App) {
+    if !front {
+        return;
+    }
+    let connection = cx.global::<Mirror>().connection.read(cx);
+    let offered = connection
+        .0
+        .as_ref()
+        .is_some_and(|c| c.extensions.iter().any(|e| e.name == PUSH_EXTENSION));
+    if offered && let Some(told) = TOLD.get() {
+        (told.alerts)();
+    }
+}
+
 pub fn init(engine: &Arc<KoanEngine>, cx: &mut App) {
     configure();
     engine.set_audio_session(Arc::new(Session));
+    report_route(engine);
     follow(engine.clone(), cx);
+    koan_ffi::adopt_engine(engine.clone());
+    if let Some(told) = TOLD.get() {
+        (told.engine)();
+    }
     let engine = engine.clone();
-    cx.on_app_lifecycle(move |phase, _| match phase {
+    cx.on_app_lifecycle(move |phase, cx| match phase {
         AppLifecyclePhase::Background => engine.set_background(true),
-        AppLifecyclePhase::Foreground | AppLifecyclePhase::Active => engine.set_background(false),
+        AppLifecyclePhase::Foreground | AppLifecyclePhase::Active => {
+            engine.set_background(false);
+            // Suspended in the background, the link to the server went with
+            // the rest of the app.
+            engine.link_nudge();
+            if cx.has_global::<Mirror>() {
+                collect_shared(cx);
+                ask_for_alerts(true, cx);
+            }
+        }
         _ => {}
     })
     .detach();
+}
+
+/// Tells the engine whether it is playing, which decides what runs in the
+/// background, and asks for notifications once a server offers them.
+///
+/// Called once the app's globals are installed.
+pub fn started(engine: Arc<KoanEngine>, cx: &mut App) {
+    collect_shared(cx);
+    let mirror = cx.global::<Mirror>();
+    let (playback, connection) = (mirror.playback.clone(), mirror.connection.clone());
+    let mut was_playing = None;
+    cx.observe(&playback, move |playback, cx| {
+        let playing = matches!(playback.read(cx).0.state, koan_runtime::PlayState::Playing);
+        if was_playing != Some(playing) {
+            was_playing = Some(playing);
+            engine.set_playing(playing);
+        }
+    })
+    .detach();
+    cx.observe(&connection, |_, cx| ask_for_alerts(true, cx))
+        .detach();
 }

@@ -1,0 +1,1 @@
+- **The iOS app is now the GPUI app.** It updates the SwiftUI app in place under the same bundle id, keeping the library, sign-in and downloads; view preferences such as sort order start again. Live Activities are not yet started by it.

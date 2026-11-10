@@ -1,0 +1,27 @@
+import KoanFFI
+import UIKit
+
+// The kōan GUI app's entry. GPUI owns the application delegate and the run
+// loop; what Apple's APIs keep in Swift is told about the engine once Rust
+// has opened it, through the C functions in `platform/ios.rs`.
+
+@_silgen_name("koan_gui_main")
+private func koanGuiMain()
+
+@_silgen_name("koan_gui_forward_delegate")
+private func koanGuiForwardDelegate(_ delegate: UnsafeMutableRawPointer)
+
+@_silgen_name("koan_gui_on_events")
+private func koanGuiOnEvents(
+    _ engine: @convention(c) () -> Void,
+    _ alerts: @convention(c) () -> Void
+)
+
+// Held for the life of the process: GPUI retains it too, once forwarded.
+private let push = PushDelegate()
+koanGuiForwardDelegate(Unmanaged.passUnretained(push).toOpaque())
+koanGuiOnEvents(
+    { Task { @MainActor in PushDelegate.engine = openedEngine() } },
+    { Task { await PushDelegate.requestAlerts() } }
+)
+koanGuiMain()
