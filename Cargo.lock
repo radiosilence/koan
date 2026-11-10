@@ -1495,17 +1495,7 @@ name = "collections"
 version = "0.1.0"
 source = "git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e#370a40e2b5806fc267b953fa3fc207e7dab35a3e"
 dependencies = [
- "gpui-koan-util 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "indexmap",
- "rustc-hash 2.1.3",
-]
-
-[[package]]
-name = "collections"
-version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "gpui-koan-util 0.2.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
+ "gpui-koan-util",
  "indexmap",
  "rustc-hash 2.1.3",
 ]
@@ -2276,16 +2266,6 @@ dependencies = [
 name = "derive_refineable"
 version = "0.1.0"
 source = "git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e#370a40e2b5806fc267b953fa3fc207e7dab35a3e"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "derive_refineable"
-version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3187,7 +3167,7 @@ dependencies = [
  "bench_metrics",
  "bitflags 2.13.2",
  "chrono",
- "collections 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "collections",
  "criterion",
  "derive_more",
  "embed-resource",
@@ -3195,12 +3175,12 @@ dependencies = [
  "futures",
  "futures-concurrency",
  "getrandom 0.3.4",
- "gpui-koan-macros 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-shared-string 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-util 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "gpui-koan-macros",
+ "gpui-koan-shared-string",
+ "gpui-koan-util",
  "hdrhistogram",
  "heapless 0.9.3",
- "http_client 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "http_client",
  "icu_segmenter",
  "image",
  "inventory",
@@ -3220,10 +3200,10 @@ dependencies = [
  "proptest",
  "rand 0.9.5",
  "raw-window-handle",
- "refineable 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "refineable",
  "regex",
  "resvg",
- "scheduler 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "scheduler",
  "schemars",
  "seahash",
  "serde",
@@ -3232,7 +3212,7 @@ dependencies = [
  "smallvec",
  "spin 0.10.1",
  "strum 0.28.0",
- "sum_tree 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "sum_tree",
  "taffy",
  "thiserror 2.0.21",
  "ttf-parser",
@@ -3247,69 +3227,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui-koan"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "accesskit",
- "anyhow",
- "async-channel",
- "async-task",
- "backtrace",
- "bitflags 2.13.2",
- "chrono",
- "collections 0.1.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "derive_more",
- "etagere",
- "futures",
- "getrandom 0.3.4",
- "gpui-koan-macros 0.2.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "gpui-koan-shared-string 0.2.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "gpui-koan-util 0.2.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "heapless 0.9.3",
- "http_client 0.1.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "icu_segmenter",
- "image",
- "inventory",
- "itertools 0.14.0",
- "libc",
- "log",
- "lyon",
- "num_cpus",
- "objc2-core-foundation",
- "objc2-core-video",
- "parking",
- "parking_lot 0.12.5",
- "pin-project",
- "pollster 0.4.0",
- "profiling",
- "rand 0.9.5",
- "raw-window-handle",
- "refineable 0.1.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "regex",
- "resvg",
- "scheduler 0.1.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "schemars",
- "seahash",
- "serde",
- "serde_json",
- "slotmap",
- "smallvec",
- "spin 0.10.1",
- "strum 0.28.0",
- "sum_tree 0.1.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "taffy",
- "thiserror 2.0.21",
- "ttf-parser",
- "unicode-segmentation",
- "url",
- "usvg",
- "uuid",
- "waker-fn",
- "windows 0.62.2",
-]
-
-[[package]]
 name = "gpui-koan-apple"
 version = "0.2.0"
 source = "git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e#370a40e2b5806fc267b953fa3fc207e7dab35a3e"
@@ -3318,7 +3235,7 @@ dependencies = [
  "async-task",
  "block2 0.6.2",
  "cbindgen",
- "collections 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "collections",
  "core-foundation 0.10.1",
  "core-foundation-sys",
  "core-graphics 0.24.0",
@@ -3326,47 +3243,8 @@ dependencies = [
  "dispatch2",
  "etagere",
  "futures",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-util 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "image",
- "libc",
- "log",
- "mach2",
- "objc2 0.6.5",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-text",
- "objc2-core-video",
- "objc2-foundation 0.3.2",
- "objc2-metal 0.3.2",
- "objc2-quartz-core 0.3.2",
- "objc2-security",
- "parking_lot 0.12.5",
- "pathfinder_geometry",
- "smallvec",
- "thiserror 2.0.21",
- "zed-font-kit",
-]
-
-[[package]]
-name = "gpui-koan-apple"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "anyhow",
- "async-task",
- "block2 0.6.2",
- "cbindgen",
- "collections 0.1.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "core-foundation 0.10.1",
- "core-foundation-sys",
- "core-graphics 0.24.0",
- "core-text",
- "dispatch2",
- "etagere",
- "futures",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "gpui-koan-util 0.2.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
+ "gpui-koan",
+ "gpui-koan-util",
  "image",
  "libc",
  "log",
@@ -3395,8 +3273,8 @@ dependencies = [
  "anyhow",
  "block2 0.6.2",
  "futures",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-apple 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "gpui-koan",
+ "gpui-koan-apple",
  "libc",
  "log",
  "objc2 0.6.5",
@@ -3411,28 +3289,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui-koan-ios"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "anyhow",
- "block2 0.6.2",
- "futures",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "gpui-koan-apple 0.2.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
- "libc",
- "log",
- "objc2 0.6.5",
- "objc2-core-foundation",
- "objc2-foundation 0.3.2",
- "objc2-quartz-core 0.3.2",
- "objc2-ui-kit",
- "parking_lot 0.12.5",
- "raw-window-handle",
- "uuid",
-]
-
-[[package]]
 name = "gpui-koan-linux"
 version = "0.2.0"
 source = "git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e#370a40e2b5806fc267b953fa3fc207e7dab35a3e"
@@ -3441,11 +3297,11 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "calloop",
- "collections 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "collections",
  "futures",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-util 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "http_client 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "gpui-koan",
+ "gpui-koan-util",
+ "http_client",
  "libc",
  "log",
  "notify-rust",
@@ -3468,7 +3324,7 @@ dependencies = [
  "accesskit_macos",
  "anyhow",
  "block2 0.6.2",
- "collections 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "collections",
  "core-foundation 0.10.1",
  "core-foundation-sys",
  "core-graphics 0.24.0",
@@ -3476,9 +3332,9 @@ dependencies = [
  "dispatch2",
  "foreign-types",
  "futures",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-apple 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-util 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "gpui-koan",
+ "gpui-koan-apple",
+ "gpui-koan-util",
  "image",
  "itertools 0.14.0",
  "log",
@@ -3492,7 +3348,7 @@ dependencies = [
  "objc2-user-notifications",
  "parking_lot 0.12.5",
  "raw-window-handle",
- "scheduler 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "scheduler",
  "semver",
  "smallvec",
  "strum 0.28.0",
@@ -3511,25 +3367,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui-koan-macros"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "gpui-koan-platform"
 version = "0.2.0"
 source = "git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e#370a40e2b5806fc267b953fa3fc207e7dab35a3e"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-ios 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "gpui-koan",
+ "gpui-koan-ios",
  "gpui-koan-linux",
  "gpui-koan-macos",
  "gpui-koan-web",
@@ -3548,29 +3393,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui-koan-shared-string"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "schemars",
- "serde",
- "smol_str",
-]
-
-[[package]]
 name = "gpui-koan-util"
 version = "0.2.0"
 source = "git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e#370a40e2b5806fc267b953fa3fc207e7dab35a3e"
-dependencies = [
- "anyhow",
- "log",
- "which",
-]
-
-[[package]]
-name = "gpui-koan-util"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
 dependencies = [
  "anyhow",
  "log",
@@ -3586,14 +3411,14 @@ dependencies = [
  "async-channel",
  "console_error_panic_hook",
  "futures",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "gpui-koan",
  "gpui-koan-wgpu",
- "http_client 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "http_client",
  "js-sys",
  "log",
  "parking_lot 0.12.5",
  "raw-window-handle",
- "scheduler 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "scheduler",
  "smallvec",
  "unicode-properties",
  "unicode-script",
@@ -3613,11 +3438,11 @@ source = "git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3f
 dependencies = [
  "anyhow",
  "bytemuck",
- "collections 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "collections",
  "cosmic-text",
  "etagere",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-util 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "gpui-koan",
+ "gpui-koan-util",
  "image",
  "itertools 0.14.0",
  "log",
@@ -3640,19 +3465,19 @@ dependencies = [
  "accesskit",
  "accesskit_windows",
  "anyhow",
- "collections 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "collections",
  "dunce",
  "etagere",
  "futures",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-util 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "gpui-koan",
+ "gpui-koan-util",
  "image",
  "itertools 0.14.0",
  "log",
  "parking_lot 0.12.5",
  "rand 0.9.5",
  "raw-window-handle",
- "scheduler 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "scheduler",
  "smallvec",
  "uuid",
  "windows 0.62.2",
@@ -3893,23 +3718,6 @@ dependencies = [
  "http",
  "http-body",
  "log",
- "parking_lot 0.12.5",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "url",
-]
-
-[[package]]
-name = "http_client"
-version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "http",
- "http-body",
  "parking_lot 0.12.5",
  "serde",
  "serde_json",
@@ -4681,8 +4489,8 @@ dependencies = [
  "futures-channel",
  "futures-lite",
  "futures-util",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
- "gpui-koan-ios 0.2.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
+ "gpui-koan",
+ "gpui-koan-ios",
  "gpui-koan-platform",
  "image",
  "koan-core",
@@ -4711,7 +4519,7 @@ dependencies = [
  "ashpd",
  "block2 0.6.2",
  "futures",
- "gpui-koan 0.2.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
+ "gpui-koan",
  "gpui-koan-platform",
  "image",
  "objc2 0.6.5",
@@ -7944,15 +7752,7 @@ name = "refineable"
 version = "0.1.0"
 source = "git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e#370a40e2b5806fc267b953fa3fc207e7dab35a3e"
 dependencies = [
- "derive_refineable 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
-]
-
-[[package]]
-name = "refineable"
-version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "derive_refineable 0.1.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
+ "derive_refineable",
 ]
 
 [[package]]
@@ -8474,21 +8274,6 @@ dependencies = [
  "parking_lot 0.12.5",
  "rand 0.9.5",
  "wasm_thread",
- "web-time",
-]
-
-[[package]]
-name = "scheduler"
-version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "async-task",
- "backtrace",
- "chrono",
- "flume",
- "futures",
- "parking_lot 0.12.5",
- "rand 0.9.5",
  "web-time",
 ]
 
@@ -9150,18 +8935,7 @@ dependencies = [
  "heapless 0.9.3",
  "rayon",
  "tracing",
- "ztracing 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
-]
-
-[[package]]
-name = "sum_tree"
-version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "heapless 0.9.3",
- "rayon",
- "tracing",
- "ztracing 0.1.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
+ "ztracing",
 ]
 
 [[package]]
@@ -11906,27 +11680,13 @@ version = "0.1.0"
 source = "git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e#370a40e2b5806fc267b953fa3fc207e7dab35a3e"
 dependencies = [
  "tracing",
- "ztracing_macro 0.1.0 (git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e)",
-]
-
-[[package]]
-name = "ztracing"
-version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
-dependencies = [
- "tracing",
- "ztracing_macro 0.1.0 (git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309)",
+ "ztracing_macro",
 ]
 
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
 source = "git+https://github.com/radiosilence/zed?rev=370a40e2b5806fc267b953fa3fc207e7dab35a3e#370a40e2b5806fc267b953fa3fc207e7dab35a3e"
-
-[[package]]
-name = "ztracing_macro"
-version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=6d00c3ebf108aeec498394e3a52e220014f29309#6d00c3ebf108aeec498394e3a52e220014f29309"
 
 [[package]]
 name = "zune-core"

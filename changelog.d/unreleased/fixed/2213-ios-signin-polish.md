@@ -1,0 +1,1 @@
+- **The iOS app is easier to try and to sign in to.** A signed-out app offers the demo server without typing, password fields use the secure keyboard and Password AutoFill, an invite or pairing link that launches the app answers in its one window, EQ import questions appear from any tab, and the EQ page can import files.
