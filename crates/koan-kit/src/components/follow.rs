@@ -625,6 +625,8 @@ mod tests {
         TouchEvent, TouchId, TouchPhase, VisualTestContext, Window, div, point, px,
     };
 
+    use std::time::Instant;
+
     use super::{Animated, Duration, Elastic, Motion, Push, rubber, unrubber};
 
     /// One page of `tall` points over the window, its ends giving.
@@ -665,26 +667,30 @@ mod tests {
         (page, cx)
     }
 
-    fn touch(phase: TouchPhase, y: f32, cx: &mut VisualTestContext) {
+    /// A touch sampled at `at`: its speed is read from these times, so a
+    /// busy machine delivering it late changes nothing.
+    fn touch(phase: TouchPhase, y: f32, at: Instant, cx: &mut VisualTestContext) {
         cx.simulate_event(TouchEvent {
             id: TouchId(1),
             position: point(px(100.), px(y)),
             phase,
+            timestamp: Some(at),
             ..Default::default()
         });
     }
 
-    /// A finger from `from` to `to` over `steps` frames, and still on the
-    /// glass at the end.
-    fn drag(from: f32, to: f32, steps: u32, cx: &mut VisualTestContext) {
+    /// A finger from `from` to `to` over `steps` frames from `at`, and still
+    /// on the glass at the end, when this returns.
+    fn drag(from: f32, to: f32, steps: u32, at: Instant, cx: &mut VisualTestContext) -> Instant {
         for step in 1..=steps {
-            std::thread::sleep(FRAME);
             touch(
                 TouchPhase::Moved,
                 from + (to - from) * step as f32 / steps as f32,
+                at + FRAME * step,
                 cx,
             );
         }
+        at + FRAME * steps
     }
 
     /// The display's frames, until nothing asks for another.
@@ -716,8 +722,9 @@ mod tests {
     #[gpui::test]
     fn a_pan_with_room_moves_the_list_and_not_the_page(cx: &mut TestAppContext) {
         let (page, cx) = opened(3000., cx);
-        touch(TouchPhase::Started, 500., cx);
-        drag(500., 200., 12, cx);
+        let at = Instant::now();
+        touch(TouchPhase::Started, 500., at, cx);
+        drag(500., 200., 12, at, cx);
         assert!(offset(&page, cx).y < px(-200.), "{:?}", offset(&page, cx));
         let (pulled, layered, bounces) = give(&page, cx);
         assert_eq!((pulled, layered, bounces), (0.0, false, 0));
@@ -727,8 +734,9 @@ mod tests {
     #[gpui::test]
     fn a_pan_past_the_top_pulls_the_page_and_coming_back_scrolls(cx: &mut TestAppContext) {
         let (page, cx) = opened(3000., cx);
-        touch(TouchPhase::Started, 200., cx);
-        drag(200., 320., 10, cx);
+        let at = Instant::now();
+        touch(TouchPhase::Started, 200., at, cx);
+        let at = drag(200., 320., 10, at, cx);
         assert_eq!(offset(&page, cx).y, px(0.));
         let (pulled, layered, _) = give(&page, cx);
         assert!(
@@ -736,7 +744,7 @@ mod tests {
             "pulled {pulled}, layered {layered}"
         );
         // Back up past where it started, and on: the list has it again.
-        drag(320., 60., 16, cx);
+        drag(320., 60., 16, at, cx);
         assert_eq!(give(&page, cx).0, 0.0);
         assert!(offset(&page, cx).y < px(-20.), "{:?}", offset(&page, cx));
     }
@@ -744,10 +752,11 @@ mod tests {
     #[gpui::test]
     fn a_fling_with_room_coasts_and_does_not_bounce(cx: &mut TestAppContext) {
         let (page, cx) = opened(200_000., cx);
-        touch(TouchPhase::Started, 700., cx);
-        drag(700., 300., 8, cx);
+        let at = Instant::now();
+        touch(TouchPhase::Started, 700., at, cx);
+        let at = drag(700., 300., 8, at, cx);
         let released = offset(&page, cx).y;
-        touch(TouchPhase::Ended, 300., cx);
+        touch(TouchPhase::Ended, 300., at + FRAME, cx);
         frames_until_still(cx);
         assert!(
             offset(&page, cx).y < released - px(100.),
@@ -760,9 +769,10 @@ mod tests {
     #[gpui::test]
     fn a_fling_into_the_end_bounces_once(cx: &mut TestAppContext) {
         let (page, cx) = opened(600., cx);
-        touch(TouchPhase::Started, 700., cx);
-        drag(700., 300., 8, cx);
-        touch(TouchPhase::Ended, 300., cx);
+        let at = Instant::now();
+        touch(TouchPhase::Started, 700., at, cx);
+        let at = drag(700., 300., 8, at, cx);
+        touch(TouchPhase::Ended, 300., at + FRAME, cx);
         frames_until_still(cx);
         assert_eq!(offset(&page, cx).y, px(-600.));
         assert_eq!(give(&page, cx).2, 1);
@@ -770,8 +780,9 @@ mod tests {
         cx.executor().advance_clock(Duration::from_secs(2));
         cx.run_until_parked();
         assert!(!give(&page, cx).1);
-        touch(TouchPhase::Started, 300., cx);
-        drag(300., 200., 8, cx);
+        let at = Instant::now();
+        touch(TouchPhase::Started, 300., at, cx);
+        drag(300., 200., 8, at, cx);
         assert!(give(&page, cx).0 < -30.);
     }
 
