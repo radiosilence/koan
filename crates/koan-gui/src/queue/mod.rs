@@ -186,33 +186,33 @@ pub struct QueueView {
     landed: HashSet<String>,
     landing: u64,
     _settle: Option<Task<()>>,
-    /// On a phone, signed out of any server: the empty queue offers the
-    /// demonstration server, this being the first page such a phone shows.
-    signed_out: bool,
-    _settings: Option<Subscription>,
+    /// On a phone able to sign in to the demonstration server: the empty
+    /// queue offers it, this being the first page such a phone shows.
+    demo_offered: bool,
+    _demo: Vec<Subscription>,
     _subscriptions: [Subscription; 6],
 }
 
-/// Whether the settings are read and no server is signed in to.
-fn signed_out(model: &crate::settings::model::SettingsModel) -> bool {
-    model
-        .settings()
-        .is_some_and(|s| !s.remote_signed_in && !s.remote_enabled)
-}
-
 impl QueueView {
-    fn empty_state(&self) -> EmptyState {
-        let empty = EmptyState::new(Icon::QueueSection, "queue is empty");
-        if !self.signed_out {
-            return empty.detail("Find something to play from albums or artists.");
+    fn follow_demo(&mut self, cx: &mut Context<Self>) {
+        let offered = crate::settings::demo_offered(cx);
+        if offered != self.demo_offered {
+            self.demo_offered = offered;
+            cx.notify();
         }
-        empty
-            .detail("Sign in to a server in Settings, or look around the demo.")
-            .action(
-                Button::new("try-demo", ButtonKind::Link)
-                    .label("Try the demo server")
-                    .on_click(|_, _, cx| crate::settings::try_demo(cx)),
-            )
+    }
+
+    fn empty_state(&self) -> EmptyState {
+        let empty = EmptyState::new(Icon::QueueSection, "queue is empty")
+            .detail("Find something to play from albums or artists.");
+        if !self.demo_offered {
+            return empty;
+        }
+        empty.action(
+            Button::new("try-demo", ButtonKind::Link)
+                .label("Try the demo server")
+                .on_click(|_, _, cx| crate::settings::answer(crate::settings::Incoming::Demo, cx)),
+        )
     }
 
     pub fn new(nav: &Entity<Navigator>, cx: &mut Context<Self>) -> Self {
@@ -267,22 +267,20 @@ impl QueueView {
         list.on_scroll(move |start, _, cx| {
             weak.update(cx, |this, cx| this.keep_top(start, cx)).ok();
         });
-        let settings = crate::mobile::phone()
+        let follow_demo = crate::mobile::phone()
             .then(|| cx.try_global::<crate::settings::Settings>())
             .flatten()
-            .map(|settings| settings.model.clone());
-        let follow_sign_in = settings.as_ref().map(|model| {
-            cx.observe(model, |this, model, cx| {
-                let out = signed_out(model.read(cx));
-                if out != this.signed_out {
-                    this.signed_out = out;
-                    cx.notify();
-                }
+            .map(|settings| (settings.model.clone(), settings.sharing.clone()))
+            .map(|(model, sharing)| {
+                vec![
+                    cx.observe(&model, |this, _, cx| this.follow_demo(cx)),
+                    cx.observe(&sharing, |this, _, cx| this.follow_demo(cx)),
+                ]
             })
-        });
+            .unwrap_or_default();
         let mut view = Self {
-            signed_out: settings.is_some_and(|model| signed_out(model.read(cx))),
-            _settings: follow_sign_in,
+            demo_offered: crate::mobile::phone() && crate::settings::demo_offered(cx),
+            _demo: follow_demo,
             queue,
             focus: cx.focus_handle().tab_stop(true),
             list,

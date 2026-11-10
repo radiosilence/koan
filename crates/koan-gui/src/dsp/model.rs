@@ -7,7 +7,7 @@
 //! moves, which is what a page showing a profile reloads on. Profiles synced
 //! from another device arrive as a library change, which moves `library`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -90,7 +90,8 @@ pub struct Dsp {
     /// Profiles just imported, whose role is asked once for all of them.
     pub ask_role: Option<RoleAsk>,
     /// Several files planned for import, waiting to be confirmed and named.
-    pub pending_import: Option<PendingImport>,
+    /// Multi-file imports waiting to be confirmed, the one asked about first.
+    pub pending_imports: VecDeque<PendingImport>,
     pub needs_rate: Option<NeedsRate>,
     pub autoeq_results: Vec<AutoEqEntry>,
     /// Why the last AutoEQ search failed, which is not the same as finding
@@ -144,7 +145,7 @@ impl Dsp {
                 last_error: None,
                 import_summary: None,
                 ask_role: None,
-                pending_import: None,
+                pending_imports: VecDeque::new(),
                 needs_rate: None,
                 autoeq_results: Vec::new(),
                 autoeq_failed: None,
@@ -342,7 +343,7 @@ impl Dsp {
     // MARK: - Importing
 
     /// Files, folders or zips. Several are first planned and shown to be
-    /// confirmed (`pending_import`): whole presets become a group, parts of
+    /// confirmed (`pending_imports`): whole presets become a group, parts of
     /// one profile combine into one. Started from a stage of a device's
     /// chain, what it makes goes into it.
     pub fn import_files(
@@ -362,7 +363,7 @@ impl Dsp {
             cx.spawn(async move |this, cx| {
                 let plan = engine.dsp_import_plan(shown).await;
                 this.update(cx, |dsp, cx| {
-                    dsp.pending_import = Some(PendingImport {
+                    dsp.pending_imports.push_back(PendingImport {
                         paths,
                         plan,
                         rate,
@@ -380,12 +381,12 @@ impl Dsp {
 
     /// Whether an import has stopped on a question.
     pub fn asking(&self) -> bool {
-        self.pending_import.is_some() || self.needs_rate.is_some() || self.ask_role.is_some()
+        !self.pending_imports.is_empty() || self.needs_rate.is_some() || self.ask_role.is_some()
     }
 
-    /// Imports what `pending_import` planned, under `name`.
+    /// Imports what the first of `pending_imports` planned, under `name`.
     pub fn confirm_import(&mut self, name: String, cx: &mut Context<Self>) {
-        let Some(pending) = self.pending_import.take() else {
+        let Some(pending) = self.pending_imports.pop_front() else {
             return;
         };
         cx.notify();
@@ -393,7 +394,7 @@ impl Dsp {
     }
 
     pub fn cancel_import(&mut self, cx: &mut Context<Self>) {
-        if self.pending_import.take().is_some() {
+        if self.pending_imports.pop_front().is_some() {
             cx.notify();
         }
     }

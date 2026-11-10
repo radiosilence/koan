@@ -20,7 +20,7 @@ use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 pub fn render(dsp: &Entity<Dsp>, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let d = dsp.read(cx);
     let look = Look::of(window, cx);
-    let shown = if d.pending_import.is_some() {
+    let shown = if !d.pending_imports.is_empty() {
         import_plan(dsp, &look, window, cx)
     } else if d.needs_rate.is_some() {
         rate(dsp, &look)
@@ -40,7 +40,7 @@ pub fn render(dsp: &Entity<Dsp>, window: &mut Window, cx: &mut App) -> Option<An
 /// become a group, parts of one profile combine into one, and either is
 /// named here.
 fn import_plan(dsp: &Entity<Dsp>, look: &Look, window: &mut Window, cx: &mut App) -> AnyElement {
-    let Some(pending) = dsp.read(cx).pending_import.clone() else {
+    let Some(pending) = dsp.read(cx).pending_imports.front().cloned() else {
         return div().into_any_element();
     };
     let plan = pending.plan;

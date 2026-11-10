@@ -154,7 +154,7 @@ type Loaded = Box<dyn FnOnce(&mut App)>;
 pub const SIGNING_IN: &str = "Signing in";
 
 /// kōan's public demonstration server, and the account open to anyone.
-const DEMO: (&str, &str, &str) = ("https://demo.koan.rocks", "demo", "demo");
+pub const DEMO: (&str, &str, &str) = ("https://demo.koan.rocks", "demo", "demo");
 
 /// How long the result of an action stays on the status line. An error
 /// stays until the next action.

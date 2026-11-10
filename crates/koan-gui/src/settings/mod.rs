@@ -150,6 +150,8 @@ pub enum Incoming {
     Invite(String),
     /// A device waiting to pair: the server it asked, and the pairing's id.
     Pairing { server: String, id: String },
+    /// Asked for from outside the Server pane: the demonstration server.
+    Demo,
 }
 
 /// Opens Settings on the pane that answers `link` and hands it over: an
@@ -195,12 +197,17 @@ pub fn open_server(cx: &mut App) {
         .ok();
 }
 
-/// Signs in to the demonstration server, on the server's pane, where its
-/// progress and any failure show.
-pub fn try_demo(cx: &mut App) {
-    open_server(cx);
-    let model = cx.global::<Settings>().model.clone();
-    model.update(cx, |m, cx| m.sign_in_demo(cx));
+/// Whether signing in to the demonstration server can work now: signed in
+/// to nothing, and not sharing this device's library.
+pub fn demo_offered(cx: &App) -> bool {
+    cx.try_global::<Settings>().is_some_and(|settings| {
+        settings.sharing.read(cx).serving.is_none()
+            && settings
+                .model
+                .read(cx)
+                .settings()
+                .is_some_and(|s| !s.remote_signed_in && !s.remote_enabled && !s.share_enabled)
+    })
 }
 
 /// Opens Settings on its EQ pane, showing `device`, or the output in use:
@@ -540,6 +547,12 @@ impl SettingsWindow {
         cx: &mut koan_kit::app::Context<Self>,
     ) {
         match link {
+            Incoming::Demo => {
+                self.choose(Tab::Server, window, cx);
+                if let Ok(pane) = self.pane.view().downcast::<panes::server::ServerPane>() {
+                    pane.update(cx, |pane, cx| pane.try_demo(window, cx));
+                }
+            }
             Incoming::Invite(text) => {
                 self.choose(Tab::Server, window, cx);
                 if let Ok(pane) = self.pane.view().downcast::<panes::server::ServerPane>() {

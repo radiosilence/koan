@@ -275,6 +275,27 @@ impl ServerPane {
             .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
+    /// Signs in to the demonstration server, once the person has seen what
+    /// that brings to this device.
+    pub fn try_demo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !crate::settings::demo_offered(cx) {
+            return;
+        }
+        let (url, username, _) = crate::settings::model::DEMO;
+        let model = self.ctx.model.clone();
+        let sheet = Sheet::new("Try the demo server?")
+            .message(format!(
+                "kōan signs in to {} as {username}. The demo's library, favourites and history appear on this device, beside anything already here. Signing out removes them.",
+                host(url)
+            ))
+            .action(Action::new("Sign In", move |_, _, cx| {
+                model.update(cx, |m, cx| m.sign_in_demo(cx))
+            }));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
+    }
+
     fn sign_out(&self, window: &mut Window, cx: &mut App) {
         let model = self.ctx.model.clone();
         let Some(settings) = model.read(cx).settings() else {
@@ -555,10 +576,12 @@ impl ServerPane {
                     vec![
                         Button::new("try-demo", ButtonKind::Link)
                             .label("Try the demo server")
-                            .disabled(signing_in)
+                            .disabled(signing_in || !crate::settings::demo_offered(cx))
                             .on_click({
-                                let model = self.ctx.model.clone();
-                                move |_, _, cx| model.update(cx, |m, cx| m.sign_in_demo(cx))
+                                let entity = entity.clone();
+                                move |_, window, cx| {
+                                    entity.update(cx, |pane, cx| pane.try_demo(window, cx))
+                                }
                             })
                             .into_any_element(),
                     ],
