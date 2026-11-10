@@ -31,9 +31,8 @@ pub use accent::{Accent, Shade};
 pub use gpui::Hsla;
 pub use icons::{Icon, KoanIcon};
 pub use tokens::{
-    COMPACT_WIDTH,
-    DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Motion, Palette, ROW_HOVER_OPACITY,
-    ROW_RULE_OPACITY, Scale, Space, TOOLBAR_BUTTON, TypeRole,
+    COMPACT_WIDTH, DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Motion, Palette,
+    ROW_HOVER_OPACITY, ROW_RULE_OPACITY, Scale, Space, TOOLBAR_BUTTON, TypeRole,
 };
 
 /// The colours text and glyphs take.

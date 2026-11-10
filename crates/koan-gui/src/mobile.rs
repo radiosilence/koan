@@ -694,9 +694,9 @@ impl TouchShell {
             .flush()
             .when(!self.compact && live, |bar| {
                 bar.leading(
-                    ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar").on_click(cx.listener(
-                        |this, _, window, cx| this.toggle_sidebar(window, cx),
-                    )),
+                    ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar").on_click(
+                        cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)),
+                    ),
                 )
             })
             .when(!root, |bar| {
@@ -1066,7 +1066,8 @@ impl Render for TouchShell {
         };
         // The page, its bar, and over it what the library is busy with. A
         // sidebar's foot holds that when there is one showing.
-        let activity_card = activity.read(cx).shows(cx) && (compact || !self.sidebar_showing(window));
+        let activity_card =
+            activity.read(cx).shows(cx) && (compact || !self.sidebar_showing(window));
         let pages = div()
             .id("stage")
             .role(a11y::Role::Main)
