@@ -640,9 +640,11 @@ impl ClockStream {
                 let wait = 1000 - anchor.reckoning(now) % 1000;
                 // No Tokio reactor drives this future (GPUI's executor and
                 // Swift's both poll it), so the timer runs on the runtime's.
-                let waited = offload::cancellable(tokio::time::sleep(
-                    std::time::Duration::from_millis(wait),
-                ));
+                // The sleep is made inside the task: it needs the reactor where
+                // it is created, not only where it is polled.
+                let waited = offload::cancellable(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(wait)).await
+                });
                 tokio::select! {
                     _ = waited => {
                         Some(anchor.reckoning(std::time::Instant::now()))
