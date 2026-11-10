@@ -778,7 +778,11 @@ impl PhoneShell {
         let tab = TABS.iter().position(|(root, ..)| *root == route);
         self.nav.update(cx, |nav, cx| {
             if let Some(tab) = tab {
+                // A second switch to the tab it is on goes to its root.
                 nav.switch(tab, route);
+                if !nav.at_root() {
+                    nav.switch(tab, route);
+                }
                 cx.notify();
             } else if nav.go(route) {
                 cx.notify();
