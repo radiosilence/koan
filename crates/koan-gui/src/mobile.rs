@@ -374,7 +374,7 @@ impl PhoneShell {
         let playlists = self
             .library
             .as_ref()
-            .map(|library| library.read(cx).lib().feed.read(cx).playlists.clone())
+            .map(|library| library.read(cx).lib().feed.read(cx).all_playlists.clone())
             .unwrap_or_default();
         let nav = self.nav.clone();
         ScrollArea::new(

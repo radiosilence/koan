@@ -1,0 +1,1 @@
+- **Read-only playlists on the phone.** The phone's playlists page listed only those a pick can be added to, so smart playlists and a server's read-only ones were missing.
