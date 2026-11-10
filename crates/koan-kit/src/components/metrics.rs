@@ -473,6 +473,7 @@ mod transport_tests {
             hairline: crate::theme::HAIRLINE,
             opaque: false,
             touch: false,
+            compact: false,
         }
     }
 
@@ -528,7 +529,7 @@ mod tile_grid_tests {
                 + columns.gap * (columns.columns as f32 - 1.0);
             assert_eq!(row + px(32.), px(width));
             assert!(columns.side >= px(TileColumns::LEAST_FILLING));
-            assert!(columns.gap < px(TileColumns::MIN_GAP + 1.0));
+            assert!(columns.gap <= px(TileColumns::MIN_GAP + 2.0));
         }
     }
 

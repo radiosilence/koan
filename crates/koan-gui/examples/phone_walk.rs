@@ -55,6 +55,10 @@ enum Step {
     /// A page swiped back to the page under it: pictured part way, and
     /// the settle after the release counted for the frames it asks for.
     SwipeBack(Route),
+    /// A window wide enough for a tablet's layout narrowed to a phone's and
+    /// widened again, as Split View does: pictured at each, and failing if
+    /// the page changed.
+    Across(Route),
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -117,12 +121,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             swipe_back(&mut cx, window, &shell, route, &out)?;
             continue;
         }
+        if let Step::Across(route) = step {
+            across(&mut cx, window, &shell, route, &out)?;
+            continue;
+        }
         match step {
             Step::Page(route) => cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx))),
             Step::NowPlaying => cx.update_window(window, |_, window, cx| {
                 shell.update(cx, |s, cx| s.open_now_playing(window, cx))
             })?,
-            Step::SwipeBack(_) => unreachable!(),
+            Step::SwipeBack(_) | Step::Across(_) => unreachable!(),
         }
         for dark in [true, false] {
             cx.update_window(window, |_, window, cx| {
@@ -201,6 +209,9 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     }
     if let Some(album) = tracks.iter().find_map(|t| t.album_id) {
         steps.push(page("album", Route::Album(album)));
+        if width() >= f32::from(koan_kit::theme::COMPACT_WIDTH) {
+            steps.push(("across".into(), Step::Across(Route::Album(album))));
+        }
     }
     steps.push(("swipe-back".into(), Step::SwipeBack(Route::Albums)));
     if let Some(artist) = tracks.iter().find_map(|t| t.artist_id) {
@@ -208,6 +219,32 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     }
     steps.push(("now-playing".into(), Step::NowPlaying));
     Ok(steps)
+}
+
+/// Stands on `route` in a tablet's window, then narrows the window past the
+/// point where the layout becomes a phone's and widens it again.
+fn across(
+    cx: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    shell: &Entity<TouchShell>,
+    route: Route,
+    out: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx)));
+    for (name, wide) in [("compact", 500.0), ("regular", width())] {
+        cx.update_window(window, |_, window, cx| {
+            window.resize(size(px(wide), px(height())));
+            window.bounds_changed(cx);
+        })?;
+        settle(cx, window)?;
+        cx.capture_screenshot(window)?
+            .save(out.join(format!("phone-across-{name}.png")))?;
+        let at = cx.update(|cx| shell.read(cx).route(cx));
+        if at != route {
+            return Err(format!("resized to {wide} and landed on {at:?}").into());
+        }
+    }
+    Ok(())
 }
 
 /// Goes from the library to `route`, swipes it part way back for a picture
