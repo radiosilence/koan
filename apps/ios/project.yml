@@ -73,11 +73,12 @@ targets:
         # `just gui-ios-lib <platform>` stages the Rust archive per SDK.
         LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/gui-link/$(PLATFORM_NAME)
         OTHER_LDFLAGS: >-
-          -lkoan_gui -lc++ -framework Metal -framework MetalKit -framework QuartzCore
-          -framework UIKit -framework Foundation -framework CoreFoundation
-          -framework CoreGraphics -framework CoreText -framework CoreVideo
-          -framework CoreAudio -framework AudioToolbox -framework AVFAudio
-          -framework Security -framework SystemConfiguration -framework Network
+          -lkoan_gui -lobjc -liconv -framework MediaPlayer -framework CoreGraphics
+          -framework AVFAudio -framework Security -framework AudioToolbox
+          -framework CoreAudio -framework OpenAL -framework SafariServices
+          -framework UIKit -framework CoreText -framework QuartzCore
+          -framework CoreVideo -framework Metal -framework Foundation
+          -framework CoreFoundation
     # Push. `development` is the sandbox gateway a development build's token
     # belongs to; exporting for the App Store rewrites it to `production`.
     entitlements:

@@ -341,10 +341,8 @@ pub fn collect_shared(cx: &mut App) {
 
 fn group_inbox() -> Option<PathBuf> {
     let group = NSString::from_str(SHARE_GROUP);
-    // SAFETY: NSFileManager's default manager is safe to use from any thread.
-    let container = unsafe {
-        NSFileManager::defaultManager().containerURLForSecurityApplicationGroupIdentifier(&group)
-    }?;
+    let container = NSFileManager::defaultManager()
+        .containerURLForSecurityApplicationGroupIdentifier(&group)?;
     Some(PathBuf::from(container.path()?.to_string()).join("Inbox"))
 }
 
