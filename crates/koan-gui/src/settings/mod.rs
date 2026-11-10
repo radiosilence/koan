@@ -533,15 +533,23 @@ impl SettingsWindow {
         self.screen = true;
     }
 
-    /// Shows `tab`, and says whether it could: one the account and the
-    /// server no longer offer is left for the Server pane it gave way to.
+    /// Shows `tab`, and says whether it could: with the account gone, one
+    /// that needs it is left for the Server pane it gave way to. What the
+    /// server offers may just not have arrived yet, so that alone stays.
     pub fn choose(
         &mut self,
         tab: Tab,
         window: &mut Window,
         cx: &mut koan_kit::app::Context<Self>,
     ) -> bool {
-        if !self.tabs(cx).contains(&tab) {
+        let signed_out = self.ctx.sharing.read(cx).serving.is_none()
+            && self
+                .ctx
+                .model
+                .read(cx)
+                .settings()
+                .is_some_and(|s| !s.remote_signed_in);
+        if signed_out && !self.tabs(cx).contains(&tab) {
             return false;
         }
         if tab != self.tab {

@@ -31,7 +31,8 @@ impl OutputWaitBanner {
                 let now = &playback.read(cx).0.output_wait;
                 if *now != this.wait {
                     let was = std::mem::replace(&mut this.wait, now.clone());
-                    this.leaving = was.filter(|_| this.wait.is_none()).map(|was| {
+                    let moves = crate::theme::KoanTheme::motion_allowed(cx);
+                    this.leaving = was.filter(|_| this.wait.is_none() && moves).map(|was| {
                         let done = cx.spawn(async |this, cx| {
                             cx.background_executor().timer(Hang::LEAVE).await;
                             this.update(cx, |this, cx| {

@@ -139,6 +139,11 @@ struct ElasticState {
     speed: f32,
     /// What the finger has moved the page by since it last stood at its top.
     travelled: f32,
+    /// This gesture has had its give: what is left of its fling only runs
+    /// out against the end. Until the fling's last step or the next touch.
+    spent: bool,
+    #[cfg(test)]
+    bounces: u32,
 }
 
 /// A page whose ends give, as a UIKit scroll view's: a vertical pan the page
@@ -178,10 +183,12 @@ impl Elastic {
             page
         };
         let this = self.clone();
+        // Before the page: of the listeners under a finger this one hears a
+        // step first as it is captured, and last as it bubbles, so only what
+        // no list under it could use reaches its give.
         div()
             .relative()
             .size_full()
-            .child(page)
             .child(
                 canvas(
                     |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
@@ -202,7 +209,14 @@ impl Elastic {
                 .left_0()
                 .size_full(),
             )
+            .child(page)
             .into_any_element()
+    }
+
+    /// Swaps what the finger has moved the page by for `travelled`: the
+    /// page showing has changed, and this was the last one's.
+    pub fn swap_travelled(&self, travelled: f32) -> f32 {
+        std::mem::replace(&mut self.state.borrow_mut().travelled, travelled)
     }
 
     /// Whether the page has been scrolled since it last stood at its top: a
@@ -276,6 +290,7 @@ impl Elastic {
             match event.touch_phase {
                 TouchPhase::Started => {
                     state.finger = true;
+                    state.spent = false;
                     // A finger landing on a bounce holds it where it stands.
                     if state.settling.take().is_some() {
                         let shown = self.follow.at().y / window.scale_factor();
@@ -302,6 +317,7 @@ impl Elastic {
                     state.finger = false;
                     if state.layered && state.settling.is_none() {
                         state.pulled = 0.0;
+                        state.spent = true;
                         let length = if moves(cx) {
                             self.follow.animated().throw(
                                 2,
@@ -324,6 +340,9 @@ impl Elastic {
                     if dy != 0.0 {
                         state.travelled += dy;
                     }
+                    if matches!(event.touch_phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+                        state.spent = false;
+                    }
                     return;
                 }
             }
@@ -342,12 +361,14 @@ impl Elastic {
                     cx.notify(view);
                 }
             }
-            TouchPhase::Moved if !state.finger && dy != 0.0 && !state.layered => {
-                let settling = state
-                    .settling
-                    .is_some_and(|at| at > std::time::Instant::now());
-                if settling || !moves(cx) {
+            TouchPhase::Moved if !state.finger && dy != 0.0 && !state.layered && !state.spent => {
+                if !moves(cx) {
                     return;
+                }
+                state.spent = true;
+                #[cfg(test)]
+                {
+                    state.bounces += 1;
                 }
                 let velocity = state.speed * window.scale_factor();
                 drop(state);
@@ -598,7 +619,161 @@ impl Push {
 
 #[cfg(test)]
 mod tests {
-    use super::{Animated, Duration, Motion, Push, rubber, unrubber};
+    use gpui::prelude::*;
+    use gpui::{
+        Context, Entity, InteractiveElement, Point, Render, ScrollHandle, TestAppContext,
+        TouchEvent, TouchId, TouchPhase, VisualTestContext, Window, div, point, px,
+    };
+
+    use super::{Animated, Duration, Elastic, Motion, Push, rubber, unrubber};
+
+    /// One page of `tall` points over the window, its ends giving.
+    struct Page {
+        elastic: Elastic,
+        list: ScrollHandle,
+        tall: f32,
+    }
+
+    impl Render for Page {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let list = div()
+                .id("list")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.list)
+                .child(div().w_full().flex_none().h(px(self.tall)));
+            div().size_full().child(self.elastic.wrap(list, window, cx))
+        }
+    }
+
+    const FRAME: Duration = Duration::from_millis(8);
+
+    fn opened(
+        tall_over_window: f32,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Page>, &mut VisualTestContext) {
+        cx.update(|cx| {
+            crate::theme::init(cx);
+            crate::theme::KoanTheme::set_touch(true, cx);
+        });
+        let (page, cx) = cx.add_window_view(move |window, _| Page {
+            elastic: Elastic::new(),
+            list: ScrollHandle::new(),
+            tall: f32::from(window.viewport_size().height) + tall_over_window,
+        });
+        cx.run_until_parked();
+        (page, cx)
+    }
+
+    fn touch(phase: TouchPhase, y: f32, cx: &mut VisualTestContext) {
+        cx.simulate_event(TouchEvent {
+            id: TouchId(1),
+            position: point(px(100.), px(y)),
+            phase,
+            ..Default::default()
+        });
+    }
+
+    /// A finger from `from` to `to` over `steps` frames, and still on the
+    /// glass at the end.
+    fn drag(from: f32, to: f32, steps: u32, cx: &mut VisualTestContext) {
+        for step in 1..=steps {
+            std::thread::sleep(FRAME);
+            touch(
+                TouchPhase::Moved,
+                from + (to - from) * step as f32 / steps as f32,
+                cx,
+            );
+        }
+    }
+
+    /// The display's frames, until nothing asks for another.
+    fn frames_until_still(cx: &mut VisualTestContext) {
+        for _ in 0..1000 {
+            std::thread::sleep(FRAME);
+            let ran = cx.update(|window, cx| window.simulate_next_frame(cx));
+            cx.executor().advance_clock(FRAME);
+            cx.run_until_parked();
+            if ran == 0 {
+                return;
+            }
+        }
+        panic!("frames were still being asked for");
+    }
+
+    fn offset(page: &Entity<Page>, cx: &mut VisualTestContext) -> Point<gpui::Pixels> {
+        page.read_with(cx, |page, _| page.list.offset())
+    }
+
+    /// (pulled, layered, bounces)
+    fn give(page: &Entity<Page>, cx: &mut VisualTestContext) -> (f32, bool, u32) {
+        page.read_with(cx, |page, _| {
+            let state = page.elastic.state.borrow();
+            (state.pulled, state.layered, state.bounces)
+        })
+    }
+
+    #[gpui::test]
+    fn a_pan_with_room_moves_the_list_and_not_the_page(cx: &mut TestAppContext) {
+        let (page, cx) = opened(3000., cx);
+        touch(TouchPhase::Started, 500., cx);
+        drag(500., 200., 12, cx);
+        assert!(offset(&page, cx).y < px(-200.), "{:?}", offset(&page, cx));
+        let (pulled, layered, bounces) = give(&page, cx);
+        assert_eq!((pulled, layered, bounces), (0.0, false, 0));
+        assert!(page.read_with(cx, |page, _| page.elastic.scrolled()));
+    }
+
+    #[gpui::test]
+    fn a_pan_past_the_top_pulls_the_page_and_coming_back_scrolls(cx: &mut TestAppContext) {
+        let (page, cx) = opened(3000., cx);
+        touch(TouchPhase::Started, 200., cx);
+        drag(200., 320., 10, cx);
+        assert_eq!(offset(&page, cx).y, px(0.));
+        let (pulled, layered, _) = give(&page, cx);
+        assert!(
+            pulled > 50. && layered,
+            "pulled {pulled}, layered {layered}"
+        );
+        // Back up past where it started, and on: the list has it again.
+        drag(320., 60., 16, cx);
+        assert_eq!(give(&page, cx).0, 0.0);
+        assert!(offset(&page, cx).y < px(-20.), "{:?}", offset(&page, cx));
+    }
+
+    #[gpui::test]
+    fn a_fling_with_room_coasts_and_does_not_bounce(cx: &mut TestAppContext) {
+        let (page, cx) = opened(200_000., cx);
+        touch(TouchPhase::Started, 700., cx);
+        drag(700., 300., 8, cx);
+        let released = offset(&page, cx).y;
+        touch(TouchPhase::Ended, 300., cx);
+        frames_until_still(cx);
+        assert!(
+            offset(&page, cx).y < released - px(100.),
+            "coasted from {released:?} to {:?}",
+            offset(&page, cx)
+        );
+        assert_eq!(give(&page, cx), (0.0, false, 0));
+    }
+
+    #[gpui::test]
+    fn a_fling_into_the_end_bounces_once(cx: &mut TestAppContext) {
+        let (page, cx) = opened(600., cx);
+        touch(TouchPhase::Started, 700., cx);
+        drag(700., 300., 8, cx);
+        touch(TouchPhase::Ended, 300., cx);
+        frames_until_still(cx);
+        assert_eq!(offset(&page, cx).y, px(-600.));
+        assert_eq!(give(&page, cx).2, 1);
+        // The next gesture has its give again.
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        assert!(!give(&page, cx).1);
+        touch(TouchPhase::Started, 300., cx);
+        drag(300., 200., 8, cx);
+        assert!(give(&page, cx).0 < -30.);
+    }
 
     #[test]
     fn the_band_gives_less_the_further_it_is_pulled() {

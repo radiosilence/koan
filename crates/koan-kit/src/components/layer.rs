@@ -111,6 +111,7 @@ pub struct AnimatedLayer {
     placed: Option<Placed>,
     /// Room composed below its bounds, for content offset down into it.
     below: Pixels,
+    toward: Point<Pixels>,
 }
 
 impl AnimatedLayer {
@@ -124,6 +125,7 @@ impl AnimatedLayer {
             informative: false,
             placed: None,
             below: Pixels::ZERO,
+            toward: Point::default(),
         }
     }
 
@@ -131,6 +133,13 @@ impl AnimatedLayer {
     /// its offset moves down is drawn there rather than cut off.
     pub fn room_below(mut self, below: Pixels) -> Self {
         self.below = below;
+        self
+    }
+
+    /// Composed out as far as `delta` on the side it points to, so content
+    /// offset that far is drawn there rather than cut off.
+    pub fn room_toward(mut self, delta: Point<Pixels>) -> Self {
+        self.toward = delta;
         self
     }
 
@@ -231,7 +240,10 @@ impl Element for AnimatedLayer {
             return;
         }
         let mut bounds = bounds;
-        bounds.size.height += self.below;
+        bounds.size.height += self.below + self.toward.y.abs();
+        bounds.size.width += self.toward.x.abs();
+        bounds.origin.x += self.toward.x.min(Pixels::ZERO);
+        bounds.origin.y += self.toward.y.min(Pixels::ZERO);
         let child = &mut self.child;
         self.animated
             .paint_layer(self.program, bounds, window, cx, |window, cx| {

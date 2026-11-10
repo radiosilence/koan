@@ -37,7 +37,8 @@ impl ServerBanner {
                 let now = standing(&connection, cx);
                 if now != this.standing {
                     let was = std::mem::replace(&mut this.standing, now);
-                    this.leaving = (now == ServerStanding::Fine).then(|| {
+                    let moves = crate::theme::KoanTheme::motion_allowed(cx);
+                    this.leaving = (now == ServerStanding::Fine && moves).then(|| {
                         let done = cx.spawn(async |this, cx| {
                             cx.background_executor().timer(Hang::LEAVE).await;
                             this.update(cx, |this, cx| {

@@ -375,7 +375,16 @@ impl RenderOnce for Shifted {
             })
             .read(cx)
             .clone();
-        AnimatedLayer::new(&animated, self.child).into_any_element()
+        // Where it comes from, as far as the window shows: a row from far
+        // off is out of sight until it nears.
+        let window_size = window.viewport_size();
+        let toward = point(
+            self.delta.x.clamp(-window_size.width, window_size.width),
+            self.delta.y.clamp(-window_size.height, window_size.height),
+        );
+        AnimatedLayer::new(&animated, self.child)
+            .room_toward(toward)
+            .into_any_element()
     }
 }
 
@@ -471,46 +480,34 @@ impl RenderOnce for Hang {
         if !moves(cx) {
             return self.child;
         }
-        let state = window.use_keyed_state("hang", cx, |_, _| {
-            let animated = Animated::new();
-            standing(&animated);
-            // Held out of sight until its height is known, at its first paint.
-            animated.hold(0, 0.0);
-            (animated, false)
-        });
-        let (animated, left) = state.read(cx).clone();
-        let leaving = self.leaving && !left;
-        if leaving {
-            state.update(cx, |state, _| state.1 = true);
-        }
+        let animated = window
+            .use_keyed_state("hang", cx, |_, _| {
+                let animated = Animated::new();
+                standing(&animated);
+                // Held out of sight until its height is known, at its first
+                // paint.
+                animated.hold(0, 0.0);
+                animated
+            })
+            .read(cx)
+            .clone();
+        let leaving = self.leaving;
         let arrives = animated.clone();
-        let placed = std::cell::Cell::new(false);
         AnimatedLayer::new(&animated, self.child)
             .placed(move |bounds, scale| {
                 let height = f32::from(bounds.size.height) * scale;
-                if leaving {
+                let showing = arrives.track(0).to != 0.0;
+                if leaving && showing {
                     arrives.to(0, 0.0, Motion::SETTLE, Ease::InOut);
                     arrives.to(2, -height, Motion::SETTLE, Ease::InOut);
-                } else if !placed.replace(true) && arrives.track(0).to == 0.0 && !left {
-                    let now = Animated::now();
-                    arrives.segment(
-                        0,
-                        0.0,
-                        1.0,
-                        now,
-                        Motion::SETTLE,
-                        Ease::QuickOut,
-                        Repeat::Once,
-                    );
-                    arrives.segment(
-                        2,
-                        -height,
-                        0.0,
-                        now,
-                        Motion::SETTLE,
-                        Ease::QuickOut,
-                        Repeat::Once,
-                    );
+                } else if !leaving && !showing {
+                    // From behind the bar the first time; told to stay as it
+                    // goes, from wherever it had got to.
+                    if arrives.track(2).to == 0.0 {
+                        arrives.hold(2, -height);
+                    }
+                    arrives.to(0, 1.0, Motion::SETTLE, Ease::QuickOut);
+                    arrives.to(2, 0.0, Motion::SETTLE, Ease::QuickOut);
                 }
             })
             .into_any_element()

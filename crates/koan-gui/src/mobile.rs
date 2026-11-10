@@ -147,6 +147,8 @@ pub struct PhoneShell {
     /// An import stopped on a question, as last drawn.
     import_asking: bool,
     activity_shown: bool,
+    /// What each page has been scrolled by since it last stood at its top.
+    travel: std::collections::HashMap<(usize, Route), f32>,
     activity_leaving: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -265,6 +267,7 @@ impl PhoneShell {
             eq_watch: None,
             import_asking: false,
             activity_shown: false,
+            travel: Default::default(),
             activity_leaving: None,
             info: None,
             push: crate::components::Push::new(),
@@ -472,6 +475,13 @@ impl PhoneShell {
             self.pushing = true;
             let length = self.push.enter(cx);
             self.land(length, false, cx);
+        }
+        if self.seen != Some(now) {
+            let page = self.travel.get(&now).copied().unwrap_or_default();
+            let left = self.elastic.swap_travelled(page);
+            if let Some(was) = self.seen {
+                self.travel.insert(was, left);
+            }
         }
         self.seen = Some(now);
     }
@@ -838,6 +848,13 @@ impl PhoneShell {
             if this.closing.is_some() {
                 return;
             }
+            // The sleeve still flying gives way to the art going down.
+            if let Some((_, _, flight, _)) = this.flight.take() {
+                flight.landed.set(true);
+                if let Some((full, ..)) = &this.now_playing {
+                    full.update(cx, |_, cx| cx.notify());
+                }
+            }
             // Down on the GPU (`SlideUp`), and let go once it is down.
             let length = crate::components::settle_length(cx);
             this.closing = Some(cx.spawn(async move |this, cx| {
@@ -970,7 +987,8 @@ impl Render for PhoneShell {
                 .leaving(self.closing.is_some()),
             )
         });
-        let flying = self.flight.as_ref().and_then(|(album, from, flight, _)| {
+        let flight = self.flight.as_ref().filter(|_| self.now_playing.is_some());
+        let flying = flight.and_then(|(album, from, flight, _)| {
             let to = flight.to()?;
             let art = crate::covers::art(*album, to.size.width, window.scale_factor(), cx);
             Some(crate::components::Flying::new(

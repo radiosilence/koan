@@ -180,10 +180,10 @@ pub struct QueueView {
     /// The queue items as of the last edit, which the next is told against.
     known: HashSet<String>,
     /// Their order, so rows after a removed one can close up.
-    order: Vec<String>,
+    order: Vec<(String, usize)>,
     /// Under touch, the rows moved up by an edit that removed rows above
     /// them: how many went, and how many edits have closed rows up.
-    closing: HashMap<String, u32>,
+    closing: HashMap<String, [i32; 3]>,
     closings: u64,
     /// How many times picking has been entered or left.
     pick_changes: u64,
@@ -352,20 +352,29 @@ impl QueueView {
         // Rows after a removed row close up over where it stood, unless
         // the whole queue was replaced.
         let gone: HashSet<&String> = self.known.difference(&now).collect();
+        let order = laid_out(&queue.rows, &queue.base);
         self.closing.clear();
         if !gone.is_empty() && gone.len() < self.known.len() {
-            let mut removed = 0;
-            for id in &self.order {
-                if gone.contains(id) {
-                    removed += 1;
-                } else if removed > 0 && now.contains(id) {
-                    self.closing.insert(id.clone(), removed);
+            let mut above = [0; 3];
+            let mut was: HashMap<&str, [i32; 3]> = HashMap::new();
+            for (key, kind) in &self.order {
+                was.insert(key, above);
+                above[*kind] += 1;
+            }
+            let mut above = [0; 3];
+            for (key, kind) in &order {
+                if let Some(before) = was.get(key.as_str()) {
+                    let closes = std::array::from_fn(|k| before[k] - above[k]);
+                    if closes != [0; 3] {
+                        self.closing.insert(key.clone(), closes);
+                    }
                 }
+                above[*kind] += 1;
             }
             self.closings += 1;
         }
         let closed = !self.closing.is_empty();
-        self.order = queue.base.iter().map(|i| i.queue_item_id.clone()).collect();
+        self.order = order;
         if closed {
             self.let_go_of_moves(cx);
         }
@@ -890,7 +899,7 @@ impl QueueView {
                     picked: selected,
                     waiting: true,
                     pick,
-                    pick_in: self.pick_changes,
+                    pick_in: self.pick_shift.map(|_| self.pick_changes),
                 };
                 let landed = self.landed(&queue.base[first].queue_item_id);
                 let frame = heading(
@@ -914,7 +923,7 @@ impl QueueView {
                     picked: selected,
                     waiting: true,
                     pick,
-                    pick_in: self.pick_changes,
+                    pick_in: self.pick_shift.map(|_| self.pick_changes),
                 };
                 let item = &queue.items[ix];
                 let numbering = Numbering {
@@ -1056,16 +1065,24 @@ impl QueueView {
         // holds the row or it eases back, mounted only then.
         let shifted = {
             let queue = self.queue.read(cx);
-            let (id, kind) = match r {
-                Row::Heading { first, .. } => (&queue.base[first].queue_item_id, RowKind::Heading),
-                Row::Track { ix, grouped } => (
-                    &queue.base[ix].queue_item_id,
-                    if grouped { RowKind::Text } else { RowKind::Art },
-                ),
+            let (id, key) = match r {
+                Row::Heading { first, .. } => {
+                    let id = &queue.base[first].queue_item_id;
+                    (id, heading_key(id))
+                }
+                Row::Track { ix, .. } => {
+                    let id = &queue.base[ix].queue_item_id;
+                    (id, id.clone())
+                }
             };
-            let closes = self.closing.get(id).map(|n| {
-                let by = RowMetrics::height(kind, &p.look) * *n as f32;
-                (format!("close:{}:{id}", self.closings), by)
+            let closes = self.closing.get(&key).map(|above| {
+                let by = ROW_KINDS
+                    .iter()
+                    .zip(above)
+                    .fold(Pixels::ZERO, |by, (kind, n)| {
+                        by + RowMetrics::height(*kind, &p.look) * *n as f32
+                    });
+                (format!("close:{}:{key}", self.closings), by)
             });
             let shifts = self
                 .pick_shift
@@ -1445,8 +1462,29 @@ pub(crate) struct Look<'a> {
     /// While picking on a phone, whether the row is ticked: drawn as a
     /// checkbox, and its names are not links.
     pub pick: Option<bool>,
-    /// How many times picking has changed: a tick fades in each time.
-    pub pick_in: u64,
+    /// While picking has just changed, how many times it has: its ticks
+    /// fade in. A row scrolled in later has its tick already.
+    pub pick_in: Option<u64>,
+}
+
+/// The kinds of row a queue is laid out in, in the order `laid_out` numbers
+/// them.
+const ROW_KINDS: [RowKind; 3] = [RowKind::Heading, RowKind::Text, RowKind::Art];
+
+fn heading_key(first: &str) -> String {
+    format!("head:{first}")
+}
+
+/// Each row's key and the index in `ROW_KINDS` of its height.
+fn laid_out(rows: &[Row], base: &[QueueItem]) -> Vec<(String, usize)> {
+    rows.iter()
+        .map(|row| match *row {
+            Row::Heading { first, .. } => (heading_key(&base[first].queue_item_id), 0),
+            Row::Track { ix, grouped } => {
+                (base[ix].queue_item_id.clone(), if grouped { 1 } else { 2 })
+            }
+        })
+        .collect()
 }
 
 impl Look<'_> {
@@ -1504,13 +1542,14 @@ fn picked_circle(row: TableRow, look: &Look) -> TableRow {
     };
     row.lead(
         PICK,
-        div()
-            .flex()
-            .items_center()
-            .child(crate::components::FadeIn::new(
-                look.id("pick-in", look.pick_in as usize),
+        div().flex().items_center().child(match look.pick_in {
+            Some(changes) => crate::components::FadeIn::new(
+                look.id("pick-in", changes as usize),
                 crate::components::CheckBox::new(look.id("pick", 0), ticked),
-            )),
+            )
+            .into_any_element(),
+            None => crate::components::CheckBox::new(look.id("pick", 0), ticked).into_any_element(),
+        }),
     )
 }
 
