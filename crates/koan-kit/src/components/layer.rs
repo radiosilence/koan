@@ -219,14 +219,16 @@ impl Element for AnimatedLayer {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // Before asking whether it moves: an arrival measured from its bounds
+        // starts here.
+        if let Some(placed) = &self.placed {
+            placed(bounds, window.scale_factor());
+        }
         // A layer only while it moves: settled, it is painted as it stands,
         // with no texture of its own.
         if !self.always && !self.animated.moving() {
             self.child.paint(window, cx);
             return;
-        }
-        if let Some(placed) = &self.placed {
-            placed(bounds, window.scale_factor());
         }
         let mut bounds = bounds;
         bounds.size.height += self.below;
