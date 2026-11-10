@@ -1,0 +1,1 @@
+- **Flings on the phone coast as far as a native list's.** The speed at release was read from the last instant of the touch, which came out at 40–84% of what `UIScrollView` reports for the same finger; it is now read over the trailing window, as UIKit reads it. A long press also fires its haptic once.

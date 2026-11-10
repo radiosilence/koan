@@ -1,0 +1,1 @@
+- **Settings sections on a phone.** A second section tapped while the first was sliding in stacked the two, and the screen stopped responding as each took Settings' one pane from the other. A section that is no longer offered now goes back to the list.

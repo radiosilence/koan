@@ -533,11 +533,30 @@ impl SettingsWindow {
         self.screen = true;
     }
 
-    pub fn choose(&mut self, tab: Tab, window: &mut Window, cx: &mut koan_kit::app::Context<Self>) {
+    /// Shows `tab`, and says whether it could: with the account gone, one
+    /// that needs it is left for the Server pane it gave way to. What the
+    /// server offers may just not have arrived yet, so that alone stays.
+    pub fn choose(
+        &mut self,
+        tab: Tab,
+        window: &mut Window,
+        cx: &mut koan_kit::app::Context<Self>,
+    ) -> bool {
+        let signed_out = self.ctx.sharing.read(cx).serving.is_none()
+            && self
+                .ctx
+                .model
+                .read(cx)
+                .settings()
+                .is_some_and(|s| !s.remote_signed_in);
+        if signed_out && !self.tabs(cx).contains(&tab) {
+            return false;
+        }
         if tab != self.tab {
             self.show(tab, window, cx);
             cx.notify();
         }
+        true
     }
 
     pub fn answer(
@@ -660,7 +679,11 @@ impl Render for SettingsWindow {
                     tab.icon(),
                     tab.title(),
                     tab == self.tab,
-                    move |_, window, cx| entity.update(cx, |this, cx| this.choose(tab, window, cx)),
+                    move |_, window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.choose(tab, window, cx);
+                        })
+                    },
                 )
             });
         let status = status_line(self.ctx.model.read(cx));

@@ -296,7 +296,11 @@ impl Render for AppearancePane {
                 section(
                     Some("Theme"),
                     theme_rows,
-                    Some("Show icons puts icons beside the labels in the sidebar, the tabs and the buttons. Text size scales the type, and its spacing by half as much.".into()),
+                    Some(if crate::mobile::phone() {
+                        "Show icons puts icons beside the labels on the buttons. Text size scales the type, and its spacing by half as much.".into()
+                    } else {
+                        "Show icons puts icons beside the labels in the sidebar, the tabs and the buttons. Text size scales the type, and its spacing by half as much.".into()
+                    }),
                     &look,
                 ),
                 section(

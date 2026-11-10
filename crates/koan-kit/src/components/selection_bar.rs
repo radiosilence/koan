@@ -6,7 +6,7 @@ use gpui::prelude::*;
 use gpui::*;
 
 use super::{Button, ButtonKind, Handler, RowMetrics};
-use crate::theme::{KoanStyled, Look, Space, TypeRole};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, TypeRole};
 
 /// The count in `meta`, `ink`, leading; the verbs trailing, `Text` buttons
 /// or anything drawn as one (a menu's trigger), then "done". On `bg` with a
@@ -57,6 +57,25 @@ impl SelectionBar {
         )
     }
 
+    /// On a phone, a verb drawn as an icon over its word, sharing the bar's
+    /// width with the others: what fits five verbs along a phone's foot.
+    pub fn icon_verb(
+        self,
+        id: impl Into<ElementId>,
+        icon: Icon,
+        label: impl Into<SharedString>,
+        disabled: bool,
+        run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.element(IconVerb {
+            id: id.into(),
+            icon,
+            label: label.into(),
+            disabled,
+            run: std::sync::Arc::new(run),
+        })
+    }
+
     /// A verb that is more than a button, such as a menu's trigger.
     pub fn element(mut self, verb: impl IntoElement) -> Self {
         self.verbs.push(verb.into_any_element());
@@ -73,6 +92,49 @@ impl SelectionBar {
     pub fn done_help(mut self, help: impl Into<SharedString>) -> Self {
         self.done_help = Some(help.into());
         self
+    }
+}
+
+#[derive(IntoElement)]
+struct IconVerb {
+    id: ElementId,
+    icon: Icon,
+    label: SharedString,
+    disabled: bool,
+    run: Handler<ClickEvent>,
+}
+
+impl RenderOnce for IconVerb {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let color = if self.disabled {
+            look.palette.muted.hsla()
+        } else {
+            look.palette.ink.hsla()
+        };
+        let run = self.run;
+        let disabled = self.disabled;
+        div()
+            .id(self.id)
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(look.spaced(3.0))
+            .min_h(look.target())
+            .text_color(color)
+            .when(!disabled, |verb| {
+                verb.on_click(move |event, window, cx| run(event, window, cx))
+            })
+            .child(KoanIcon::new(self.icon).color(color))
+            .child(
+                div()
+                    .text_role(TypeRole::Fine, &look)
+                    .text_color(color)
+                    .child(self.label),
+            )
     }
 }
 
@@ -119,7 +181,6 @@ impl RenderOnce for SelectionBar {
                         .flex()
                         .items_center()
                         .justify_around()
-                        .min_h(look.target())
                         .children(self.verbs),
                 )
                 .into_any_element();

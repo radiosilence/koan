@@ -104,7 +104,7 @@ pub use animated::{
     ShaderProgram, TRACK_FLOATS, Track, WeakAnimated,
 };
 pub use answer::{ANSWER, Answer, Answerer, GLYPH, Morph};
-pub use appear::{Fading, Rise, SlideUp, Veil};
+pub use appear::{Fading, Flying, Hang, Rise, Shifted, SlideUp, Veil, ZoomIn};
 pub use arrive::{Arrival, arriving};
 pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
@@ -137,7 +137,9 @@ pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
 pub use field::{AreaState, FieldState, InputEvent, Labelled, TextArea, TextField, labelled};
 pub use filter_field::{FilterButton, FilterField};
-pub use follow::{Follow, PUSH_FRONT, PUSH_UNDER, Push, SWIPE_ACTION, SwipeAction, settle_length};
+pub use follow::{
+    Elastic, Follow, PUSH_FRONT, PUSH_UNDER, Push, SWIPE_ACTION, SwipeAction, settle_length,
+};
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
     form_note, form_text,
@@ -145,8 +147,9 @@ pub use form::{
 pub use guide::{Check, CheckItem, ChoiceCards, Steps};
 pub use heart::Heart;
 pub use insets::{
-    Clear, Frost, KoanFrosted, KoanInsets, bar_inset, bar_probe, foot_inset, foot_probe,
-    keep_clear, page_shown, report_scroll_edges, set_bar_inset, set_foot_inset, system_insets,
+    Clear, Frost, KoanFrosted, KoanInsets, bar_inset, bar_probe, bounds_probe, foot_inset,
+    foot_probe, keep_clear, page_shown, report_scroll_edges, set_bar_inset, set_foot_inset,
+    system_insets,
 };
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
