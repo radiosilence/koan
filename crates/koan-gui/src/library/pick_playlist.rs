@@ -262,13 +262,20 @@ impl PickPlaylist {
             .zip(sleeves)
             .map(|(playlist, sleeve)| {
                 let id = playlist.id;
-                NavRow::data(("pick-playlist", id as u64), playlist.name.clone())
-                    .art(Mosaic::new(
-                        sleeve.into_iter().map(Into::into).collect(),
-                        side,
-                    ))
-                    .detail(count(playlist.track_count.into(), "track", "tracks"))
-                    .on_click(cx.listener(move |this, _, window, cx| this.choose(id, window, cx)))
+                // As wide as the list: a list's items size to their content.
+                div()
+                    .w_full()
+                    .child(
+                        NavRow::data(("pick-playlist", id as u64), playlist.name.clone())
+                            .art(Mosaic::new(
+                                sleeve.into_iter().map(Into::into).collect(),
+                                side,
+                            ))
+                            .detail(count(playlist.track_count.into(), "track", "tracks"))
+                            .on_click(
+                                cx.listener(move |this, _, window, cx| this.choose(id, window, cx)),
+                            ),
+                    )
                     .into_any_element()
             })
             .collect();
