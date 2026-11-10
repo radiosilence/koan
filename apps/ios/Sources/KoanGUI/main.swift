@@ -19,9 +19,16 @@ private func koanGuiOnEvents(
 
 // Held for the life of the process: GPUI retains it too, once forwarded.
 private let push = PushDelegate()
+private var remoteActivity: RemoteActivityController?
 koanGuiForwardDelegate(Unmanaged.passUnretained(push).toOpaque())
 koanGuiOnEvents(
-    { Task { @MainActor in PushDelegate.engine = openedEngine() } },
+    {
+        Task { @MainActor in
+            guard let engine = openedEngine() else { return }
+            PushDelegate.engine = engine
+            remoteActivity = RemoteActivityController(engine: engine)
+        }
+    },
     { Task { await PushDelegate.requestAlerts() } }
 )
 koanGuiMain()

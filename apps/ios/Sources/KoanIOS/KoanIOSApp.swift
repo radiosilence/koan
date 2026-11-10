@@ -16,9 +16,6 @@ struct KoanIOSApp: App {
     /// A link opened before the engine was up, handled once it is.
     @State private var pendingURL: URL?
     @State private var session = AudioSession()
-    #if os(iOS)
-    @State private var remoteActivity: RemoteActivityController?
-    #endif
     @Environment(\.scenePhase) private var scenePhase
     @State private var powerSaving = ProcessInfo.processInfo.isLowPowerModeEnabled
 
@@ -108,9 +105,6 @@ struct KoanIOSApp: App {
                     let built = try await AppState()
                     await built.start()
                     PushDelegate.engine = built.player.engine
-                    #if os(iOS)
-                    remoteActivity = RemoteActivityController(engine: built.player.engine, mirror: built.mirror, art: built.art)
-                    #endif
                     // Configured before anything can be asked to play, and
                     // activated by the engine only when something does: koan
                     // opening must not stop another app's music.

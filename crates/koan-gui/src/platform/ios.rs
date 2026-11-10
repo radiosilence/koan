@@ -427,15 +427,20 @@ fn ask_for_alerts(front: bool, cx: &mut App) {
     }
 }
 
+/// The engine is open, on the thread that opened it: the app's Swift can
+/// drive it from here on, with or without a scene.
+pub fn engine_opened(engine: &Arc<KoanEngine>) {
+    koan_ffi::adopt_engine(engine.clone());
+    if let Some(told) = TOLD.get() {
+        (told.engine)();
+    }
+}
+
 pub fn init(engine: &Arc<KoanEngine>, cx: &mut App) {
     configure();
     engine.set_audio_session(Arc::new(Session));
     report_route(engine);
     follow(engine.clone(), cx);
-    koan_ffi::adopt_engine(engine.clone());
-    if let Some(told) = TOLD.get() {
-        (told.engine)();
-    }
     let engine = engine.clone();
     cx.on_app_lifecycle(move |phase, cx| match phase {
         AppLifecyclePhase::Background => engine.set_background(true),
