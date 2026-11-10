@@ -479,7 +479,9 @@ impl QueueView {
         if self.selected.is_empty() {
             return false;
         }
-        self.row_items(row, cx).all(|id| self.selected.contains(id))
+        // A row the queue no longer has is no part of the pick.
+        let mut items = self.row_items(row, cx).peekable();
+        items.peek().is_some() && items.all(|id| self.selected.contains(id))
     }
 
     /// The picked queue items, in queue order. Ordered by their indexes
@@ -723,11 +725,13 @@ impl QueueView {
         } else {
             queue.rows.get(row).map_or(0, |row| row.items().len())
         };
-        if count == 1 {
-            queue.base[queue.rows[row].items().start]
-                .title
-                .clone()
-                .into()
+        let only = queue
+            .rows
+            .get(row)
+            .and_then(|row| queue.base.get(row.items().start))
+            .filter(|_| count == 1);
+        if let Some(only) = only {
+            only.title.clone().into()
         } else {
             format!("{count} tracks").into()
         }

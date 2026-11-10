@@ -350,9 +350,9 @@ Auth otherwise applies to HTTP API clients (GraphQL, web UI). The web UI can als
 
 ## Cookies
 
-`/auth/login` sets two `HttpOnly` cookies: `koan_access` (the JWT, `Path=/`) and `koan_refresh` (`Path=/auth/refresh`, so it is never attached to an API call). Both are `SameSite=Lax`, which is what keeps them off cross-site requests — a foreign page cannot use them to open a WebSocket or fire a mutation.
+`/auth/login` sets two `HttpOnly` cookies: `koan_access` (the JWT, `Path=/`) and `koan_refresh` (`Path=/auth`, so it is never attached to an API call). Both are `SameSite=Lax`, which is what keeps them off cross-site requests — a foreign page cannot use them to open a WebSocket or fire a mutation.
 
-The refresh token is also returned in the login response body, because the CLI and other non-browser clients have no cookie jar and keep it in `config.local.toml`.
+The refresh token is also returned in the login response body, because the CLI and other non-browser clients have no cookie jar and keep it in `config.local.toml`. `/auth/refresh` takes the token from the request body only and answers with new tokens, so it is no use to script in a page: the web UI renews through `/auth/renew`, which reads the cookie and answers with cookies alone.
 
 Refresh tokens are stored in the database as `sha256(token)`, so a database read yields nothing usable.
 

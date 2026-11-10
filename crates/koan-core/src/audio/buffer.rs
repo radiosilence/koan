@@ -999,6 +999,7 @@ fn decode_single(
     // Starting cold at the request would play its first frames wrong.
     let mut seek_samples = 0;
     let mut discard = 0usize;
+    let mut past_end = false;
     if seek_ms > 0 {
         let preroll = if is_opus_codec { OPUS_PREROLL_MS } else { 0 };
         let target = SeekTo::Time {
@@ -1031,10 +1032,16 @@ fn decode_single(
             // the library said of its length: the track is over.
             Err(symphonia::core::errors::Error::SeekError(SeekErrorKind::OutOfRange)) => {
                 log::warn!("{}: {seek_ms} ms is past the end", path.display());
-                return Ok(Decoded::Complete(format));
+                past_end = true;
             }
-            // A source that cannot seek still plays, from where it stands.
-            Err(e) => log::warn!("{}: cannot seek to {seek_ms} ms: {e}", path.display()),
+            // A source that cannot seek has not moved, and plays from where
+            // it stands. After any other failure the reader may be anywhere.
+            Err(
+                e @ symphonia::core::errors::Error::SeekError(
+                    SeekErrorKind::Unseekable | SeekErrorKind::ForwardOnly,
+                ),
+            ) => log::warn!("{}: cannot seek to {seek_ms} ms: {e}", path.display()),
+            Err(e) => return Err(DecodeError::Decode(format!("seek failed: {e}"))),
         }
     }
 
@@ -1066,6 +1073,12 @@ fn decode_single(
         seek_samples,
         output_rate: out_rate,
     });
+    // In the timeline all the same, as a track that ended: the playhead
+    // passes it and the queue moves on.
+    if past_end && let Some(boundary) = boundary.take() {
+        timeline.push_boundary(boundary);
+        return Ok(Decoded::Complete(format));
+    }
 
     // Read ReplayGain tags and select the active gain for this track.
     let rg_mode = processing.rg_mode;

@@ -41,7 +41,8 @@ targets:
 
   # The kōan GUI app: GPUI in Rust, linked as one static library with the
   # uniffi bindings, entered from `Sources/KoanGUI/main.swift`. Swift remains
-  # for push, App Attest, the Live Activity and watching the network, driving
+  # for push, App Attest, the Live Activity, watching the network and saving on
+  # leaving, driving
   # the same engine (`opened_engine`).
   Koan:
     type: application

@@ -22,6 +22,7 @@ private func koanGuiOnEvents(
 private let push = PushDelegate()
 private var remoteActivity: RemoteActivityController?
 private var networkWatch: NetworkWatch?
+private var saveOnLeaving: SaveOnLeaving?
 koanGuiForwardDelegate(Unmanaged.passUnretained(push).toOpaque())
 koanGuiOnEvents(
     {
@@ -30,6 +31,7 @@ koanGuiOnEvents(
             PushDelegate.engine = engine
             remoteActivity = RemoteActivityController(engine: engine)
             networkWatch = NetworkWatch(engine: engine)
+            saveOnLeaving = SaveOnLeaving(engine: engine)
         }
     },
     { Task { await PushDelegate.requestAlerts() } },

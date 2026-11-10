@@ -178,6 +178,10 @@ struct Conn {
     /// The TV's system status as it last said, once subscribed: asleep,
     /// screensaver or awake (`AWAKE`).
     status: Option<i64>,
+    /// When the answer being waited for is given up on. A timeout on the
+    /// socket bounds each read, and a peer sending a byte now and then,
+    /// before it has proved it is the TV, would hold a read for ever.
+    until: Option<std::time::Instant>,
 }
 
 /// The system status of a TV that is on, out of its screensaver.
@@ -198,6 +202,7 @@ impl Conn {
             stream,
             cipher: None,
             xid: i64::from(u16::from_le_bytes(random())),
+            until: None,
             status: None,
         })
     }
@@ -223,15 +228,36 @@ impl Conn {
         Ok(())
     }
 
+    /// `read_exact`, within `until` when one is set.
+    fn fill(&mut self, mut buf: &mut [u8]) -> std::io::Result<()> {
+        let Some(until) = self.until else {
+            return self.stream.read_exact(buf);
+        };
+        while !buf.is_empty() {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            self.stream.set_read_timeout(Some(left.min(ANSWER)))?;
+            match self.stream.read(buf) {
+                Ok(0) => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+                Ok(n) => buf = &mut buf[n..],
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
     fn receive(&mut self) -> Result<(u8, Vec<u8>), Error> {
         let mut header = [0u8; 4];
-        self.stream.read_exact(&mut header)?;
+        self.fill(&mut header)?;
         let len = u32::from_be_bytes([0, header[1], header[2], header[3]]) as usize;
         if len > MAX_FRAME {
             return Err(Error::Protocol("a frame too long to be a TV's"));
         }
         let mut body = vec![0u8; len];
-        self.stream.read_exact(&mut body)?;
+        self.fill(&mut body)?;
         if let Some(c) = &mut self.cipher
             && !body.is_empty()
         {
@@ -254,13 +280,9 @@ impl Conn {
         fields.push((Value::from("_x"), Value::Int(self.xid)));
         self.xid += 1;
         self.send(frame, &opack::pack(&Value::Dict(fields)))?;
-        let until = std::time::Instant::now() + ANSWER;
+        // Other frames arriving do not extend the wait.
+        self.until = Some(std::time::Instant::now() + ANSWER);
         let answer = loop {
-            // Other frames arriving do not extend the wait: this runs before
-            // the peer has proved it is the TV.
-            if std::time::Instant::now() >= until {
-                return Err(Error::Protocol("no answer"));
-            }
             let (kind, body) = self.receive()?;
             if kind == Frame::PairSetupNext as u8 || kind == Frame::PairVerifyNext as u8 {
                 break opack::unpack(&body)?;
@@ -294,11 +316,8 @@ impl Conn {
             ("_x", xid.into()),
         ]);
         self.send(Frame::Encrypted, &opack::pack(&msg))?;
-        let until = std::time::Instant::now() + ANSWER;
+        self.until = Some(std::time::Instant::now() + ANSWER);
         loop {
-            if std::time::Instant::now() >= until {
-                return Err(Error::Protocol("no answer"));
-            }
             let Some(answer) = self.message()? else {
                 continue;
             };
@@ -348,6 +367,8 @@ impl Conn {
 
     /// Wait up to `within` for the TV to say it is awake. Whether it did.
     fn await_awake(&mut self, within: Duration) -> Result<bool, Error> {
+        // This wait keeps its own time, by the socket's timeout.
+        self.until = None;
         let until = std::time::Instant::now() + within;
         while self.status != Some(AWAKE) {
             let left = until.saturating_duration_since(std::time::Instant::now());
