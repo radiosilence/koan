@@ -23,10 +23,18 @@ pub struct Interruption {
     /// "began" for one, and the later find the music already paused.
     was_playing: bool,
     route_lost_at: Option<Instant>,
+    /// The output was rebuilt on coming back with it still unfinished: once
+    /// is enough, and its end may yet come.
+    rebuilt: bool,
 }
 
 impl Interruption {
     pub fn began(&mut self, playing_here: bool) {
+        // Heard after coming back, this is another interruption: the person
+        // has had the app since, and what was playing before is history.
+        if std::mem::take(&mut self.rebuilt) {
+            self.was_playing = false;
+        }
         self.interrupted = true;
         self.was_playing |= playing_here;
     }
@@ -50,10 +58,14 @@ impl Interruption {
         self.interrupted.then(|| self.finish(!lost))
     }
 
-    /// The app is in front again. `Some` when an interruption nothing ended
-    /// left the output stopped; resuming is the person's to do.
-    pub fn returned(&mut self) -> Option<bool> {
-        self.interrupted.then(|| self.finish(false))
+    /// The app is in front again, and an interruption nothing has ended may
+    /// have left the output stopped: true when it is to be rebuilt, the once.
+    /// It stays unfinished, as coming back in the middle of a call does not
+    /// end the call, and the "ended" still resumes what was playing.
+    pub fn returned(&mut self) -> bool {
+        let rebuild = self.interrupted && !self.rebuilt;
+        self.rebuilt |= rebuild;
+        rebuild
     }
 
     /// iOS reset its media services, which ends nothing but what would have
@@ -64,6 +76,7 @@ impl Interruption {
 
     fn finish(&mut self, resume: bool) -> bool {
         self.interrupted = false;
+        self.rebuilt = false;
         std::mem::take(&mut self.was_playing) && resume
     }
 }
@@ -114,12 +127,29 @@ mod tests {
     }
 
     #[test]
-    fn coming_back_rebuilds_only_what_nothing_ended_and_never_resumes() {
+    fn coming_back_rebuilds_only_what_nothing_ended_and_only_once() {
         let mut i = Interruption::default();
-        assert_eq!(i.returned(), None, "nothing to recover");
+        assert!(!i.returned(), "nothing to recover");
         i.began(true);
-        assert_eq!(i.returned(), Some(false));
-        assert_eq!(i.returned(), None, "once");
+        assert!(i.returned());
+        assert!(!i.returned(), "once");
+    }
+
+    #[test]
+    fn coming_back_mid_call_leaves_the_end_to_resume() {
+        let mut i = Interruption::default();
+        i.began(true);
+        assert!(i.returned());
+        assert!(i.ended(true));
+    }
+
+    #[test]
+    fn an_interruption_after_coming_back_does_not_inherit_the_last() {
+        let mut i = Interruption::default();
+        i.began(true);
+        assert!(i.returned());
+        i.began(false);
+        assert!(!i.ended(true));
     }
 
     #[test]

@@ -369,6 +369,20 @@ impl StateStream {
             }),
         })
     }
+
+    /// A cursor that answers with the `Devices` slice alone, for a reader of
+    /// nothing else: the rest (a whole queue, say) never crosses to it.
+    pub fn devices(state: &Arc<EngineState>) -> Arc<Self> {
+        let mut seen = [u64::MAX; SLOTS];
+        seen[Slot::Devices as usize] = 0;
+        Arc::new(Self {
+            state: Arc::downgrade(state),
+            inner: tokio::sync::Mutex::new(Cursor {
+                seen,
+                tick: state.tick.subscribe(),
+            }),
+        })
+    }
 }
 
 impl StateStream {
@@ -437,6 +451,23 @@ mod tests {
             playing,
             at: Instant::now(),
         }
+    }
+
+    #[tokio::test]
+    async fn a_devices_cursor_hears_only_devices() {
+        let state = EngineState::new();
+        let stream = StateStream::devices(&state);
+        state.publish(StateSlice::Library { version: 1 });
+        state.publish(StateSlice::Devices {
+            devices: Vec::new(),
+            target: Some("mac".into()),
+            target_reach: None,
+        });
+        let batch = stream.next().await.expect("the engine is here");
+        assert!(matches!(
+            batch.as_slice(),
+            [StateSlice::Devices { target: Some(t), .. }] if t == "mac"
+        ));
     }
 
     #[test]

@@ -115,7 +115,7 @@ unsafe fn prefer(session: &AVAudioSession, sample_rate: f64) {
 /// Sets the session's category and buffer, as at launch and after iOS
 /// resets its media services.
 fn configure() {
-    // SAFETY: the shared session, on the main thread.
+    // SAFETY: the shared session is safe to use from any thread.
     unsafe {
         let session = AVAudioSession::sharedInstance();
         if let Some(playback) = AVAudioSessionCategoryPlayback
@@ -277,8 +277,8 @@ fn follow(engine: Arc<KoanEngine>, cx: &mut App) -> mpsc::UnboundedSender<Heard>
                 }
                 Heard::Ended { resume } => rebuild(interruption.ended(resume)),
                 Heard::Returned => {
-                    if let Some(resume) = interruption.returned() {
-                        rebuild(resume);
+                    if interruption.returned() {
+                        rebuild(false);
                     }
                 }
                 Heard::RouteGone => {
@@ -453,6 +453,18 @@ fn ask_for_alerts(front: bool, cx: &mut App) {
     }
 }
 
+/// The engine is open, on the thread that opened it: the app's Swift can
+/// drive it from here on, with or without a scene, and it can play: a push
+/// waking a killed phone can bring a play with no scene to show for it.
+pub fn engine_opened(engine: &Arc<KoanEngine>) {
+    configure();
+    engine.set_audio_session(Arc::new(Session));
+    koan_ffi::adopt_engine(engine.clone());
+    if let Some(told) = TOLD.get() {
+        (told.engine)();
+    }
+}
+
 /// Which of its states the app is in now, on the main thread.
 fn application_state() -> UIApplicationState {
     let main = MainThreadMarker::new().expect("the main thread");
@@ -524,15 +536,9 @@ fn answer_repeat(engine: Arc<KoanEngine>) {
 }
 
 pub fn init(engine: &Arc<KoanEngine>, cx: &mut App) {
-    configure();
-    engine.set_audio_session(Arc::new(Session));
     report_route(engine);
     let session = follow(engine.clone(), cx);
     answer_repeat(engine.clone());
-    koan_ffi::adopt_engine(engine.clone());
-    if let Some(told) = TOLD.get() {
-        (told.engine)();
-    }
     let lifecycle_engine = engine.clone();
     cx.on_app_lifecycle(move |phase, cx| match phase {
         AppLifecyclePhase::Background => lifecycle_engine.set_background(true),

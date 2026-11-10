@@ -623,6 +623,11 @@ impl KoanEngine {
         Arc::new(StateStream(self.0.observe()))
     }
 
+    /// `observe`, for a client that reads only the `Devices` slice.
+    pub fn observe_devices(&self) -> Arc<StateStream> {
+        Arc::new(StateStream(self.0.observe_devices()))
+    }
+
     /// Forget the transfers that have already settled. Running ones are left
     /// alone — stopping one is a different verb.
     pub fn clear_settled_downloads(&self) {
