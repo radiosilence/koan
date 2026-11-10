@@ -130,6 +130,7 @@ pub struct FieldState {
     pub(crate) keeps: Option<Bounds<Pixels>>,
     /// The kind of text it takes, which a software keyboard lays out for.
     mode: gpui::TextInputMode,
+    content: gpui::TextContentType,
     _focus: [Subscription; 4],
 }
 
@@ -191,6 +192,7 @@ impl FieldState {
             drawn_in: None,
             keeps: None,
             mode: gpui::TextInputMode::Unspecified,
+            content: gpui::TextContentType::Unspecified,
             _focus: [focused, blurred, activation, redraw],
         }
     }
@@ -216,7 +218,20 @@ impl FieldState {
         self
     }
 
+    /// What it holds, for the platform to offer saved values: a username or
+    /// a password.
+    pub fn content(mut self, content: gpui::TextContentType) -> Self {
+        self.content = content;
+        self
+    }
+
+    /// Changes what it holds.
+    pub fn set_content(&mut self, content: gpui::TextContentType) {
+        self.content = content;
+    }
+
     /// Its text drawn as bullets, never copied or read aloud: a password.
+    /// A software keyboard treats it as secure.
     pub fn masked(mut self, masked: bool) -> Self {
         self.masked = masked;
         self
@@ -1051,6 +1066,8 @@ impl EntityInputHandler for FieldState {
     ) -> gpui::TextInputConfiguration {
         gpui::TextInputConfiguration {
             input_mode: self.mode,
+            secure: self.masked,
+            content_type: self.content,
             ..Default::default()
         }
     }

@@ -153,6 +153,9 @@ type Loaded = Box<dyn FnOnce(&mut App)>;
 /// What a sign-in is called while it runs, by which the pane knows one is.
 pub const SIGNING_IN: &str = "Signing in";
 
+/// kōan's public demonstration server, and the account open to anyone.
+const DEMO: (&str, &str, &str) = ("https://demo.koan.rocks", "demo", "demo");
+
 /// How long the result of an action stays on the status line. An error
 /// stays until the next action.
 const RESULT_SHOWN: Duration = Duration::from_secs(6);
@@ -606,6 +609,20 @@ impl SettingsModel {
                 Err(e) => model.report(describe(&e), cx),
             },
         );
+    }
+
+    /// Whether a sign-in is under way.
+    pub fn signing_in(&self) -> bool {
+        self.running().any(|label| label.as_ref() == SIGNING_IN)
+    }
+
+    /// Signs in to the demonstration server, unless a sign-in is under way.
+    pub fn sign_in_demo(&mut self, cx: &mut Context<Self>) {
+        if self.signing_in() {
+            return;
+        }
+        let (url, username, password) = DEMO;
+        self.sign_in(url.into(), username.into(), password.into(), false, cx);
     }
 
     /// Signs in through an invite, then loads the library.

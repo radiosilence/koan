@@ -3,7 +3,7 @@
 
 use crate::components::{Button, ButtonKind, CopyText, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
-use koan_kit::app::input::{InputEvent, InputState};
+use koan_kit::app::input::{InputEvent, InputState, TextContentType};
 use koan_kit::app::*;
 use koan_runtime::{InviteTo, Settings};
 
@@ -35,20 +35,21 @@ type MadeFor = (String, Option<String>);
 impl ShareForm {
     pub fn new(ctx: &Ctx, window: &mut Window, cx: &mut Context<ServerPane>) -> Self {
         let field = |placeholder: &'static str,
-                     secret: bool,
+                     content: TextContentType,
                      window: &mut Window,
                      cx: &mut Context<ServerPane>| {
             cx.new(|cx| {
                 InputState::new(window, cx)
                     .placeholder(crate::theme::label(placeholder))
-                    .masked(secret)
+                    .masked(content == TextContentType::NewPassword)
+                    .content(content)
             })
         };
-        let username = field("Username", false, window, cx);
-        let password = field("Password", true, window, cx);
-        let again = field("Password again", true, window, cx);
-        let port = field("4000", false, window, cx);
-        let address = field("", false, window, cx);
+        let username = field("Username", TextContentType::Username, window, cx);
+        let password = field("Password", TextContentType::NewPassword, window, cx);
+        let again = field("Password again", TextContentType::NewPassword, window, cx);
+        let port = field("4000", TextContentType::Unspecified, window, cx);
+        let address = field("", TextContentType::Unspecified, window, cx);
         if let Some(settings) = ctx.model.read(cx).settings() {
             let (p, a) = (settings.share_port.to_string(), settings.server_url.clone());
             port.update(cx, |s, cx| s.set_value(p, window, cx));
@@ -228,8 +229,8 @@ impl ShareForm {
     }
 
     fn reset_password(account: String, ctx: &Ctx, window: &mut Window, cx: &mut App) {
-        let first = sheet::field("New password", true, window, cx);
-        let second = sheet::field("Again", true, window, cx);
+        let first = sheet::secret_field("New password", TextContentType::NewPassword, window, cx);
+        let second = sheet::secret_field("Again", TextContentType::NewPassword, window, cx);
         let model = ctx.model.clone();
         let engine = model.read(cx).engine().clone();
         let who = account.clone();

@@ -1,7 +1,8 @@
 //! The questions an import stops on, wherever it was started: what several
 //! files will become, at what rate bare coefficients are, and what an
-//! imported EQ is for. Each is the model's, drawn over whichever EQ page is
-//! showing.
+//! imported EQ is for. Each is the model's, drawn over the EQ page showing on
+//! a desktop, and over everything on a phone, where a share from another app
+//! can stop on one from any tab.
 
 use koan_kit::app::input::InputState;
 use koan_kit::app::{

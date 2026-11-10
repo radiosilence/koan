@@ -249,6 +249,28 @@ fn several_lines(cx: &mut TestAppContext) {
     assert_eq!(selected(&host, cx), 7..7);
 }
 
+/// A masked field asks for a secure keyboard, and what a field holds is told
+/// to the platform.
+#[gpui::test]
+fn a_field_tells_the_platform_what_it_holds(cx: &mut TestAppContext) {
+    use gpui::{EntityInputHandler as _, TextContentType};
+    let (host, cx) = host(cx, 1);
+    let f = field(&host, cx);
+    let config = |f: &Entity<FieldState>, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| f.update(cx, |f, cx| f.text_input_configuration(window, cx)))
+    };
+    let plain = config(&f, cx);
+    assert!(!plain.secure);
+    assert_eq!(plain.content_type, TextContentType::Unspecified);
+    f.update(cx, |f, _| {
+        f.masked = true;
+        f.set_content(TextContentType::CurrentPassword);
+    });
+    let secret = config(&f, cx);
+    assert!(secret.secure);
+    assert_eq!(secret.content_type, TextContentType::CurrentPassword);
+}
+
 /// A masked field draws bullets and keeps its text off the clipboard.
 #[gpui::test]
 fn a_masked_field_keeps_its_text(cx: &mut TestAppContext) {

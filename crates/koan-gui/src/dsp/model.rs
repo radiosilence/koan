@@ -378,6 +378,11 @@ impl Dsp {
         self.run_import(paths, name, rate, into, cx);
     }
 
+    /// Whether an import has stopped on a question.
+    pub fn asking(&self) -> bool {
+        self.pending_import.is_some() || self.needs_rate.is_some() || self.ask_role.is_some()
+    }
+
     /// Imports what `pending_import` planned, under `name`.
     pub fn confirm_import(&mut self, name: String, cx: &mut Context<Self>) {
         let Some(pending) = self.pending_import.take() else {

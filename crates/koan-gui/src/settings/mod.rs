@@ -195,6 +195,14 @@ pub fn open_server(cx: &mut App) {
         .ok();
 }
 
+/// Signs in to the demonstration server, on the server's pane, where its
+/// progress and any failure show.
+pub fn try_demo(cx: &mut App) {
+    open_server(cx);
+    let model = cx.global::<Settings>().model.clone();
+    model.update(cx, |m, cx| m.sign_in_demo(cx));
+}
+
 /// Opens Settings on its EQ pane, showing `device`, or the output in use:
 /// what Playback → EQ… and the transport's EQ menus do.
 pub fn open_eq(device: Option<String>, cx: &mut App) {

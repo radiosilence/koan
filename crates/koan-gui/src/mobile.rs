@@ -41,6 +41,13 @@ struct Screens(WeakEntity<PhoneShell>);
 
 impl Global for Screens {}
 
+/// Whether the phone's shell is up in its window.
+pub fn shell_open(cx: &App) -> bool {
+    cx.try_global::<Screens>()
+        .is_some_and(|s| s.0.upgrade().is_some())
+        && crate::app::main_window(cx).is_some()
+}
+
 /// On a phone, runs `f` on the shell in its window: whether it did.
 fn on_shell(
     cx: &mut App,
@@ -130,6 +137,8 @@ pub struct PhoneShell {
     /// The Search tab's field and the results under it, made once the
     /// library has loaded.
     search: Option<SearchPage>,
+    /// An import stopped on a question, as last drawn.
+    import_asking: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -193,6 +202,17 @@ impl PhoneShell {
                 let asking = ask::asking(cx);
                 cx.observe(&asking, |_, _, cx| cx.notify())
             },
+            // An import's questions come and go wherever the phone is.
+            {
+                let dsp = crate::dsp::model(cx);
+                cx.observe(&dsp, |this, dsp, cx| {
+                    let asking = dsp.read(cx).asking();
+                    if asking || std::mem::replace(&mut this.import_asking, false) {
+                        this.import_asking = asking;
+                        cx.notify();
+                    }
+                })
+            },
             // The activity card comes and goes with what is under way.
             {
                 let activity = cx
@@ -212,6 +232,7 @@ impl PhoneShell {
             settings: None,
             search: None,
             eq_watch: None,
+            import_asking: false,
             info: None,
             push: crate::components::Push::new(),
             pushing: false,
@@ -670,27 +691,27 @@ impl PhoneShell {
         self.settings.as_ref()?.read(cx).eq_page()
     }
 
-    /// EQ's sheets and questions, drawn over everything while its section
-    /// shows; the shell watches the page so that they come and go with it.
-    fn eq_overlay(
+    /// EQ's sheets, drawn over everything while its section shows; the shell
+    /// watches the page so that they come and go with it.
+    fn eq_sheets(
         &mut self,
         route: Route,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (Option<AnyElement>, Option<AnyElement>) {
+    ) -> Option<AnyElement> {
         let page = (route == Route::SettingsSection(crate::settings::Tab::Eq)
             && self.now_playing.is_none())
         .then(|| self.eq_page(cx))
         .flatten();
         let Some(page) = page else {
             self.eq_watch = None;
-            return (None, None);
+            return None;
         };
         if self.eq_watch.as_ref().map(|(id, _)| *id) != Some(page.entity_id()) {
             let watch = cx.observe(&page, |_, _, cx| cx.notify());
             self.eq_watch = Some((page.entity_id(), watch));
         }
-        crate::dsp::EqPage::overlay(&page, window, cx)
+        crate::dsp::EqPage::sheets(&page, window, cx)
     }
 
     /// Goes to `route` on the tab showing, as a link would; for tools that
@@ -815,7 +836,10 @@ impl Render for PhoneShell {
         let route = self.nav.read(cx).current();
         crate::components::page_shown(route, window, cx);
         let stage = self.stage(route, window, cx);
-        let (eq_sheets, eq_questions) = self.eq_overlay(route, window, cx);
+        let eq_sheets = self.eq_sheets(route, window, cx);
+        // An import shared from another app stops on these wherever the
+        // phone is: they are not the EQ page's.
+        let eq_questions = crate::dsp::prompts::render(&crate::dsp::model(cx), window, cx);
         let wanted = self
             .library
             .as_ref()

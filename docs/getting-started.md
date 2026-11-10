@@ -109,6 +109,8 @@ koan remote login https://music.example.com alice
 koan remote sync
 ```
 
+In the apps, Settings → Server has a **Try the demo server** action, also offered by a signed-out phone's empty queue, which signs in to kōan's public demonstration library, reset daily.
+
 ### Playing
 
 The terminal UI has pages, as the apps do: `1` the queue, `2` Now playing, `3` Albums, `4` Artists, `5` Favourites, `6` Recent, `7` History, `8` Playlists, `9` Settings and `0` Search, also reached from the sidebar.
