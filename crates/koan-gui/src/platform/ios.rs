@@ -6,10 +6,10 @@
 //! another app taking the audio pauses the music and, when iOS says to,
 //! resumes it; headphones unplugged pause it.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use block2::RcBlock;
 use futures_channel::mpsc;
@@ -19,13 +19,18 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_avf_audio::AVAudioSessionPortDescription;
 use objc2_foundation::{
-    NSFileManager, NSNotification, NSNotificationCenter, NSNumber, NSOperationQueue, NSString,
+    NSFileManager, NSMutableCopying as _, NSNotification, NSNotificationCenter, NSNumber,
+    NSOperationQueue, NSSearchPathDirectory, NSSearchPathDomainMask, NSString,
 };
-use objc2_ui_kit::{UIApplicationDelegate, UIDevice};
+use objc2_media_player::{
+    MPChangeRepeatModeCommandEvent, MPNowPlayingInfoCenter, MPNowPlayingInfoPropertyPlaybackRate,
+    MPRemoteCommandCenter, MPRemoteCommandEvent, MPRemoteCommandHandlerStatus, MPRepeatType,
+};
+use objc2_ui_kit::{UIApplication, UIApplicationDelegate, UIApplicationState, UIDevice};
 
 use koan_kit::app::App;
 use koan_kit::app::platform::AppLifecyclePhase;
-use koan_runtime::{AudioSessionHost, KoanEngine};
+use koan_runtime::{AudioSessionHost, KoanEngine, RepeatMode};
 use objc2_avf_audio::{
     AVAudioSession, AVAudioSessionCategoryPlayback, AVAudioSessionInterruptionNotification,
     AVAudioSessionInterruptionOptionKey, AVAudioSessionInterruptionReasonKey,
@@ -34,6 +39,8 @@ use objc2_avf_audio::{
     AVAudioSessionSetActiveOptions,
 };
 
+use super::inbox::{sweep_opened, sweep_taken, take_shares};
+use super::interruption::{Interruption, SETTLE};
 use crate::mirror::Mirror;
 
 /// The shared `AVAudioSession`, activated at the rate a track wants the
@@ -50,6 +57,11 @@ impl AudioSessionHost for Session {
                 Ok(()) => Some(session.sampleRate()),
                 Err(e) => {
                     log::warn!("audio session refused activation: {e:?}");
+                    if e.code() == CANNOT_INTERRUPT_OTHERS
+                        && let Some(told) = TOLD.get()
+                    {
+                        (told.refused)();
+                    }
                     None
                 }
             }
@@ -78,6 +90,10 @@ impl AudioSessionHost for Session {
         }
     }
 }
+
+/// `AVAudioSessionErrorCodeCannotInterruptOthers`: iOS will not give the
+/// session to an app in the background while another app plays.
+const CANNOT_INTERRUPT_OTHERS: isize = 0x2169_6E74;
 
 /// Asks for `sample_rate`, unless it is asked for already: asking again on a
 /// route change could itself move the route.
@@ -127,6 +143,10 @@ enum Heard {
     Reset,
     /// The port audio goes to may have changed.
     Route,
+    /// The wait after a route-disconnect interruption is over.
+    Settled,
+    /// The app is active again.
+    Returned,
 }
 
 /// `AVAudioSessionInterruptionType.began`.
@@ -147,8 +167,7 @@ fn number(note: &NSNotification, key: Option<&'static NSString>) -> Option<usize
 }
 
 /// Hears the session's notifications on the main queue, for `follow`.
-fn listen() -> mpsc::UnboundedReceiver<Heard> {
-    let (heard, hearing) = mpsc::unbounded();
+fn listen(heard: &mpsc::UnboundedSender<Heard>) {
     // SAFETY: the notifications are posted to the main queue, and the
     // centre keeps the observers for the app's life.
     unsafe {
@@ -194,38 +213,27 @@ fn listen() -> mpsc::UnboundedReceiver<Heard> {
             Some(Heard::Reset)
         });
     }
-    hearing
 }
 
-/// Acts on what the session says, as the SwiftUI app does. The phone's own
-/// audio events are about the phone: while another device is controlled,
-/// or a renderer plays, they change nothing here.
-fn follow(engine: Arc<KoanEngine>, cx: &mut App) {
-    let mut hearing = listen();
+/// Acts on what the session says, as the SwiftUI app does, and answers what
+/// is sent on the channel returned. The phone's own audio events are about
+/// the phone: while another device is controlled, or a renderer plays, they
+/// change nothing here.
+fn follow(engine: Arc<KoanEngine>, cx: &mut App) -> mpsc::UnboundedSender<Heard> {
+    let (told, mut hearing) = mpsc::unbounded();
+    listen(&told);
+    let settle = told.clone();
     cx.spawn(async move |cx: &mut koan_kit::app::AsyncApp| {
-        // Playing when the interruption began: what its end resumes. iOS can
-        // send several "began" for one, and the later find it paused.
-        let mut was_playing = false;
-        let mut route_lost_at: Option<Instant> = None;
-        // What arrived while a route-gone interruption waited to settle.
-        let mut pending: Option<Heard> = None;
-        loop {
-            let heard = match pending.take() {
-                Some(heard) => heard,
-                None => match hearing.next().await {
-                    Some(heard) => heard,
-                    None => break,
-                },
-            };
+        let mut interruption = Interruption::default();
+        while let Some(heard) = hearing.next().await {
             let (here, renderer) = cx.update(|cx| {
                 let mirror = cx.global::<Mirror>();
                 let renderer = mirror.renderers.read(cx).0.output.is_some();
                 let controlled = mirror.devices.read(cx).0.target.is_some();
                 (!controlled && !renderer, renderer)
             });
-            let end = |resume: bool, was_playing: &mut bool| {
-                let resume = resume && *was_playing && here;
-                *was_playing = false;
+            let rebuild = |resume: bool| {
+                let resume = resume && here;
                 // The unit iOS stopped does not start again: it is made
                 // afresh, unless a renderer is the output.
                 if !renderer {
@@ -242,33 +250,40 @@ fn follow(engine: Arc<KoanEngine>, cx: &mut App) {
             };
             match heard {
                 Heard::Began { route_gone } => {
+                    interruption.began(here && engine.is_playing());
                     if here {
-                        was_playing |= engine.is_playing();
                         let engine = engine.clone();
                         std::thread::spawn(move || futures::executor::block_on(engine.pause()));
                     }
-                    // Taken back once the route has settled, as iOS sends
-                    // no "ended" for it; music stays paused if the route
-                    // itself went (headphones pulled out).
-                    // What arrives within the second decides instead.
+                    // iOS sends no "ended" for it. Heard on the same channel
+                    // as everything else, so what arrives meanwhile, the
+                    // route change that comes with it above all, cannot
+                    // cancel the wait.
                     if route_gone {
-                        let settled = cx.background_executor().timer(Duration::from_secs(1));
-                        match futures::future::select(Box::pin(settled), hearing.next()).await {
-                            futures::future::Either::Left(_) => {
-                                let lost = route_lost_at
-                                    .is_some_and(|at| at.elapsed() < Duration::from_secs(3));
-                                end(!lost, &mut was_playing);
-                            }
-                            futures::future::Either::Right((next, _)) => pending = next,
-                        }
+                        let settle = settle.clone();
+                        let timer = cx.background_executor().timer(SETTLE);
+                        cx.background_executor()
+                            .spawn(async move {
+                                timer.await;
+                                settle.unbounded_send(Heard::Settled).ok();
+                            })
+                            .detach();
                     }
                 }
-                Heard::Ended { resume } => {
-                    end(resume, &mut was_playing);
+                Heard::Settled => {
+                    if let Some(resume) = interruption.settled(Instant::now()) {
+                        rebuild(resume);
+                    }
+                }
+                Heard::Ended { resume } => rebuild(interruption.ended(resume)),
+                Heard::Returned => {
+                    if let Some(resume) = interruption.returned() {
+                        rebuild(resume);
+                    }
                 }
                 Heard::RouteGone => {
                     report_route(&engine);
-                    route_lost_at = Some(Instant::now());
+                    interruption.route_lost(Instant::now());
                     if here {
                         let engine = engine.clone();
                         std::thread::spawn(move || futures::executor::block_on(engine.pause()));
@@ -276,13 +291,15 @@ fn follow(engine: Arc<KoanEngine>, cx: &mut App) {
                 }
                 Heard::Reset => {
                     configure();
-                    end(false, &mut was_playing);
+                    interruption.reset();
+                    rebuild(false);
                 }
                 Heard::Route => report_route(&engine),
             }
         }
     })
     .detach();
+    told
 }
 
 /// Tells the engine the name of the port audio now goes to ("AirPods Pro",
@@ -329,7 +346,7 @@ pub fn collect_shared(cx: &mut App) {
     cx.spawn(async move |cx: &mut koan_kit::app::AsyncApp| {
         let shares = cx
             .background_executor()
-            .spawn(async { take_shares(&group_inbox()?) })
+            .spawn(async { take_shares(&group_inbox()?, &std::env::temp_dir()) })
             .await
             .unwrap_or_default();
         for files in shares {
@@ -346,27 +363,26 @@ fn group_inbox() -> Option<PathBuf> {
     Some(PathBuf::from(container.path()?.to_string()).join("Inbox"))
 }
 
-fn take_shares(inbox: &Path) -> Option<Vec<Vec<PathBuf>>> {
-    let mut taken = Vec::new();
-    for (n, share) in std::fs::read_dir(inbox).ok()?.flatten().enumerate() {
-        let to = std::env::temp_dir().join(format!("shared-{}-{n}", std::process::id()));
-        if std::fs::rename(share.path(), &to).is_err() {
-            continue;
-        }
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&to)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|file| file.path())
-            .collect();
-        files.sort();
-        if files.is_empty() {
-            let _ = std::fs::remove_dir_all(&to);
-        } else {
-            taken.push(files);
-        }
-    }
-    Some(taken)
+/// Clears what earlier runs left: shares taken and never deleted, and the
+/// copies iOS made in `Documents/Inbox` for imports that never finished.
+fn sweep_inboxes(cx: &mut App) {
+    cx.background_executor()
+        .spawn(async {
+            sweep_taken(&std::env::temp_dir());
+            if let Some(documents) = documents() {
+                let before = SystemTime::now() - Duration::from_secs(10 * 60);
+                sweep_opened(&documents.join("Inbox"), before);
+            }
+        })
+        .detach();
+}
+
+fn documents() -> Option<PathBuf> {
+    let urls = NSFileManager::defaultManager().URLsForDirectory_inDomains(
+        NSSearchPathDirectory::DocumentDirectory,
+        NSSearchPathDomainMask::UserDomainMask,
+    );
+    Some(PathBuf::from(urls.firstObject()?.path()?.to_string()))
 }
 
 /// What the app's Swift asked to be told. Set before the app runs.
@@ -376,6 +392,8 @@ struct Told {
     engine: extern "C" fn(),
     /// The server signed in to can send notifications.
     alerts: extern "C" fn(),
+    /// iOS would not let the app take the audio from the background.
+    refused: extern "C" fn(),
 }
 
 static TOLD: OnceLock<Told> = OnceLock::new();
@@ -404,8 +422,16 @@ pub unsafe extern "C" fn koan_gui_forward_delegate(delegate: *mut AnyObject) {
 
 /// The callbacks the app's Swift is told through, set before `koan_gui_main`.
 #[unsafe(no_mangle)]
-pub extern "C" fn koan_gui_on_events(engine: extern "C" fn(), alerts: extern "C" fn()) {
-    let _ = TOLD.set(Told { engine, alerts });
+pub extern "C" fn koan_gui_on_events(
+    engine: extern "C" fn(),
+    alerts: extern "C" fn(),
+    refused: extern "C" fn(),
+) {
+    let _ = TOLD.set(Told {
+        engine,
+        alerts,
+        refused,
+    });
 }
 
 /// The name the server lists when it can send notifications.
@@ -427,31 +453,110 @@ fn ask_for_alerts(front: bool, cx: &mut App) {
     }
 }
 
+/// Which of its states the app is in now, on the main thread.
+fn application_state() -> UIApplicationState {
+    let main = MainThreadMarker::new().expect("the main thread");
+    UIApplication::sharedApplication(main).applicationState()
+}
+
+/// Shows on Now Playing how fast the playhead moves, from which the system
+/// reckons the elapsed time: left out, it is taken to be 1, and a paused or
+/// stalled scrubber runs on. Merged into what souvlaki last published.
+pub fn publish_rate(rate: f64) {
+    // SAFETY: on the main thread, and the key and value are the types the
+    // dictionary is documented to hold.
+    unsafe {
+        let centre = MPNowPlayingInfoCenter::defaultCenter();
+        let Some(info) = centre.nowPlayingInfo() else {
+            return;
+        };
+        let info = info.mutableCopy();
+        info.insert(
+            MPNowPlayingInfoPropertyPlaybackRate,
+            &NSNumber::new_f64(rate),
+        );
+        centre.setNowPlayingInfo(Some(&info));
+    }
+}
+
+/// Shows the repeat mode on the system's control.
+pub fn publish_repeat(mode: RepeatMode) {
+    let shown = match mode {
+        RepeatMode::Off => MPRepeatType::Off,
+        RepeatMode::Queue => MPRepeatType::All,
+        RepeatMode::One => MPRepeatType::One,
+    };
+    // SAFETY: the shared command centre, on the main thread.
+    unsafe {
+        MPRemoteCommandCenter::sharedCommandCenter()
+            .changeRepeatModeCommand()
+            .setCurrentRepeatType(shown);
+    }
+}
+
+/// Does what the system's repeat control asks. souvlaki handles the others.
+fn answer_repeat(engine: Arc<KoanEngine>) {
+    // SAFETY: the centre retains the handler for the app's life, and hands
+    // it the command's own event type.
+    unsafe {
+        let command = MPRemoteCommandCenter::sharedCommandCenter().changeRepeatModeCommand();
+        command.setEnabled(true);
+        let handler = RcBlock::new(move |event: NonNull<MPRemoteCommandEvent>| {
+            let Some(event) = event
+                .as_ref()
+                .downcast_ref::<MPChangeRepeatModeCommandEvent>()
+            else {
+                return MPRemoteCommandHandlerStatus::CommandFailed;
+            };
+            let mode = match event.repeatType() {
+                MPRepeatType::One => RepeatMode::One,
+                MPRepeatType::All => RepeatMode::Queue,
+                _ => RepeatMode::Off,
+            };
+            let engine = engine.clone();
+            std::thread::spawn(move || {
+                futures::executor::block_on(engine.set_repeat(mode)).ok();
+            });
+            MPRemoteCommandHandlerStatus::Success
+        });
+        command.addTargetWithHandler(&handler);
+    }
+}
+
 pub fn init(engine: &Arc<KoanEngine>, cx: &mut App) {
     configure();
     engine.set_audio_session(Arc::new(Session));
     report_route(engine);
-    follow(engine.clone(), cx);
+    let session = follow(engine.clone(), cx);
+    answer_repeat(engine.clone());
     koan_ffi::adopt_engine(engine.clone());
     if let Some(told) = TOLD.get() {
         (told.engine)();
     }
-    let engine = engine.clone();
+    let lifecycle_engine = engine.clone();
     cx.on_app_lifecycle(move |phase, cx| match phase {
-        AppLifecyclePhase::Background => engine.set_background(true),
+        AppLifecyclePhase::Background => lifecycle_engine.set_background(true),
         AppLifecyclePhase::Foreground | AppLifecyclePhase::Active => {
-            engine.set_background(false);
+            lifecycle_engine.set_background(false);
             // Suspended in the background, the link to the server went with
             // the rest of the app.
-            engine.link_nudge();
+            lifecycle_engine.link_nudge();
             if cx.has_global::<Mirror>() {
                 collect_shared(cx);
-                ask_for_alerts(true, cx);
+            }
+            if matches!(phase, AppLifecyclePhase::Active) {
+                session.unbounded_send(Heard::Returned).ok();
+                if cx.has_global::<Mirror>() {
+                    ask_for_alerts(true, cx);
+                }
             }
         }
         _ => {}
     })
     .detach();
+    // A lifecycle callback reports changes only, and none made before this
+    // one was registered.
+    engine.set_background(application_state() == UIApplicationState::Background);
 }
 
 /// Tells the engine whether it is playing, which decides what runs in the
@@ -459,6 +564,7 @@ pub fn init(engine: &Arc<KoanEngine>, cx: &mut App) {
 ///
 /// Called once the app's globals are installed.
 pub fn started(engine: Arc<KoanEngine>, cx: &mut App) {
+    sweep_inboxes(cx);
     collect_shared(cx);
     let mirror = cx.global::<Mirror>();
     let (playback, connection) = (mirror.playback.clone(), mirror.connection.clone());
@@ -471,6 +577,8 @@ pub fn started(engine: Arc<KoanEngine>, cx: &mut App) {
         }
     })
     .detach();
-    cx.observe(&connection, |_, cx| ask_for_alerts(true, cx))
-        .detach();
+    cx.observe(&connection, |_, cx| {
+        ask_for_alerts(application_state() == UIApplicationState::Active, cx)
+    })
+    .detach();
 }

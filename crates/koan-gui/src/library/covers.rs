@@ -602,6 +602,14 @@ pub struct Covers {
     evictions_seq: i64,
     fetch_tx: mpsc::UnboundedSender<Done>,
     _results: Task<()>,
+    /// The system saying memory is short, and the app leaving the screen.
+    _pressure: [Subscription; 2],
+}
+
+/// Whether a bitmap outlasts a shedding: the app leaving the screen lets go
+/// of everything, a memory warning of all but what is on screen.
+fn outlasts_shedding(asked: Option<&Priority>, leaving: bool) -> bool {
+    !leaving && asked == Some(&Priority::Visible)
 }
 
 impl Covers {
@@ -667,6 +675,29 @@ impl Covers {
             .ok();
         })
         .detach();
+        // iOS kills what holds on to memory, in the background first, with
+        // no warning the app can count on. The files stay, so what is let go
+        // costs a read and a decode to bring back.
+        let this = cx.weak_entity();
+        let warned = cx.on_memory_warning(move |cx| {
+            this.update(cx, |covers, cx| covers.shed(false, cx)).ok();
+            crate::covers::Covers::purge(cx);
+        });
+        let this = cx.weak_entity();
+        let left = cx.on_app_lifecycle(move |phase, cx| match phase {
+            AppLifecyclePhase::Background => {
+                this.update(cx, |covers, cx| covers.shed(true, cx)).ok();
+                crate::covers::Covers::purge(cx);
+            }
+            AppLifecyclePhase::Foreground => {
+                this.update(cx, |covers, cx| {
+                    covers.publish();
+                    cx.notify();
+                })
+                .ok();
+            }
+            _ => {}
+        });
         Self {
             engine,
             dir,
@@ -682,6 +713,7 @@ impl Covers {
             evictions_seq: 0,
             fetch_tx,
             _results: results,
+            _pressure: [warned, left],
         }
     }
 
@@ -1100,6 +1132,34 @@ impl Covers {
             }
             cx.drop_image(held.image, window);
         }
+    }
+
+    /// Lets go of the decoded bitmaps, with their copies in the GPU's atlas.
+    /// `leaving`, nothing is decoded again until the app is back; otherwise
+    /// a page that scrolls asks again for what it wants.
+    fn shed(&mut self, leaving: bool, cx: &mut Context<Self>) {
+        let asked = self.asked();
+        let shed: Vec<Key> = self
+            .memory
+            .keys()
+            .chain(self.staged.keys())
+            .filter(|key| !outlasts_shedding(asked.get(key), leaving))
+            .copied()
+            .collect();
+        self.staged
+            .retain(|key, _| outlasts_shedding(asked.get(key), leaving));
+        let mut queue = self.shared.queue.lock();
+        for key in &shed {
+            queue.decoded.remove(key);
+        }
+        if leaving {
+            queue.set_wanted(HashMap::new());
+        }
+        drop(queue);
+        for key in shed {
+            self.forget(key, None, cx);
+        }
+        cx.notify();
     }
 
     /// Back under budget. What nobody is asking for goes first, oldest first;
@@ -1744,6 +1804,15 @@ mod tests {
             .map(|id| (key(id), Priority::Ahead(1.0)))
             .collect();
         assert_eq!(Covers::budget(&flood), MEMORY_CEILING);
+    }
+
+    #[test]
+    fn a_warning_spares_only_what_is_on_screen_and_leaving_spares_nothing() {
+        assert!(outlasts_shedding(Some(&Priority::Visible), false));
+        assert!(!outlasts_shedding(Some(&Priority::Ahead(1.0)), false));
+        assert!(!outlasts_shedding(Some(&Priority::Landing(1.0)), false));
+        assert!(!outlasts_shedding(None, false));
+        assert!(!outlasts_shedding(Some(&Priority::Visible), true));
     }
 
     #[test]

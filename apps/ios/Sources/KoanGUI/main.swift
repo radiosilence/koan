@@ -14,7 +14,8 @@ private func koanGuiForwardDelegate(_ delegate: UnsafeMutableRawPointer)
 @_silgen_name("koan_gui_on_events")
 private func koanGuiOnEvents(
     _ engine: @convention(c) () -> Void,
-    _ alerts: @convention(c) () -> Void
+    _ alerts: @convention(c) () -> Void,
+    _ refused: @convention(c) () -> Void
 )
 
 // Held for the life of the process: GPUI retains it too, once forwarded.
@@ -22,6 +23,7 @@ private let push = PushDelegate()
 koanGuiForwardDelegate(Unmanaged.passUnretained(push).toOpaque())
 koanGuiOnEvents(
     { Task { @MainActor in PushDelegate.engine = openedEngine() } },
-    { Task { await PushDelegate.requestAlerts() } }
+    { Task { await PushDelegate.requestAlerts() } },
+    { PushDelegate.askToBeTapped() }
 )
 koanGuiMain()

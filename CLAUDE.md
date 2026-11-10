@@ -389,6 +389,8 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `platform/startup_error.rs` | The window shown when the engine cannot open, saying what failed and what to do in the engine's words, as the Mac's `StartupErrorView`; closing it quits, and another launch brings it to the front |
 | `platform/shortcuts_sheet.rs` | What `?` and ⌘/ show |
 | `platform/media.rs` | souvlaki: MPRIS on Linux, Now Playing on macOS, cover included, from a state stream of its own; `Playhead`, the anchor the skip shortcuts read |
+| `platform/interruption.rs` | iOS: what an audio-session interruption has left to do, from each way one can finish; `ios.rs` hears the notifications |
+| `platform/inbox.rs` | iOS: files other apps gave kōan, taken out of the share extension's inbox and swept when a run leaves them behind |
 | `platform/drop.rs` | Files from outside — drops, the command line, a second launch — indexed where they lie and queued, or added to a playlist. `Imports` for the shell's activity row and error line |
 | `platform/instance.rs` | One app per configuration directory: a lock beside the device's, a Unix socket a second launch hands its paths to |
 | `platform/runtime_files.rs` | The app's runtime files (window and browse state, locks, Now Playing's covers) outside the config directory, in `koan_core::places`; files an earlier version left there are moved on start-up, once |
