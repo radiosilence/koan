@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.72.1
+
+### Changed
+
+- **The phone app moves where it snapped.** Lists give past their ends and bounce; Now Playing grows out of the mini player's sleeve; held menus and artwork open out of the press; sheets slide back down; notices drop from the bar; queue rows close up when one goes and shift over for picking; a list sent back to its top arrives there. All of it is drawn by the GPU, and Reduce Motion makes it instant. The selection bar's verbs are icons over their words, so they fit along a phone.
+
+### Fixed
+
+- **Flings on the phone coast as far as a native list's.** The speed at release was read from the last instant of the touch, which came out at 40–84% of what `UIScrollView` reports for the same finger; it is now read over the trailing window, as UIKit reads it. A long press also fires its haptic once.
+- **Settings sections on a phone.** A second section tapped while the first was sliding in stacked the two, and the screen stopped responding as each took Settings' one pane from the other. A section that is no longer offered now goes back to the list.
+- **Fixes from an audit before the App Store release.** A device on the local network could crash the app with a deeply nested Apple TV pairing frame, fill the disk through the log, or queue commands without end; each is now bounded. Lowering the wash's drift late in a long run, a lyric line with an impossible time, and a tap on a queue row that had just gone no longer crash the app. A seek the decoder refuses no longer skips the track, Opus files play at the gain their header sets, the iPhone app again holds back cover preloading on cellular and in Low Data Mode and reconnects when the network changes, and it saves the session when it goes to the background. On a server, a transcoded stream sought while every transcoder is busy is refused where it used to restart from the beginning, and `/auth/refresh` takes its token from the request body only.
+
+### Internal
+
+- **App Store submissions wait for screenshots.** `push.py --submit` waits up to fifteen minutes while App Store Connect processes a new set.
+
 ## 0.72.0
 
 ### Security
