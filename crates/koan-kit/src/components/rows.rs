@@ -335,7 +335,7 @@ impl RenderOnce for NavHeading {
         .aria_level(2)
         .flex()
         .flex_none()
-        .items_end()
+        .when_else(look.touch, |d| d.items_center(), |d| d.items_end())
         .justify_between()
         .pt(look.space(Space::L))
         .pb(look.space(Space::Xs))

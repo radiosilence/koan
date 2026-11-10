@@ -22,6 +22,10 @@ const COMPACT_LABELS: f32 = 80.0;
 /// row takes a toggle's click, so its target is the row's width.
 const ROW: f32 = 24.0;
 
+/// A form's widest on a tablet, where a control at the far end of a pane's
+/// width would no longer read as belonging to its label.
+const REGULAR_MEASURE: f32 = 640.0;
+
 /// A form: sections down a column that scrolls, padded from the window.
 pub struct Form {
     id: ElementId,
@@ -55,6 +59,9 @@ impl Form {
                 .flex_col()
                 .gap(look.space(Space::L))
                 .w_full()
+                .when(look.touch && !look.compact, |d| {
+                    d.max_w(look.spaced(REGULAR_MEASURE)).mx_auto()
+                })
                 .p(look.space(Space::Xl))
                 .children(self.sections),
         )

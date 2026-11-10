@@ -902,7 +902,7 @@ impl Render for AlbumGrid {
                 .set_offset(Point::default());
         }
         if let Some(width) = self.width.get() {
-            let grid = Grid::for_width(width, &p.look.scale);
+            let grid = Grid::for_look(width, &p.look);
             if Some(grid) != self.grid {
                 self.relayout(grid);
             }

@@ -824,7 +824,7 @@ impl TouchShell {
 
     /// Opens Now Playing, as tapping the mini player does.
     pub fn open_now_playing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.now_playing.is_some() {
+        if self.now_playing.is_some() || !self.compact {
             return;
         }
         let nav = self.nav.clone();

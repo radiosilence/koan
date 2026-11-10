@@ -494,7 +494,7 @@ impl Render for AlbumPage {
                 })
                 .into_any_element(),
             (Some(width), None) if self.album.is_some() => {
-                let grid = Grid::for_width(width, &p.look.scale);
+                let grid = Grid::for_look(width, &p.look);
                 let lead_width = rows::lead_width(p, self.tracks.len(), window);
                 // The page scrolls whole, the header with the tracks, as the
                 // iOS app's does, and passes under the toolbar: a header held

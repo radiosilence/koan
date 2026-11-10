@@ -142,6 +142,8 @@ impl TileColumns {
     pub const SIDE: f32 = 160.0;
     /// The least gap between tiles in a row.
     pub const MIN_GAP: f32 = 18.0;
+    /// The smallest a tile gets when the tiles fill the row.
+    pub const LEAST_FILLING: f32 = 150.0;
 
     /// The columns for a list `width` wide with `margin` at either side.
     /// Narrower than one tile, the one tile shrinks to fit.
@@ -160,6 +162,29 @@ impl TileColumns {
             side: px(side),
             gap: px(if columns > 1 {
                 Self::MIN_GAP + spare / (columns as f32 - 1.0)
+            } else {
+                0.0
+            }),
+            inset: px(margin),
+        }
+    }
+
+    /// The columns of a tablet's page, whose width is one of a few and does
+    /// not follow a pointer: the tiles grow to take the row, so two columns
+    /// never stand a tile apart.
+    pub fn filling(width: Pixels, margin: Pixels) -> Self {
+        let margin = f32::from(margin);
+        let usable = (f32::from(width) - 2.0 * margin).max(1.0);
+        let columns = (((usable + Self::MIN_GAP) / (Self::LEAST_FILLING + Self::MIN_GAP)).floor()
+            as usize)
+            .max(1);
+        let gaps = Self::MIN_GAP * (columns as f32 - 1.0);
+        let side = ((usable - gaps) / columns as f32).floor();
+        Self {
+            columns,
+            side: px(side),
+            gap: px(if columns > 1 {
+                (usable - side * columns as f32) / (columns as f32 - 1.0)
             } else {
                 0.0
             }),
@@ -352,7 +377,20 @@ impl TileGrid {
     /// The grid for a list `width` wide that keeps `margin` clear at each
     /// side, with captions on `scale`.
     pub fn inside(width: Pixels, margin: Pixels, scale: &Scale) -> Self {
-        let columns = TileColumns::for_width(width, margin);
+        Self::placed(TileColumns::for_width(width, margin), margin, scale)
+    }
+
+    /// The grid for a list `width` wide in this look: a tablet's tiles fill
+    /// the row, and any other's keep their size.
+    pub fn inside_on(width: Pixels, margin: Pixels, look: &Look) -> Self {
+        if look.touch && !look.compact {
+            Self::placed(TileColumns::filling(width, margin), margin, &look.scale)
+        } else {
+            Self::inside(width, margin, &look.scale)
+        }
+    }
+
+    fn placed(columns: TileColumns, margin: Pixels, scale: &Scale) -> Self {
         Self {
             columns: columns.columns,
             side: columns.side,
@@ -367,6 +405,11 @@ impl TileGrid {
     /// side, so the grid's edge is the header's and the rows'.
     pub fn for_width(width: Pixels, scale: &Scale) -> Self {
         Self::inside(width, RowMetrics::page_margin_on(scale), scale)
+    }
+
+    /// The grid of a page `width` wide in this look, as `for_width`.
+    pub fn for_look(width: Pixels, look: &Look) -> Self {
+        Self::inside_on(width, RowMetrics::page_margin_on(&look.scale), look)
     }
 
     /// Whether `other` places the rows as this does: the same columns and
@@ -476,6 +519,18 @@ mod transport_tests {
 #[cfg(test)]
 mod tile_grid_tests {
     use super::*;
+
+    #[test]
+    fn filling_tiles_take_the_row() {
+        for width in [520.0, 600.0, 802.0, 1144.0] {
+            let columns = TileColumns::filling(px(width), px(16.));
+            let row = columns.side * columns.columns as f32
+                + columns.gap * (columns.columns as f32 - 1.0);
+            assert_eq!(row + px(32.), px(width));
+            assert!(columns.side >= px(TileColumns::LEAST_FILLING));
+            assert!(columns.gap < px(TileColumns::MIN_GAP + 1.0));
+        }
+    }
 
     #[test]
     fn rows_hold_the_columns_sleeve_and_caption() {
