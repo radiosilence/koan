@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.72.2
+
+### Changed
+
+- **The iOS app is laid out for the iPad.** A window at least 660 points wide gets the desktop's sidebar, the page, the lyrics beside it and the transport bar, inside the safe area and clear of the iPadOS window controls; Settings shows its sections beside the pane. Narrower windows in Split View or Stage Manager take the phone's layout, and the app keeps its place as a window is resized across the two. On a tablet's width record tiles fill their row and forms keep a readable measure. The iPhone stays portrait-only, and its layout is unchanged.
+
 ## 0.72.1
 
 ### Changed
