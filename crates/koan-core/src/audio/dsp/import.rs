@@ -284,7 +284,10 @@ fn gather(path: &Path, scratch: &Scratch, out: &mut Vec<Found>, named: bool) -> 
         for entry in entries {
             gather(&entry, scratch, out, false)?;
         }
-    } else if extension(path).as_deref() == Some("zip") {
+    } else if extension(path).as_deref() == Some("zip") && !path.starts_with(&scratch.0) {
+        // Only a zip from outside: one found inside a zip stays a file. Sets
+        // of filters do not nest archives, and each one unpacked would have
+        // the whole size limit to itself.
         let dir = scratch.unzip(path)?;
         gather(&dir, scratch, out, false)?;
     } else {

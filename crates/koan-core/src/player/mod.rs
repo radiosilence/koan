@@ -804,13 +804,11 @@ impl Player {
         setup
     }
 
-    /// Load the profiles again, and restart where playback is if what the
-    /// output in use plays through has changed. The setups are compared as
-    /// loaded, responses included, since the files can change without the
-    /// config doing so. A preset given to another device, from the Play on
-    /// menu, changes nothing here and restarts nothing.
     /// Read the output device's DSP again, and restart what plays if it
-    /// changed. A renderer is named by its link; a local device is resolved
+    /// changed. The setups are compared as loaded, responses included, since
+    /// the files can change without the config doing so. A preset given to
+    /// another device, from the Play on menu, changes nothing here and
+    /// restarts nothing. A renderer is named by its link; a local device is resolved
     /// off this thread, a call into the audio system, and the reading comes
     /// back as `DspLoaded`. A player opening inline (tests) reads it here.
     fn reload_dsp(&mut self) {
@@ -2272,11 +2270,6 @@ impl Player {
         self.stop_playback_and_clear_state();
     }
 
-    /// Stop the audio engine and decode thread without touching shared state.
-    ///
-    /// Output stops first, then the decode thread is joined, then the engine
-    /// drops: tearing CoreAudio down under a live producer is the end-of-queue
-    /// crash (#89).
     /// The depth limit a session starts with, before its output is open: the
     /// first track's own where the output may narrow, none otherwise.
     fn assumed_depth(&self, info: &buffer::StreamInfo) -> u16 {
@@ -2297,6 +2290,11 @@ impl Player {
         ));
     }
 
+    /// Stop the audio engine and decode thread without touching shared state.
+    ///
+    /// Output stops first, then the decode thread is joined, then the engine
+    /// drops: tearing CoreAudio down under a live producer is the end-of-queue
+    /// crash (#89).
     fn stop_engine(&mut self) {
         self.output_check = None;
         let playback = match std::mem::replace(&mut self.transport, Transport::Idle) {
@@ -3606,8 +3604,6 @@ impl Player {
         }
     }
 
-    /// Spawn the player on a background thread, returning the shared state,
-    /// timeline, visualization snapshot, and command sender.
     /// Remember the renderer picked as the output, or that this device's own
     /// was, for the next launch. Only a choice is remembered: a renderer that
     /// drops off the network is gone back to next time.

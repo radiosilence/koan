@@ -639,11 +639,11 @@ impl ClockStream {
                 let now = std::time::Instant::now();
                 let wait = 1000 - anchor.reckoning(now) % 1000;
                 // No Tokio reactor drives this future (GPUI's executor and
-                // Swift's both poll it), so the wait is a thread's sleep.
-                let (woke, waited) = tokio::sync::oneshot::channel();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(wait));
-                    let _ = woke.send(());
+                // Swift's both poll it), so the timer runs on the runtime's.
+                // The sleep is made inside the task: it needs the reactor where
+                // it is created, not only where it is polled.
+                let waited = offload::cancellable(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(wait)).await
                 });
                 tokio::select! {
                     _ = waited => {
@@ -6208,21 +6208,14 @@ impl KoanEngine {
                         .output_opening()
                         .map(|o| o.since + OUTPUT_WAIT_NOTE)
                         .filter(|at| *at > Instant::now());
-                    let held_until = note_at;
                     // Dropped before the wait: this thread holds the engine
                     // only for as long as it is reading it, so parking here
                     // cannot be what keeps koan open.
                     drop(engine);
-                    seen = match held_until {
+                    seen = match note_at {
                         None => wake.wait(seen),
                         Some(until) => {
-                            let left = until.saturating_duration_since(Instant::now());
-                            let woken = wake.wait_until(seen, left);
-                            if woken == seen {
-                                // Said again, without the held seek.
-                                last_devices = u64::MAX;
-                            }
-                            woken
+                            wake.wait_until(seen, until.saturating_duration_since(Instant::now()))
                         }
                     };
                 }

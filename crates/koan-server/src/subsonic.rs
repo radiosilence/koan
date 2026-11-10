@@ -3206,14 +3206,22 @@ async fn stream_inner(
                     .map_err(|e| SubsonicError::internal(e.to_string()));
             }
             match transcoder.permits(&username) {
-                None => log::info!("transcode: at the limit, serving {username} the original"),
+                None => log::info!("transcode: at the limit for {username}"),
                 Some(permits) => match transcoder.stream(&path, &plan, length, permits).await {
                     Ok(Some(resp)) => return Ok(resp),
                     Ok(None) => {}
                     Err(e) => {
-                        log::warn!("transcode: could not start ffmpeg, serving the original: {e}")
+                        log::warn!("transcode: could not start ffmpeg: {e}")
                     }
                 },
+            }
+            // The original is served in the transcode's place, but only from
+            // its start: a client that asked for an offset would show one
+            // position and play another.
+            if plan.offset_secs > 0.0 {
+                return Err(SubsonicError::internal(
+                    "the stream could not be transcoded from an offset; try again",
+                ));
             }
         }
     }
@@ -6585,7 +6593,7 @@ async fn link_session(
                                     let (username, device) = (username.clone(), device.clone());
                                     let pool = pool.clone();
                                     tokio::task::spawn_blocking(move || {
-                                        let known = koan_core::db::pool::shared()
+                                        let known = pool
                                             .get()
                                             .ok()
                                             .and_then(|db| {

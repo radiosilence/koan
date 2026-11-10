@@ -125,6 +125,8 @@ pub struct PhoneShell {
     swiping: bool,
     /// A push let go, easing the rest of the way: lands when it fires.
     settle: Option<Task<()>>,
+    /// The settle under way ends in a back.
+    backing: bool,
     /// Now Playing going back down: lets it go once it is down.
     closing: Option<Task<()>>,
     /// The tab and page last drawn, so a move forward is seen and slid in.
@@ -275,6 +277,7 @@ impl PhoneShell {
             pushing: false,
             swiping: false,
             settle: None,
+            backing: false,
             closing: None,
             seen: None,
             now_playing: None,
@@ -490,11 +493,13 @@ impl PhoneShell {
     /// under let go once the page in front is back in place. The one frame
     /// drawn is the layout changing.
     fn land(&mut self, after: std::time::Duration, back: bool, cx: &mut Context<Self>) {
+        self.backing = back;
         self.settle = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(after).await;
             this.update(cx, |this, cx| {
                 this.settle = None;
                 this.pushing = false;
+                this.backing = false;
                 if back {
                     this.back(cx);
                 } else if let Some(library) = &this.library {
@@ -940,6 +945,15 @@ impl PhoneShell {
                     title,
                     ix == showing,
                     cx.listener(move |this, _, window, cx| {
+                        // A back still sliding lands first, in the tab it
+                        // was made in: the timer would step back in
+                        // whichever tab shows by then.
+                        if this.settle.take().is_some() {
+                            this.pushing = false;
+                            if std::mem::take(&mut this.backing) {
+                                this.back(cx);
+                            }
+                        }
                         let again = ix == this.nav.read(cx).tab();
                         if again && this.pop_to_root(cx) {
                             return;

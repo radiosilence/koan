@@ -554,10 +554,18 @@ impl TrackList for HistoryPage {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
-                let id = self.entries[index].id;
+                // A click is dispatched against the frame last painted,
+                // whose rows the history may no longer have.
+                let Some(id) = self.entries.get(index).map(|e| e.id) else {
+                    return;
+                };
                 let m = event.modifiers();
                 // Where a ⇧-click extends from, before the click moves it.
-                let from = self.cursor.anchor.unwrap_or(index);
+                let from = self
+                    .cursor
+                    .anchor
+                    .unwrap_or(index)
+                    .min(self.entries.len() - 1);
                 // The keyboard carries on from the row clicked.
                 self.cursor.click(index, m.shift);
                 if event.click_count() >= 2 && !m.shift && !m.secondary(cx) {

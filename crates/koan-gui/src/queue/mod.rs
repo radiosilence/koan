@@ -545,9 +545,13 @@ impl QueueView {
     }
 
     fn row_items<'a>(&self, row: usize, cx: &'a App) -> impl Iterator<Item = &'a String> {
+        // A click is dispatched against the frame last painted, whose rows
+        // the queue may no longer have.
         let queue = self.queue.read(cx);
-        queue.rows[row]
-            .items()
+        queue
+            .rows
+            .get(row)
+            .map_or(0..0, |row| row.items())
             .map(|ix| &queue.base[ix].queue_item_id)
     }
 
@@ -555,7 +559,9 @@ impl QueueView {
         if self.selected.is_empty() {
             return false;
         }
-        self.row_items(row, cx).all(|id| self.selected.contains(id))
+        // A row the queue no longer has is no part of the pick.
+        let mut items = self.row_items(row, cx).peekable();
+        items.peek().is_some() && items.all(|id| self.selected.contains(id))
     }
 
     /// The picked queue items, in queue order. Ordered by their indexes
@@ -621,6 +627,9 @@ impl QueueView {
     }
 
     fn click(&mut self, row: usize, event: &ClickEvent, cx: &mut Context<Self>) {
+        if row >= self.queue.read(cx).rows.len() {
+            return;
+        }
         let modifiers = event.modifiers();
         // A tap plays the row, or while picking ticks it: a touch screen has
         // no click to pick with.
@@ -794,13 +803,15 @@ impl QueueView {
         let count = if self.is_selected(row, cx) {
             self.selected.len()
         } else {
-            queue.rows[row].items().len()
+            queue.rows.get(row).map_or(0, |row| row.items().len())
         };
-        if count == 1 {
-            queue.base[queue.rows[row].items().start]
-                .title
-                .clone()
-                .into()
+        let only = queue
+            .rows
+            .get(row)
+            .and_then(|row| queue.base.get(row.items().start))
+            .filter(|_| count == 1);
+        if let Some(only) = only {
+            only.title.clone().into()
         } else {
             format!("{count} tracks").into()
         }
