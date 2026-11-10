@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 cx.update(|cx| shell.update(cx, |s, cx| s.walk_queue_pick(cx)));
             }
             Step::PlaylistSheet(tracks) => cx.update_window(window, |_, window, cx| {
-                shell.read(cx).walk_playlist_sheet(tracks, window, cx)
+                shell.update(cx, |s, cx| s.walk_playlist_sheet(tracks, window, cx))
             })?,
             Step::SwipeBack(_) => unreachable!(),
         }
@@ -199,7 +199,7 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     if !ids.is_empty() {
         block_on(engine.clone().replace_queue(ids.clone(), None, false))?;
         block_on(engine.clone().pause())?;
-        let playlist = block_on(engine.clone().create_playlist("Walk".into(), ids))?;
+        let playlist = block_on(engine.clone().create_playlist("Walk".into(), ids.clone()))?;
         steps.push(page("playlist", Route::Playlist(playlist.id)));
     }
     if let Some(album) = tracks.iter().find_map(|t| t.album_id) {

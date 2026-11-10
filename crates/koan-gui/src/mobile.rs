@@ -725,7 +725,12 @@ impl PhoneShell {
     }
 
     /// Opens "add to playlist" on `tracks`; for tools that walk the pages.
-    pub fn walk_playlist_sheet(&self, tracks: Vec<i64>, window: &mut Window, cx: &mut App) {
+    pub fn walk_playlist_sheet(
+        &mut self,
+        tracks: Vec<i64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) {
             let items: std::sync::Arc<[_]> = tracks
                 .into_iter()
