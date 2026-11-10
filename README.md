@@ -1,4 +1,4 @@
-<img alt="kōan in a browser, on a Mac and on an iPhone" src="site/public/screens/hero.webp" />
+<img alt="kōan on a desktop and on an iPhone" src="site/public/screens/hero.webp" />
 
 # kōan
 
@@ -6,7 +6,7 @@ A music player and server for your own library, local or on any OpenSubsonic ser
 
 It's a music player and server, for local collections and remote ones (anything OpenSubsonic). Remote libraries sit behind a fairly aggressive local cache. It handles multi-terabyte libraries with ease and has all the core audio features you'd want, like gapless and bit-perfect output (where the system allows). It's built from 25 years of messing about with music, being annoyed with pretty much everything, and wanting my dream application.
 
-The idea is to be fully compatible with the existing ecosystem while bringing the decent UX and modern ideas that professionally made streaming services have. It started as a little cross-platform CLI and TUI app on a Rust core. Now there's a native desktop app for macOS and Linux (no Electron) that links that core directly, SwiftUI apps for iOS and Apple TV, an Android app, and a server. The UX takes what I like about Apple Music and fb2k and fixes the things I thought were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.
+The idea is to be fully compatible with the existing ecosystem while bringing the decent UX and modern ideas that professionally made streaming services have. It started as a little cross-platform CLI and TUI app on a Rust core. Now there's a native desktop app for macOS and Linux (no Electron) that links that core directly, the same app on iPhone, a SwiftUI app for Apple TV, an Android app, and a server. The UX takes what I like about Apple Music and fb2k and fixes the things I thought were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.
 
 I wanted UX that makes it easy as hell to do what you want, while staying SUPER low on resources (and now battery). And I wanted the stuff you don't really see in the self-hosted space: device control and handoff, EQ profiles and convolution, DLNA output (with EQ!), and a cache built for a commuter who often has no signal, so you never have to remember to download your whole queue first. The best of every world, why not?
 
@@ -20,9 +20,9 @@ I did use AI-assisted coding for this project. I've been building fairly high-qu
 
 — [@radiosilence](https://github.com/radiosilence)
 
-<img alt="Favourites in the macOS app" src="site/public/screens/mac-favourites.webp" width="49%" /> <img alt="An artist page in the macOS app" src="site/public/screens/mac-artist.webp" width="49%" />
+<img alt="The album grid in the desktop app" src="site/public/screens/gui-albums.webp" width="49%" /> <img alt="The queue in the desktop app" src="site/public/screens/gui-queue.webp" width="49%" />
 
-<img alt="Now Playing on iPhone" src="site/public/screens/ios-now-playing.webp" width="19%" /> <img alt="An album on iPhone" src="site/public/screens/ios-album.webp" width="19%" /> <img alt="An artist on iPhone" src="site/public/screens/ios-artist.webp" width="19%" /> <img alt="The queue on iPhone" src="site/public/screens/ios-queue.webp" width="19%" /> <img alt="The EQ page on iPhone" src="site/public/screens/ios-eq.webp" width="19%" />
+<img alt="Now Playing on iPhone" src="site/public/screens/gui-phone-now-playing.webp" width="24%" /> <img alt="An album on iPhone" src="site/public/screens/gui-phone-album.webp" width="24%" /> <img alt="The queue on iPhone" src="site/public/screens/gui-phone-queue.webp" width="24%" /> <img alt="The EQ screen on iPhone" src="site/public/screens/gui-phone-eq.webp" width="24%" />
 
 ## Install
 
@@ -36,8 +36,6 @@ brew install --cask radiosilence/tap/koan-app
 
 You may have to update brew's trust settings to trust the tap.
 Alternatively, [download `Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) from the latest release. On Linux, each release carries an AppImage and a `.deb`. See [the desktop app](docs/guide/desktop.md).
-
-The SwiftUI Mac app is no longer released; the desktop app takes its place.
 
 CLI/TUI:
 
