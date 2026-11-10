@@ -122,17 +122,10 @@ just cli            # cargo run --release -p koan-cli -- <args>
 just build          # cargo build --release
 just css            # compile the web UI's Tailwind stylesheets (output is committed)
 just js             # typecheck the web UI's TypeScript (cargo strips the types itself, in koan-server's build.rs)
-just ios-typecheck  # the shared SwiftUI sources still build for iOS
-just tv-typecheck   # the same for tvOS
-just ios-run        # build and launch on a booted simulator
-just ios-smoke FILE # play a file through the real Player on the simulator
+just ios-typecheck  # the iOS app's Swift (push, App Attest, entry) still builds
+just tv-typecheck   # the shared SwiftUI sources still build for tvOS
 just ios-phone      # install on the plugged-in iPhone (personal team)
-just ios-walk       # UI test that screenshots every page, into target/ios-walk
-just ios-bars       # every scrolling page clears the kōan bar, on an iPhone and an iPad, against a generated library
 just ios-testflight BUILD # archive, sign and upload to TestFlight (needs the ASC key)
-just ios-signin DEV URL USER PASS # sign a simulator in through Settings, as App Review does
-just ios-invite-sheet # an admin's invite sheet stays up and its QR code reads back as the link
-just ios-use DEV      # use the app like a listener and check each step; run before submitting
 just ios-store-shots SRC OUT [captions-ipad] # frame a walk's screenshots for the App Store
 just ios-store [iphone=DIR ipad=DIR] # push apps/ios/store/listing.toml (+ screenshots) to App Store Connect
 just tv-run         # build and launch on an Apple TV simulator
@@ -142,7 +135,6 @@ just tv-join LINK [tv] # sign the simulator, or the paired Apple TV, in through 
 just tv-kept        # clear Caches/koan-config as tvOS does, check the TV is still signed in
 just tv-pair [OUTCOME] # pair a signed-out TV simulator, approved (or declined, or left to expire) over the API
 just tv-signin [ROUTES] # each other way onto the TV and its failures, from fresh installs, against KOAN_SIGNIN_*
-just tv-pair-qr     # the same, approved by an iPhone simulator that reads the QR code off the TV
 just tv-discover    # a signed-out TV simulator finds a server the Mac announces as a signed-in device would, and pairs
 just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (needs the ASC key)
 just android-ffi [ABIS] # koan-core for Android via cargo-ndk, and the Kotlin bindings
@@ -162,7 +154,7 @@ just gui-ios-lib [PLATFORM] # koan-gui with koan-ffi as the static library the i
 just gui-bundle # package the desktop app for this machine: .app + DMG on macOS, AppImage + .deb on Linux
 ```
 
-The Swift bindings are generated from a built koan-ffi: `swift-bindings` (a host build, for the typechecks), `ios-ffi` and `tv-ffi` each make them.
+The Swift bindings are generated from a built koan-ffi: `swift-bindings` (a host build, for the typechecks), `gui-ios-lib` and `tv-ffi` each make them.
 
 The desktop app's dev bundle is signed with a self-signed certificate — `just signing-cert` creates it, once. Without it the bundle is ad-hoc signed, which derives its identity from the binary's own hash: every rebuild is a different application to macOS, so TCC permissions are forgotten each time. It buys nothing against Gatekeeper, which wants Developer ID and notarisation.
 
@@ -279,7 +271,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 
 `lib.rs` is the whole of it: koan-runtime's records, enums and errors re-declared under `#[uniffi::remote(...)]`, the objects (`KoanEngine`, `StateStream`, `VizStream`, `BarHeights`, `OrganizeSelection`) wrapping koan-runtime's with exports that delegate, the traits the apps implement (`ProgressReporter`, `PushAttester`, the audio session and output hosts, `NearbyHost`, `MulticastHost`) with bridges into koan-runtime's, and the free functions. A change to the facade's surface is made in koan-runtime and repeated here: the compiler checks a remote record against its original, and the delegating method is one line. `android.rs` is the JNI glue. `uniffi.toml` names the Kotlin package.
 
-Swift bindings are generated, not checked in — `just swift-bindings`, `ios-ffi` or `tv-ffi` builds the lib and regenerates them.
+Swift bindings are generated, not checked in — `just swift-bindings`, `gui-ios-lib` or `tv-ffi` builds the lib and regenerates them.
 
 ### koan-gui (`crates/koan-gui/src/`)
 

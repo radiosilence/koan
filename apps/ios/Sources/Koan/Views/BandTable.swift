@@ -86,43 +86,14 @@ struct BandTable: View {
                         BandEditor(dsp: dsp, profile: profile, index: index, number: position + 1, band: band, focus: focus)
                             .id(BandField.row(index))
                     } else if band.kind == "graphic", !readOnly {
-                        #if os(tvOS)
                         BandRow(band: band)
-                        #else
-                        NavigationLink {
-                            CurvePage(dsp: dsp, profile: profile, index: index)
-                                .koanPushedPage()
-                        } label: {
-                            BandRow(band: band)
-                        }
-                        #endif
                     } else {
                         BandRow(band: band)
                     }
                 }
                 .font(.role(.meta, system: .body))
                 .listRowInsets(Self.rowInsets)
-                #if os(iOS)
-                .contextMenu {
-                    if !readOnly {
-                        Button("Remove", role: .destructive) { dsp.removeFilter(profile, index) }
-                    }
-                }
-                #endif
             }
-            #if os(iOS)
-            .onDelete(perform: readOnly ? nil : { offsets in
-                // One at a time, from the end, so the indices hold.
-                let rows = shown
-                for index in offsets.map({ rows[$0].index }).sorted(by: >) { dsp.removeFilter(profile, index) }
-            })
-            #endif
-            #if os(iOS)
-            if !readOnly {
-                Button("Add a Band") { dsp.addBand(profile, channel: channel) }
-                    .koanButton(.bordered)
-            }
-            #endif
         } header: {
             KoanSectionHeader("Filters")
         } footer: {
@@ -223,9 +194,6 @@ private struct NumberField<Field: Hashable>: View {
             .monospacedDigit()
             .frame(width: width)
             .onSubmit(commit)
-            #if os(iOS)
-            .keyboardType(.decimalPad)
-            #endif
             .overlay(alignment: .bottom) {
                 Rectangle()
                     .fill(KoanTheme.style(.rule, system: Color.secondary.opacity(0.4))) // theme: raw — the system look's own
@@ -242,139 +210,8 @@ extension View {
     /// page, never per row: a toolbar in a list's row is laid out as the
     /// page's bottom bar.
     func decimalPadDone<Field: Hashable>(_ focus: FocusState<Field?>.Binding, order: [Field], label: LocalizedStringKey = "Done") -> some View {
-        #if os(iOS)
-        toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                // The page's other fields, its name among them, keep their
-                // own return key: these buttons move and dismiss only these.
-                if focus.wrappedValue != nil {
-                    if order.count > 1 {
-                        Button("Previous", koan: Icon.previousField) { step(-1, focus, order) }
-                        Button("Next", koan: Icon.nextField) { step(1, focus, order) }
-                    }
-                    Spacer()
-                    Button(label) { focus.wrappedValue = nil }
-                }
-            }
-            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
-        }
-        #else
         self
-        #endif
     }
 
-    #if os(iOS)
-    /// Focus moved `by` fields through `order`, staying put at either end.
-    private func step<Field: Hashable>(_ by: Int, _ focus: FocusState<Field?>.Binding, _ order: [Field]) {
-        guard let at = focus.wrappedValue.flatMap({ order.firstIndex(of: $0) }), order.indices.contains(at + by) else { return }
-        focus.wrappedValue = order[at + by]
-    }
-    #endif
 }
 
-#if os(iOS)
-/// A graphic curve's points, each frequency and gain editable, held to the
-/// ranges a band has. An imported EQ can be put back as its file had it.
-struct CurvePage: View {
-    let dsp: DspModel
-    let profile: String
-    let index: Int
-
-    @State private var detail: DspProfileDetail?
-    @State private var confirmingReset = false
-    @FocusState private var focused: PointField?
-
-    private var points: [DspPoint] {
-        guard let d = detail, d.bands.indices.contains(index) else { return [] }
-        return d.bands[index].curve
-    }
-
-    var body: some View {
-        KoanForm {
-            Section {
-                HStack(spacing: 8) {
-                    Text("#").frame(width: 32, alignment: .leading)
-                    Spacer()
-                    Text("Hz").frame(width: 80, alignment: .trailing)
-                    Text("dB").frame(width: 64, alignment: .trailing)
-                }
-                .koanText(.fine, .muted)
-                .listRowInsets(BandTable.rowInsets)
-                ForEach(Array(points.enumerated()), id: \.offset) { i, point in
-                    PointEditor(index: i, point: point, focus: $focused) { edited in
-                        var changed = points
-                        changed[i] = edited
-                        dsp.setCurve(profile, index, changed)
-                    }
-                    .font(.role(.meta, system: .body))
-                    .listRowInsets(BandTable.rowInsets)
-                }
-            } header: {
-                KoanSectionHeader("Points")
-            } footer: {
-                Text("Edits play at once. Frequency and gain are held to 10 Hz–22 kHz and ±30 dB; a point moved past another takes its place in order.")
-                    .koanText(.fine, .muted)
-            }
-            if let d = detail, d.canRevert, d.edited {
-                Section {
-                    Button("Reset to File") { confirmingReset = true }
-                        .koanButton(.bordered)
-                } footer: {
-                    Text("Puts this EQ back as \(d.source.first ?? "its file") had it, every filter and the headroom with it.")
-                        .koanText(.fine, .muted)
-                }
-            }
-        }
-        .decimalPadDone($focused, order: points.indices.flatMap { i in PointField.Part.allCases.map { PointField(index: i, part: $0) } })
-        .navigationTitle(KoanTheme.label("Graphic EQ"))
-        .task(id: dsp.stamp) { detail = await dsp.detail(profile) }
-        .confirmationDialog("Reset \(profile) to its file?", isPresented: $confirmingReset, titleVisibility: .visible) {
-            Button("Reset", role: .destructive) { dsp.revert(profile) }
-        }
-    }
-}
-
-/// A figure of a curve's point.
-private struct PointField: Hashable {
-    let index: Int
-    let part: Part
-
-    enum Part: CaseIterable { case hz, db }
-}
-
-/// One point of a curve, each figure committed when it is left or returned.
-private struct PointEditor: View {
-    let index: Int
-    let point: DspPoint
-    var focus: FocusState<PointField?>.Binding
-    let commit: (DspPoint) -> Void
-
-    @State private var hz = 0.0
-    @State private var db = 0.0
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text("\(index + 1)")
-                .koanText(.meta, .muted)
-                .monospacedDigit()
-                .frame(width: 32, alignment: .leading)
-            Spacer()
-            NumberField(value: $hz, focus: focus, name: PointField(index: index, part: .hz), width: 80, digits: 1, label: "Point \(index + 1) frequency", commit: save)
-            NumberField(value: $db, focus: focus, name: PointField(index: index, part: .db), width: 64, digits: 1, label: "Point \(index + 1) gain", commit: save)
-        }
-        .onChange(of: focus.wrappedValue) { was, _ in if was?.index == index { save() } }
-        .onAppear(perform: read)
-        .onChange(of: point.hz) { _, _ in read() }
-        .onChange(of: point.db) { _, _ in read() }
-    }
-
-    private func read() {
-        (hz, db) = (point.hz, point.db)
-    }
-
-    private func save() {
-        guard hz != point.hz || db != point.db else { return }
-        commit(DspPoint(hz: hz, db: db))
-    }
-}
-#endif

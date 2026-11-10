@@ -412,7 +412,7 @@ theme-leaks:
     done < <(find apps/ios/Sources -name '*.swift' ! -path '*/KoanFFI/*' ! -name 'KoanTheme.swift')
     [ "$found" = 0 ] && echo "no theme leaks" || { echo "theme leaks above"; exit 1; }
 
-# Type-check the shared SwiftUI sources against the iOS SDK.
+# Type-check the Swift the iOS app still has against the iOS SDK.
 #
 # The bindings are target-independent, so this needs `swift-bindings` and
 # nothing else: no Rust iOS build, no simulator runtime, a few seconds in CI.
@@ -436,130 +436,9 @@ ios-typecheck: swift-bindings
         -package-name koan \
         -wmo -emit-sil -o /dev/null -module-name Koan -I "$mod" \
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
-        $(find {{app_dir}}/Sources/KoanIOS {{app_dir}}/Sources/Koan -name '*.swift')
-    echo "the shared sources still build for iOS"
+        {{app_dir}}/Sources/KoanGUI/main.swift {{app_dir}}/Sources/KoanIOS/PushDelegate.swift {{app_dir}}/Sources/KoanIOS/AppAttest.swift
+    echo "the iOS app's Swift still builds"
 
-
-# Build the Rust engine for an iOS SDK and stage it for the Swift link.
-#
-# `iphonesimulator` or `iphoneos`, staged under the SDK's own name so the Xcode
-# project can find the right one through `$(PLATFORM_NAME)`.
-ios-ffi platform="iphonesimulator":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    case "{{platform}}" in
-        iphonesimulator) triple=aarch64-apple-ios-sim ;;
-        iphoneos) triple=aarch64-apple-ios ;;
-        *) echo "unknown platform: {{platform}}" >&2; exit 1 ;;
-    esac
-    # Without this rustc targets arm64-apple-ios10.0.0 while every C dependency
-    # compiled against the current SDK, and the link dies in a wall of "built
-    # for newer iOS version".
-    export IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}}
-    # A target directory per deployment target, because cargo does not count
-    # that variable as a reason to rebuild: lowering it relinked objects built
-    # for the old version, and the linker warned about every one of them.
-    out=${CARGO_TARGET_DIR:-target}/ios-{{ios_deployment_target}}
-    cargo rustc --release -p koan-ffi --crate-type staticlib --target "$triple" --target-dir "$out"
-    rm -rf "target/ios-link/{{platform}}" && mkdir -p "target/ios-link/{{platform}}"
-    cp "$out/$triple/release/libkoan_ffi.a" "target/ios-link/{{platform}}/"
-    # From this build rather than a host one, so an iOS build needs no second
-    # build of the engine.
-    just ffi-bindings "target/ios-link/{{platform}}/libkoan_ffi.a"
-    echo "koan-ffi ready for {{platform}}"
-
-# Assemble koan.app for the iOS simulator.
-#
-# By hand, without the Xcode project. A simulator bundle is the one case where
-# that is enough: it needs no provisioning profile and no signature. A device build does, and that
-# is what an Xcode project is for.
-ios-bundle: ios-ffi
-    #!/usr/bin/env bash
-    set -euo pipefail
-    app=target/ios-app/koan.app
-    rm -rf "$app" && mkdir -p "$app"
-    icon_plist=$(mktemp -t koan-icons.XXXXXX)
-    trap 'rm -f "$icon_plist"' EXIT
-    ffi={{app_dir}}/Sources/koan_ffiFFI
-    target=arm64-apple-ios{{ios_deployment_target}}-simulator
-    mod=target/ios-app/modules
-    rm -rf "$mod" && mkdir -p "$mod"
-    # KoanFFI is its own module in the package, so it is built as one here too —
-    # compiling its source alongside the app would leave `import KoanFFI`
-    # looking for a module that is being compiled into the same one.
-    xcrun -sdk iphonesimulator swiftc -target "$target" -swift-version 6 -O \
-        -package-name koan -module-name KoanFFI -enable-upcoming-feature NonisolatedNonsendingByDefault \
-        -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
-        -emit-module -emit-module-path "$mod/KoanFFI.swiftmodule" \
-        -emit-library -static -o "$mod/libKoanFFI.a" \
-        {{app_dir}}/Sources/KoanFFI/koan_ffi.swift
-    xcrun -sdk iphonesimulator swiftc -target "$target" -swift-version 6 -O \
-        -package-name koan \
-        -I "$mod" -L "$mod" -lKoanFFI \
-        -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
-        -L "$PWD/target/ios-link/iphonesimulator" -lkoan_ffi \
-        -framework AudioToolbox -framework AVFAudio -framework AVKit -framework MediaPlayer \
-        -o "$app/koan" \
-        $(find {{app_dir}}/Sources/KoanIOS {{app_dir}}/Sources/Koan -name '*.swift')
-    # The accent colour comes from the compiled catalog, exactly as on macOS —
-    # `Color("AccentColor")` finds nothing without it and every tinted control
-    # renders in nothing.
-    if /usr/bin/actool --version >/dev/null 2>&1; then
-        # `--app-icon` is not optional: without it actool compiles the colour
-        # sets and silently leaves the icon out of the catalog entirely. Nor is
-        # keeping the partial plist — it carries the CFBundleIcons that tell
-        # SpringBoard which rendition to draw, and an icon in the catalog that
-        # nothing names shows as an empty tile.
-        /usr/bin/actool {{app_dir}}/Resources/Assets.xcassets \
-            --compile "$app" --platform iphonesimulator \
-            --minimum-deployment-target {{ios_deployment_target}} \
-            --app-icon AppIcon --include-all-app-icons \
-            --output-partial-info-plist "$icon_plist" >/dev/null
-    else
-        echo "note: actool unavailable (needs full Xcode) — building without an icon or accent"
-    fi
-    # iOS bundles are flat — no Contents/MacOS.
-    cat > "$app/Info.plist" <<PLIST
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-    <plist version="1.0">
-    <dict>
-        <key>CFBundleExecutable</key><string>koan</string>
-        <key>CFBundleIdentifier</key><string>{{bundle_id}}</string>
-        <key>CFBundleName</key><string>kōan</string>
-        <!-- The catalog holds the icon; this is what names it. Without it the
-             home screen shows an empty tile and no error anywhere. -->
-        <key>CFBundleIconName</key><string>AppIcon</string>
-        <key>CFBundlePackageType</key><string>APPL</string>
-        <key>CFBundleShortVersionString</key><string>0.0.0</string>
-        <key>CFBundleVersion</key><string>1</string>
-        <key>LSRequiresIPhoneOS</key><true/>
-        <key>MinimumOSVersion</key><string>{{ios_deployment_target}}</string>
-        <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
-        <key>UILaunchScreen</key><dict>
-            <key>UIImageName</key><string>LaunchEnso</string>
-            <key>UIColorName</key><string>LaunchBackground</string>
-        </dict>
-        <!-- Without this the process is suspended when the screen locks, and
-             the audio thread with it. -->
-        <key>UIBackgroundModes</key><array><string>audio</string></array>
-        <key>CFBundleURLTypes</key>
-        <array>
-            <dict>
-                <key>CFBundleURLName</key><string>{{bundle_id}}</string>
-                <key>CFBundleURLSchemes</key><array><string>koan</string></array>
-            </dict>
-        </array>
-        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
-        <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps on your network to play music on.</string>
-    </dict>
-    </plist>
-    PLIST
-    # actool's keys, folded into the plist written above.
-    if [ -s "$icon_plist" ]; then
-        /usr/libexec/PlistBuddy -c "Merge $icon_plist" "$app/Info.plist" >/dev/null
-    fi
-    echo "built $app"
 
 # koan-kit's storybook on an iOS simulator, through GPUI's iOS backend: a
 # booted simulator if there is one, otherwise the first that can run it.
@@ -654,50 +533,12 @@ _gpui-sim crate bundle env shot:
         xcrun simctl io "$device" screenshot --display=1 "{{shot}}"
     fi
 
-# Install and launch koan on a booted simulator.
-ios-run: ios-bundle
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # A booted simulator if there is one, otherwise the first that can run the
-    # deployment target — an older runtime installs the app and refuses to
-    # launch it.
-    device=$(xcrun simctl list devices available -j \
-        | python3 -c 'import json,sys; want=int("{{ios_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k and int(k.split("iOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"]))')
-    xcrun simctl boot "$device" 2>/dev/null || true
-    xcrun simctl bootstatus "$device" -b
-    xcrun simctl install "$device" target/ios-app/koan.app
-    xcrun simctl launch --console-pty "$device" {{bundle_id}}
-
-# Play a file through the real Player, on the simulator's real output.
-#
-# The check that matters for iOS: position only advances when RemoteIO's render
-# callback drains the ring buffer, so a track that reaches its end has exercised
-# decode, timeline and output together. `KOAN_STOP_AFTER_MS` forces the teardown
-# instead of waiting for the queue to run out — the teardown path, shared with
-# macOS, where a double free of CoreAudio's buffer list would show.
-#
-#     just ios-smoke ~/some/short.wav
-ios-smoke FILE:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}}
-    cargo build -q -p koan-core --example end_of_queue --target aarch64-apple-ios-sim
-    device=$(xcrun simctl list devices booted -j \
-        | python3 -c 'import json,sys; print([d["udid"] for v in json.load(sys.stdin)["devices"].values() for d in v][0])')
-    bin=$(cd "${CARGO_TARGET_DIR:-target}" && pwd)/aarch64-apple-ios-sim/debug/examples/end_of_queue
-    # simctl only forwards environment prefixed for the child.
-    echo "--- playing to the end of the queue"
-    SIMCTL_CHILD_RUST_LOG=info xcrun simctl spawn "$device" "$bin" "{{FILE}}"
-    echo "--- stopping mid-track"
-    SIMCTL_CHILD_KOAN_STOP_AFTER_MS=1200 SIMCTL_CHILD_RUST_LOG=info \
-        xcrun simctl spawn "$device" "$bin" "{{FILE}}"
-
 # Generate the Xcode project the device build and TestFlight need.
 #
 # SwiftPM has no app product, which is fine for a simulator bundle and not for
 # anything that has to be signed for a device. The project is generated from
 # `apps/ios/project.yml` rather than checked in. The team defaults to empty,
-# which builds but cannot sign. Links what `ios-ffi` staged and compiles the
+# which builds but cannot sign. Links what `gui-ios-lib` staged and compiles the
 # bindings it generated, so that runs first.
 ios-project build="1":
     #!/usr/bin/env bash
@@ -709,141 +550,7 @@ ios-project build="1":
         xcodegen generate --quiet --spec apps/ios/project.yml
     echo "generated apps/ios/Koan.xcodeproj"
 
-# Use the app as a listener does and check each step worked: browse, play,
-# pause, skip, favourite, queue, Now Playing, lyrics, playlists, search, play on
-# in the background, and seek into a track still downloading. What to run
-# before a submission, on an iPhone and an iPad simulator signed in with
-# `ios-signin`. Screenshots of each step land in target/ios-use.
-ios-use device="koan-dev": (ios-ffi "iphonesimulator") ios-project
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out=target/ios-use
-    rm -rf "$out" && mkdir -p "$out"
-    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
-    xcrun simctl boot "$udid" 2>/dev/null || true
-    xcrun simctl bootstatus "$udid" -b >/dev/null
-    trap 'xcrun simctl shutdown "$udid"' EXIT
-    status=0
-    xcodebuild test -quiet \
-        -project apps/ios/Koan.xcodeproj -scheme Koan \
-        -destination "id=$udid" \
-        -only-testing:KoanUITests/UseTests -only-testing:KoanUITests/SeekTests \
-        -resultBundlePath "$out/use.xcresult" || status=$?
-    xcrun xcresulttool export attachments --path "$out/use.xcresult" --output-path "$out" >/dev/null
-    echo "screenshots in $out"
-    exit $status
-
-# Search for an artist, play them, open and close Now Playing, then follow
-# its album link: no album page on the way is empty (#997). ARTIST must be in
-# the simulator's library.
-ios-album-page device="koan-dev" artist="Halden": (ios-ffi "iphonesimulator") ios-project
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out=target/ios-album-page
-    rm -rf "$out" && mkdir -p "$out"
-    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
-    xcrun simctl boot "$udid" 2>/dev/null || true
-    xcrun simctl bootstatus "$udid" -b >/dev/null
-    trap 'xcrun simctl shutdown "$udid"' EXIT
-    status=0
-    TEST_RUNNER_KOAN_ALBUM_ARTIST='{{artist}}' xcodebuild test -quiet \
-        -project apps/ios/Koan.xcodeproj -scheme Koan \
-        -destination "id=$udid" \
-        -only-testing:KoanUITests/AlbumPageTests \
-        -resultBundlePath "$out/album.xcresult" || status=$?
-    xcrun xcresulttool export attachments --path "$out/album.xcresult" --output-path "$out" >/dev/null
-    echo "screenshots in $out"
-    exit $status
-
-# Open Find in AutoEQ on a fresh install, where the first open fetches
-# AutoEQ's index, and check the sheet stays open while it arrives.
-ios-autoeq-sheet device="koan-dev": (ios-ffi "iphonesimulator") ios-project
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out=target/ios-autoeq-sheet
-    rm -rf "$out" && mkdir -p "$out"
-    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
-    xcrun simctl boot "$udid" 2>/dev/null || true
-    xcrun simctl bootstatus "$udid" -b >/dev/null
-    trap 'xcrun simctl shutdown "$udid"' EXIT
-    xcrun simctl uninstall "$udid" cc.blit.koan 2>/dev/null || true
-    status=0
-    xcodebuild test -quiet \
-        -project apps/ios/Koan.xcodeproj -scheme Koan \
-        -destination "id=$udid" \
-        -only-testing:KoanUITests/AutoEqSheetTests \
-        -resultBundlePath "$out/sheet.xcresult" || status=$?
-    xcrun xcresulttool export attachments --path "$out/sheet.xcresult" --output-path "$out" >/dev/null
-    echo "screenshots in $out"
-    exit $status
-
-# Edit a tuning on its graph: a vertical swipe from the graph scrolls the
-# page, a stroke across it paints, a handle drags and a pinch changes Q.
-ios-eq-graph device="koan-dev": (ios-ffi "iphonesimulator") ios-project
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out=target/ios-eq-graph
-    rm -rf "$out" && mkdir -p "$out"
-    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
-    xcrun simctl boot "$udid" 2>/dev/null || true
-    xcrun simctl bootstatus "$udid" -b >/dev/null
-    trap 'xcrun simctl shutdown "$udid"' EXIT
-    status=0
-    xcodebuild test -quiet \
-        -project apps/ios/Koan.xcodeproj -scheme Koan \
-        -destination "id=$udid" \
-        -only-testing:KoanUITests/EqGraphTests \
-        -resultBundlePath "$out/graph.xcresult" || status=$?
-    xcrun xcresulttool export attachments --path "$out/graph.xcresult" --output-path "$out" >/dev/null
-    echo "screenshots in $out"
-    exit $status
-
-# Check that every scrolling page on an iPhone and an iPad scrolls its last
-# element clear of the kōan look's bar, and of the select mode's, in light.
-# Serves a generated library from a throwaway koan, favourites its records and
-# makes twenty playlists, then runs `BarInsetTests` on each simulator in turn.
-# Screenshots of each page's foot land in target/ios-bars.
-ios-bars phone="koan-dev" pad="koan-ipad": (ios-ffi "iphonesimulator") ios-project
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out=$(pwd)/target/ios-bars
-    rm -rf "$out" && mkdir -p "$out"
-    cleanup=()
-    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
-    just _bar-library "$out/library"
-    url=$(just _demo-server "$out/library" "$out")
-    cleanup+=("just _demo-server-stop '$out'")
-    key=$(cat "$out/server.key")
-    just _bar-seed "$url" "$key"
-    export TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
-        TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY=$key
-    status=0
-    for device in "{{phone}}" "{{pad}}"; do
-        udid=$(xcrun simctl list devices available | grep -F "$device (" | head -1 | grep -oE '[0-9A-F-]{36}' || true)
-        if [ -z "$udid" ]; then
-            echo "no simulator called $device; skipped" >&2
-            status=1
-            continue
-        fi
-        xcrun simctl boot "$udid" 2>/dev/null || true
-        xcrun simctl bootstatus "$udid" -b >/dev/null
-        was=$(xcrun simctl ui "$udid" appearance)
-        xcrun simctl ui "$udid" appearance light
-        xcodebuild test -quiet \
-            -project apps/ios/Koan.xcodeproj -scheme Koan \
-            -destination "id=$udid" \
-            -only-testing:KoanUITests/BarInsetTests \
-            -resultBundlePath "$out/$device.xcresult" || status=$?
-        xcrun simctl ui "$udid" appearance "$was" || true
-        # One booted simulator at a time.
-        xcrun simctl shutdown "$udid" || true
-        mkdir -p "$out/$device"
-        xcrun xcresulttool export attachments --path "$out/$device.xcresult" --output-path "$out/$device" >/dev/null || true
-    done
-    echo "screenshots in $out"
-    exit $status
-
-# The library `ios-bars` serves: an artist with fifteen records, one of them
+# The library the walks serve: an artist with fifteen records, one of them
 # thirty tracks long, and forty more artists with a record each. Silent FLACs
 # of two seconds, tagged.
 _bar-library dir:
@@ -862,7 +569,7 @@ _bar-library dir:
     for a in $(seq 40); do for n in 1 2; do put "Artist $a" "Album $a" "$n" "Song $a.$n"; done; done
     rm -r "$(dirname "$seed")"
 
-# What `ios-bars` and `android-walk` add to the `_bar-library` a server
+# What `android-walk` adds to the `_bar-library` a server
 # serves: every record, artist and the long record's tracks favourited, and
 # twenty playlists of the long record.
 _bar-seed url key:
@@ -879,98 +586,6 @@ _bar-seed url key:
     for n in $(seq 20); do
         api createPlaylist --data-urlencode "name=Playlist $n" $(for s in $songs; do echo -d songId=$s; done) >/dev/null
     done
-
-# Walk the app on a simulator and export a screenshot of every page.
-#
-# Runs `WalkTests` against whatever library that simulator holds, so sign it in
-# to a server first. Screenshots land in target/ios-walk.
-ios-walk device="koan-dev" search="gabriel": (ios-ffi "iphonesimulator") ios-project
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out=target/ios-walk
-    rm -rf "$out" && mkdir -p "$out"
-    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
-    xcrun simctl boot "$udid" 2>/dev/null || true
-    xcrun simctl bootstatus "$udid" -b >/dev/null
-    # Apple's clean status bar, so the screenshots can go anywhere.
-    xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active \
-        --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
-    # A booted simulator is a running copy of iOS; leave none behind.
-    trap 'xcrun simctl status_bar "$udid" clear; xcrun simctl shutdown "$udid"' EXIT
-    TEST_RUNNER_KOAN_WALK_SEARCH='{{search}}' TEST_RUNNER_KOAN_WALK_SETTLE="${KOAN_WALK_SETTLE:-0}" xcodebuild test -quiet \
-        -project apps/ios/Koan.xcodeproj -scheme Koan \
-        -destination "id=$udid" \
-        -only-testing:KoanUITests/WalkTests \
-        -resultBundlePath "$out/walk.xcresult" || true
-    xcrun xcresulttool export attachments --path "$out/walk.xcresult" --output-path "$out"
-    echo "screenshots in $out"
-
-# Sign a simulator in to a server through Settings, as App Review does, and
-# wait for its albums: the check that the review account works, and how a
-# screenshot simulator gets a library. `just ios-signin koan-shots-iphone
-# https://demo.navidrome.org demo demo`.
-ios-signin device url user password: (ios-ffi "iphonesimulator") ios-project
-    #!/usr/bin/env bash
-    set -euo pipefail
-    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
-    xcrun simctl boot "$udid" 2>/dev/null || true
-    xcrun simctl bootstatus "$udid" -b >/dev/null
-    trap 'xcrun simctl shutdown "$udid"' EXIT
-    TEST_RUNNER_KOAN_SIGNIN_URL='{{url}}' \
-    TEST_RUNNER_KOAN_SIGNIN_USER='{{user}}' \
-    TEST_RUNNER_KOAN_SIGNIN_PASSWORD='{{password}}' \
-        xcodebuild test -quiet \
-            -project apps/ios/Koan.xcodeproj -scheme Koan \
-            -destination "id=$udid" \
-            -only-testing:KoanUITests/SignInTests
-    echo "{{device}} is signed in to {{url}}"
-
-# Make an invite from Settings → People on a simulator signed in as a throwaway
-# server's admin: the sheet stays up, and its QR code reads back as the link.
-ios-invite-sheet: (ios-ffi "iphonesimulator") ios-project
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out=target/ios-invite-sheet
-    rm -rf "$out" && mkdir -p "$out"
-    cleanup=()
-    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
-    phone=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k for d in v if d["isAvailable"] and d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
-    [ -n "$phone" ] || { echo "Needs an iPhone simulator." >&2; exit 1; }
-    url=$(just _demo-server "" "$out")
-    cleanup+=("just _demo-server-stop '$out'")
-    xcrun simctl boot "$phone" 2>/dev/null || true
-    xcrun simctl bootstatus "$phone" -b >/dev/null
-    cleanup+=("xcrun simctl shutdown '$phone'")
-    xcrun simctl uninstall "$phone" {{bundle_id}} 2>/dev/null || true
-    TEST_RUNNER_KOAN_INVITE_SHEET=1 \
-    TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
-    TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY="$(cat "$out/server.key")" \
-    xcodebuild test -quiet \
-        -project apps/ios/Koan.xcodeproj -scheme Koan \
-        -destination "id=$phone" -derivedDataPath target/ios-build \
-        -only-testing:KoanUITests/InviteSheetTests \
-        -resultBundlePath "$out/test.xcresult"
-    xcrun xcresulttool export attachments --path "$out/test.xcresult" --output-path "$out" >/dev/null
-    shot=$(find "$out" -name '*.png' | head -1)
-    link=$(swift apps/ios/tools/qrdecode.swift "$shot" | head -1)
-    echo "QR code reads: $link"
-    case "$link" in https://koan.rocks/join/*) ;; *) echo "FAIL: the QR code is not an invite link" >&2; exit 1 ;; esac
-
-# Open an invite link on a simulator and wait for its library, as a listener
-# tapping it would. `koan auth invite` prints one.
-ios-join device link: (ios-ffi "iphonesimulator") ios-project
-    #!/usr/bin/env bash
-    set -euo pipefail
-    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
-    xcrun simctl boot "$udid" 2>/dev/null || true
-    xcrun simctl bootstatus "$udid" -b >/dev/null
-    TEST_RUNNER_KOAN_INVITE_LINK='{{link}}' \
-        xcodebuild test -quiet \
-            -project apps/ios/Koan.xcodeproj -scheme Koan \
-            -destination "id=$udid" \
-            -resultBundlePath target/ios-join.xcresult \
-            -only-testing:KoanUITests/InviteTests
-    echo "{{device}} joined through the invite"
 
 # Build, install and launch on the iPhone plugged in (or on the same Wi-Fi).
 #
@@ -1048,7 +663,7 @@ tv-ffi platform="appletvsimulator":
         appletvos) triple=aarch64-apple-tvos ;;
         *) echo "unknown platform: {{platform}}" >&2; exit 1 ;;
     esac
-    # As in `ios-ffi`: C dependencies compile against the current SDK, and
+    # As in `gui-ios-lib`: C dependencies compile against the current SDK, and
     # rustc must target the same version.
     export TVOS_DEPLOYMENT_TARGET={{tv_deployment_target}}
     out=${CARGO_TARGET_DIR:-target}/tv-{{tv_deployment_target}}
@@ -1335,81 +950,6 @@ tv-signin routes="password apikey invite signout wrong-password unreachable menu
     echo "screenshots in $out"
     [ ${#failed[@]} -eq 0 ] || { echo "failed: ${failed[*]}" >&2; exit 1; }
 
-# Pair the way a person does: the television shows its QR code, a phone reads
-# it and its owner taps Allow. The code is read off the simulator's screen
-# (apps/ios/tools/qrdecode.swift), and the link opened on an iPhone simulator
-# signed in as the throwaway server's owner, through `koan://pair` since an
-# unsigned build is not given the universal link. Screenshots of both screens
-# land in target/tv-pair-qr. Two simulators, both shut down at the end.
-tv-pair-qr: (tv-ffi "appletvsimulator") (ios-ffi "iphonesimulator") ios-project
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out=target/tv-pair-qr
-    rm -rf "$out" && mkdir -p "$out"
-    cleanup=()
-    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
-    pick() {
-        xcrun simctl list devices available -j | python3 -c 'import json,sys; want=sys.argv[1]; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if want+"-" in k for d in v if d["isAvailable"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))' "$1"
-    }
-    tv=$(pick tvOS)
-    phone=$(pick iOS)
-    [ -n "$tv" ] && [ -n "$phone" ] || { echo "Needs an Apple TV and an iPhone simulator." >&2; exit 1; }
-    # Both test bundles first: once the code is on screen it has ten minutes.
-    xcodebuild build-for-testing -quiet \
-        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
-        -destination "id=$tv" -derivedDataPath target/tv-build
-    xcodebuild build-for-testing -quiet \
-        -project apps/ios/Koan.xcodeproj -scheme Koan \
-        -destination "id=$phone" -derivedDataPath target/ios-build
-    url=$(just _demo-server "" "$out")
-    cleanup+=("just _demo-server-stop '$out'")
-    password=$(cat "$out/server.password")
-    for sim in "$tv" "$phone"; do
-        xcrun simctl boot "$sim" 2>/dev/null || true
-        xcrun simctl bootstatus "$sim" -b >/dev/null
-        cleanup+=("xcrun simctl shutdown '$sim'")
-        xcrun simctl uninstall "$sim" {{bundle_id}} 2>/dev/null || true
-    done
-    # The television asks for a code and waits for someone to allow it.
-    TEST_RUNNER_KOAN_PAIR_SERVER=$url xcodebuild test-without-building -quiet \
-        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
-        -destination "id=$tv" -derivedDataPath target/tv-build \
-        -only-testing:KoanTVUITests/TVPairTests \
-        -resultBundlePath "$out/tv.xcresult" >"$out/tv-test.log" 2>&1 &
-    tv_test=$!
-    link=""
-    for _ in $(seq 120); do
-        xcrun simctl io "$tv" screenshot "$out/tv-screen.png" >/dev/null 2>&1 || true
-        link=$(swift apps/ios/tools/qrdecode.swift "$out/tv-screen.png" 2>/dev/null | head -1 || true)
-        [ -n "$link" ] && break
-        sleep 3
-    done
-    [ -n "$link" ] || { echo "FAIL: no QR code on the television" >&2; exit 1; }
-    mv "$out/tv-screen.png" "$out/tv-qr.png"
-    echo "read from the television: $link"
-    case "$link" in https://koan.rocks/pair*'#'*) ;; *) echo "FAIL: not a pairing link" >&2; exit 1 ;; esac
-    TEST_RUNNER_KOAN_PAIR_LINK="koan://pair#${link#*#}" \
-    TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
-    TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY="$(cat "$out/server.key")" \
-    xcodebuild test-without-building -quiet \
-        -project apps/ios/Koan.xcodeproj -scheme Koan \
-        -destination "id=$phone" -derivedDataPath target/ios-build \
-        -only-testing:KoanUITests/PairApproveTests \
-        -resultBundlePath "$out/phone.xcresult" >"$out/phone-test.log" 2>&1 || true
-    wait "$tv_test" || true
-    for r in tv phone; do
-        [ -d "$out/$r.xcresult" ] && xcrun xcresulttool export attachments \
-            --path "$out/$r.xcresult" --output-path "$out/$r" >/dev/null
-    done
-    grep -E "pair:|link:" "$out/server.log" || true
-    if xcrun xcresulttool get test-results summary --path "$out/tv.xcresult" 2>/dev/null \
-        | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("result") != "Passed")'; then
-        echo "paired: the television signed in from the phone's approval (screenshots in $out)"
-    else
-        echo "FAIL: the television did not sign in; see $out" >&2
-        exit 1
-    fi
-
 # A throwaway koan for the simulator recipes: `library` (or nothing) served on
 # a free port from a configuration of its own, with an owner account whose
 # password lands in `out`/server.password and an API key in server.key. Prints
@@ -1608,7 +1148,7 @@ tv-testflight build: (tv-ffi "appletvos") (ios-project build)
 
 # Frame a walk's screenshots for the App Store: each screen on a blur of its
 # own colours, captioned from apps/ios/store/captions.toml, at the size it was
-# taken. `just ios-store-shots target/ios-walk target/shots-iphone`, and
+# taken. `just ios-store-shots <screenshots> target/shots-iphone`, and
 # `captions-ipad` for an iPad's walk.
 ios-store-shots src out captions="captions":
     uv run apps/ios/store/frame.py apps/ios/store/{{captions}}.toml {{src}} {{out}}
@@ -1651,8 +1191,8 @@ android-apk abis="arm64-v8a":
 
 # Walk the Android app on an emulator and screenshot every page, in both looks
 # (the kōan theme and the system's) and both appearances, into
-# target/android-walk/<look>-<appearance>. Serves the `ios-bars` library from
-# a throwaway koan server, seeded as `ios-bars` seeds it, and signs the app in
+# target/android-walk/<look>-<appearance>. Serves the walks' library from
+# a throwaway koan server, seeded as the walks seed it, and signs the app in
 # to it. Uses the emulator adb already sees, else boots `avd` headless with the
 # host's GPU (software rendering runs the wash too slowly to judge) and shuts
 # it down afterwards. The app's data is cleared before each pass, so every

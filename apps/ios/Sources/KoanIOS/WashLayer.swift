@@ -19,14 +19,12 @@ struct WashLayer: View {
             Rectangle().fill(KoanTheme.ground(.background))
             ArtworkBleed(source: source, drifts: player.isPlaying)
                 .environment(art)
-            #if os(tvOS)
             // A television is a large, bright surface in a dim room: the
             // colour stays, at a depth text and focus still read against.
             // The theme's wash is toned for text already.
             if !KoanTheme.isOn {
                 Rectangle().fill(.black.opacity(0.55))
             }
-            #endif
         }
     }
 
@@ -49,13 +47,9 @@ extension View {
     /// The wash as this page's navigation background. Each pushed page needs
     /// its own: a stack paints an opaque ground behind every page it shows.
     func roomBackground() -> some View {
-        #if os(tvOS)
         // tvOS has no navigation container background; the page draws its own,
         // to the edges of the screen whatever its content's height.
         frame(maxWidth: .infinity, maxHeight: .infinity)
             .background { WashLayer().ignoresSafeArea() }
-        #else
-        containerBackground(for: .navigation) { WashLayer() }
-        #endif
     }
 }

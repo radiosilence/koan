@@ -6,9 +6,6 @@ struct ArtistBrowser: View {
     @Environment(Navigator.self) private var nav
     /// Without a selection binding a List row has nothing to do with a click.
     @State private var selection: Set<Int64> = []
-    #if os(iOS)
-    @State private var editMode: EditMode = .inactive
-    #endif
 
     var body: some View {
         Group {
@@ -52,14 +49,6 @@ struct ArtistBrowser: View {
             if let first = library.visibleArtists.first { proxy.scrollTo(first.id, anchor: .top) }
         }
         }
-        #if os(iOS)
-        .listSelectMode($editMode, selection: $selection) { ids in
-            SelectionBar.Actions(
-                favourites: ids.map { Playable.Key(kind: .artist, id: $0) },
-                sources: ids.map { .artist(id: $0) }
-            )
-        }
-        #endif
         .clearsSelection($selection)
         .washedGround()
         .selectionMenu(for: Int64.self) { ids in
@@ -261,19 +250,12 @@ struct ArtistDetailView: View {
         .onChange(of: onStage) { _, now in if !now { library.artistSelection.end() } }
         .onChange(of: artistId) { _, _ in library.artistSelection.end() }
         .onDisappear { library.artistSelection.end() }
-        #if os(iOS)
-        .playableSelectMode(library.artistSelection, engine: library.engine, available: !albums.isEmpty || !features.isEmpty)
-        #endif
     }
 
     private var header: some View {
         // The album page's title size, on each platform; a television's
         // artist name in its display type.
-        #if os(tvOS)
         let role = KoanType.display
-        #else
-        let role = KoanType.title
-        #endif
         return PageHeader(artist?.name ?? "Artist", role: role) {
             if info?.hasImage == true {
                 AlbumArtwork(source: .artist(artistId), size: .tile, cornerRadius: KoanTheme.radius(56))
@@ -281,12 +263,6 @@ struct ArtistDetailView: View {
                     .transition(.opacity)
             }
         } lead: {
-            #if os(iOS)
-            if let artist {
-                PlayableHeaderButton(playable: .artist(id: artist.id, name: artist.name))
-                ShuffleHeaderButton(playable: .artist(id: artist.id, name: artist.name))
-            }
-            #endif
         } detail: {
             Text(Format.count(Int64(albums.count), "album"))
         } actions: {
@@ -417,15 +393,10 @@ private struct ArtistBio: View {
     private var credits: some View {
         HStack(spacing: 12) {
             if let url = source.flatMap(URL.init(string:)) {
-                #if os(tvOS)
                 // A television opens no web pages; the credit stands as text.
                 Text("From Wikipedia")
                     .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     .accessibilityHint(url.absoluteString)
-                #else
-                Link("From Wikipedia", destination: url)
-                    .koanButton(.link)
-                #endif
             }
             if let imageCredit {
                 Text("Photo: \(imageCredit)")

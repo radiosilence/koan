@@ -157,11 +157,7 @@ struct RecordRoom: ViewModifier {
             // so the window stays out of its way.
             // A window on the Mac, the navigation container on iOS: the same
             // intent, and neither platform has the other's container.
-            #if os(tvOS)
             .background { washLayer.ignoresSafeArea() }
-            #else
-            .containerBackground(for: .navigation) { washLayer }
-            #endif
             // Only for a record whose colour is not already known. The usual
             // path is answered above, in the same pass as the page —
             // navigating warms this alongside the rows, see
@@ -191,9 +187,6 @@ struct RecordRoom: ViewModifier {
             // a neutral so the two never argue. A television's alerts take the
             // tint too, as text on their white focused button, so there the
             // colour goes to the room alone.
-            #if os(iOS)
-            .tint(tint)
-            #endif
             .environment(\.roomTint, tint)
             .environment(\.koanAccent, accent)
             .environment(\.koanRainbow, appearance.rainbowDrawn)
@@ -219,9 +212,6 @@ struct RecordRoom: ViewModifier {
             // The theme's text button for every button that names no style.
             // Not on a television, whose shell gives them `TelevisionButton`:
             // a bare text button there shows no focus.
-            #if os(iOS)
-            .koanButtons(.text)
-            #endif
             .onChange(of: record, initial: true) { _, now in worn = now }
     }
 }

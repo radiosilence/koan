@@ -30,12 +30,10 @@ struct HeaderActions: View {
                     .fixedSize()
                 }
             } else {
-                #if os(tvOS)
                 if let playable {
                     PlayableHeaderButton(playable: playable)
                     ShuffleHeaderButton(playable: playable)
                 }
-                #endif
                 QueueButtons(playable: playable)
                 if let playable {
                     ShareButton(playable: playable)

@@ -76,11 +76,7 @@ extension View {
     /// A television's borderless button is bare text until focused, which in a
     /// settings row reads as the row's value; there they keep their platters.
     func rowButtons() -> some View {
-        #if os(tvOS)
         buttonStyle(TelevisionButton())
-        #else
-        buttonStyle(.borderless)
-        #endif
     }
 }
 
@@ -89,22 +85,14 @@ extension View {
     /// the glyph drawn. A pointer needs no more than the glyph, and a
     /// television focuses rather than hits.
     func touchTarget() -> some View {
-        #if os(iOS)
-        frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-        #else
         self
-        #endif
     }
 
     /// A control drawn as its glyph alone on the Mac and the phone. A
     /// television gives it the round platter its neighbours have: a bare glyph
     /// shows no focus, and cannot be found from across the room.
     func controlButton() -> some View {
-        #if os(tvOS)
         buttonStyle(TelevisionButton())
-        #else
-        buttonStyle(.plain)
-        #endif
     }
 
     /// A button or menu in a toolbar. On tvOS it takes the system's toolbar
@@ -112,22 +100,14 @@ extension View {
     /// capsule with its symbol at text size, and shows the symbol alone: a
     /// television's toolbar truncates a title to a letter or two.
     func toolbarButton() -> some View {
-        #if os(tvOS)
         buttonStyle(.automatic).labelStyle(.iconOnly)
-        #else
-        self
-        #endif
     }
 
     /// A `NavigationLink` in a list. On tvOS it is drawn as a full-width row:
     /// the shell's button style would otherwise make it a capsule the size of
     /// its label. Elsewhere it is a row on the wash.
     func listLink() -> some View {
-        #if os(tvOS)
         buttonStyle(TelevisionRow(resting: 0.08))
-        #else
-        washedRow()
-        #endif
     }
 }
 
@@ -147,31 +127,11 @@ extension View {
     /// clicked, so there the row is a button.
     @ViewBuilder
     func primaryTap(_ action: @escaping () -> Void) -> some View {
-        #if os(tvOS)
         Button(action: action) { contentShape(Rectangle()) }
             .buttonStyle(TelevisionRow())
-        #else
-        modifier(PhoneTap(action: action))
-        #endif
     }
 }
 
-#if os(iOS)
-/// A row's tap, given up in select mode, where the tap is the List's and
-/// ticks the row.
-private struct PhoneTap: ViewModifier {
-    let action: () -> Void
-    @Environment(\.editMode) private var editMode
-
-    func body(content: Content) -> some View {
-        if editMode?.wrappedValue.isEditing == true {
-            content
-        } else {
-            content.contentShape(Rectangle()).onTapGesture(perform: action)
-        }
-    }
-}
-#endif
 
 extension View {
     /// `contextMenu(forSelectionType:menu:primaryAction:)`, which tvOS does not
@@ -182,11 +142,7 @@ extension View {
         @ViewBuilder menu: @escaping (Set<I>) -> M,
         primaryAction: ((Set<I>) -> Void)? = nil
     ) -> some View {
-        #if os(tvOS)
         self
-        #else
-        contextMenu(forSelectionType: type, menu: menu, primaryAction: primaryAction)
-        #endif
     }
 }
 
@@ -200,7 +156,6 @@ extension View {
         _ action: @escaping () -> Void,
         @ViewBuilder menu: @escaping () -> Menu
     ) -> some View {
-        #if os(tvOS)
         if KoanTheme.isOn {
             modifier(TelevisionMenuRow(action: action, menu: menu))
         } else {
@@ -208,13 +163,9 @@ extension View {
                 .buttonStyle(TelevisionRow())
                 .contextMenu { menu() }
         }
-        #else
-        primaryTap(action)
-        #endif
     }
 }
 
-#if os(tvOS)
 /// A row whose menu, in the theme, is a sheet of the theme's rows rather than
 /// the system's popover of grey pills. A long press of the remote opens it,
 /// as it does the system's. Focusable rather than a button: a button takes
@@ -281,7 +232,6 @@ private struct TelevisionMenuRow<Menu: View>: ViewModifier {
         }
     }
 }
-#endif
 
 extension Notification.Name {
     /// The app giving up the foreground — on iOS the last dependable moment
@@ -388,17 +338,8 @@ extension View {
     /// apart.
     @ViewBuilder
     func washedRow() -> some View {
-        #if os(tvOS)
         // A television's list draws no rules.
         listRowBackground(Color.clear)
-        #else
-        if KoanTheme.isOn {
-            listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-        } else {
-            listRowBackground(Color.clear)
-        }
-        #endif
     }
 }
 
@@ -409,7 +350,6 @@ extension View {
 /// white, in dark mode, under a white knob.
 struct SystemSwitch: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
-        #if os(tvOS)
         // A television's toggle is a row that says On or Off. Its label takes
         // the tint, which the room sets to the record's colour; the primary
         // colour lets a focused row draw it dark on white as other rows do.
@@ -420,41 +360,24 @@ struct SystemSwitch: ToggleStyle {
             Toggle(configuration)
                 .tint(.primary)
         }
-        #else
-        Toggle(configuration)
-            .toggleStyle(.switch) // theme: raw — the platform's look
-            .tint(.green)
-        #endif
     }
 }
 
 extension View {
     /// `onHover`, which tvOS does not have: nothing hovers under a remote.
     func pointerHover(perform action: @escaping (Bool) -> Void) -> some View {
-        #if os(tvOS)
         self
-        #else
-        onHover(perform: action)
-        #endif
     }
 
     /// The inset list, or the plain one on tvOS, which has no inset style.
     func insetList() -> some View {
-        #if os(tvOS)
         listStyle(.plain)
-        #else
-        listStyle(.inset)
-        #endif
     }
 
     /// `navigationSubtitle`, which tvOS does not have: its tab pages carry no
     /// title bar to put one under.
     func pageSubtitle(_ subtitle: String) -> some View {
-        #if os(tvOS)
         self
-        #else
-        navigationSubtitle(subtitle)
-        #endif
     }
 }
 
@@ -462,11 +385,7 @@ extension View {
 /// On tvOS each leaves the view as it is.
 extension View {
     func dragSource<T: Transferable>(_ payload: @autoclosure @escaping () -> T) -> some View {
-        #if os(tvOS)
         self
-        #else
-        draggable(payload())
-        #endif
     }
 
     func dropTarget<T: Transferable>(
@@ -474,36 +393,20 @@ extension View {
         action: @escaping ([T], CGPoint) -> Bool,
         isTargeted: @escaping (Bool) -> Void = { _ in }
     ) -> some View {
-        #if os(tvOS)
         self
-        #else
-        dropDestination(for: type, action: action, isTargeted: isTargeted)
-        #endif
     }
 
     func rowSeparator(_ visibility: Visibility) -> some View {
-        #if os(tvOS)
         self
-        #else
-        listRowSeparator(visibility)
-        #endif
     }
 
     func selectableText() -> some View {
-        #if os(tvOS)
         self
-        #else
-        textSelection(.enabled)
-        #endif
     }
 
     /// The grabber on a sheet, which a remote has no use for.
     func sheetGrabber() -> some View {
-        #if os(tvOS)
         self
-        #else
-        presentationDragIndicator(.visible)
-        #endif
     }
 }
 
@@ -520,15 +423,7 @@ extension View {
         onDismiss: (() -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Tray
     ) -> some View {
-        #if os(iOS)
-        if KoanTheme.isOn {
-            modifier(PhoneTray(isPresented: isPresented, onDismiss: onDismiss, tray: content))
-        } else {
-            systemTray(isPresented: isPresented, onDismiss: onDismiss, content: content)
-        }
-        #else
         systemTray(isPresented: isPresented, onDismiss: onDismiss, content: content)
-        #endif
     }
 
     private func systemTray<Tray: View>(
@@ -557,180 +452,15 @@ extension View {
         onDismiss: (() -> Void)? = nil,
         @ViewBuilder content: @escaping (Item) -> Tray
     ) -> some View {
-        #if os(iOS)
-        if KoanTheme.isOn {
-            modifier(PhoneTray(
-                isPresented: Binding(
-                    get: { item.wrappedValue != nil },
-                    set: { if !$0 { item.wrappedValue = nil } }
-                ),
-                fills: true,
-                onDismiss: onDismiss,
-                tray: { if let shown = item.wrappedValue { content(shown) } }
-            ))
-        } else {
-            sheet(item: item, onDismiss: onDismiss) { content($0).koanSheet() }
-        }
-        #else
         sheet(item: item, onDismiss: onDismiss) { content($0).koanSheet() }
-        #endif
     }
 
     @ViewBuilder
     func formTray<Tray: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Tray) -> some View {
-        #if os(iOS)
-        if KoanTheme.isOn {
-            modifier(PhoneTray(isPresented: isPresented, fills: true, tray: content))
-        } else {
-            sheet(isPresented: isPresented) { content().koanSheet() }
-        }
-        #else
         sheet(isPresented: isPresented) { content().koanSheet() }
-        #endif
     }
 }
 
-#if os(iOS)
-/// A cover with nothing of its own to draw, presented and dismissed without
-/// the system's slide: the panel moves itself, and the dim fades.
-private struct PhoneTray<Tray: View>: ViewModifier {
-    @Binding var isPresented: Bool
-    /// A form, which scrolls itself, filling the panel to its limit.
-    var fills = false
-    var onDismiss: (() -> Void)?
-    @ViewBuilder let tray: () -> Tray
-    @State private var covering = false
-
-    func body(content: Content) -> some View {
-        content
-            .onChange(of: isPresented, initial: true) { _, open in
-                var instant = Transaction()
-                instant.disablesAnimations = true
-                withTransaction(instant) { covering = open }
-            }
-            .fullScreenCover(isPresented: $covering, onDismiss: {
-                isPresented = false
-                onDismiss?()
-            }) {
-                PhoneTrayPanel(close: { isPresented = false }, fills: fills, content: tray)
-                    .presentationBackground(.clear)
-            }
-    }
-}
-
-private struct PhoneTrayPanel<Tray: View>: View {
-    let close: () -> Void
-    let fills: Bool
-    @ViewBuilder let content: () -> Tray
-    @State private var shown = false
-    /// The content's own height: the panel stands as tall as it, to a limit.
-    @State private var height: CGFloat = 0
-    /// How far a drag has pulled the panel down; back to nothing when the
-    /// drag ends or the system cancels it.
-    @GestureState private var pull: CGFloat = 0
-    /// Whether the content is scrolled to its top, where a downward drag
-    /// pulls the panel instead.
-    @State private var atTop = true
-    @Environment(\.horizontalSizeClass) private var sizeClass
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        GeometryReader { proxy in
-            let below = proxy.size.height + proxy.safeAreaInsets.bottom
-            ZStack(alignment: .bottom) {
-                Color.black.opacity(shown ? 0.4 : 0)
-                    .ignoresSafeArea()
-                    .onTapGesture(perform: dismiss)
-                    .accessibilityHidden(true)
-                panel(limit: proxy.size.height * 0.85)
-                    .offset(y: shown ? pull : below)
-                    .koanAnimation(KoanTheme.Motion.settle, value: pull == 0)
-            }
-        }
-        .onAppear { animate { shown = true } }
-    }
-
-    private func panel(limit: CGFloat) -> some View {
-        let compact = sizeClass != .regular
-        return VStack(spacing: 0) {
-            // The grabber, in a strip across the panel that takes a drag
-            // whether or not the content scrolls.
-            Rectangle()
-                .fill(Color.koanRule)
-                .frame(width: 36, height: 3)
-                .padding(.vertical, KoanTheme.Space.s)
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                // A form scrolls under its own finger: only the strip pulls.
-                .gesture(pulling, including: fills ? .all : .none)
-                .accessibilityHidden(true)
-            if fills {
-                content().frame(height: limit)
-            } else {
-                ScrollView {
-                    content().onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
-                }
-                .scrollBounceBehavior(.basedOnSize)
-                // Content that fits has nothing to scroll, and a scroll view
-                // that could would take the drag that closes the panel.
-                .scrollDisabled(height <= limit)
-                .onScrollGeometryChange(for: Bool.self) {
-                    $0.contentOffset.y <= -$0.contentInsets.top + 0.5
-                } action: { _, top in
-                    atTop = top
-                }
-                .frame(height: min(max(height, 1), limit))
-            }
-        }
-        .font(.koan(.body))
-        .foregroundStyle(Color.koanInk)
-        .frame(maxWidth: compact ? .infinity : 560)
-        .background(Color.koanBg.ignoresSafeArea(edges: .bottom))
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color.koanRule).frame(height: KoanTheme.hairline)
-        }
-        .overlay {
-            if !compact {
-                Rectangle()
-                    .strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline)
-                    .ignoresSafeArea(edges: .bottom)
-            }
-        }
-        .simultaneousGesture(pulling, including: fills ? .none : .all)
-        .accessibilityAddTraits(.isModal)
-        .accessibilityAction(.escape, dismiss)
-    }
-
-    /// A drag down from the top closes the panel.
-    private var pulling: some Gesture {
-        // In the screen's space: the panel moves under the finger, and its
-        // own space would move with it.
-        DragGesture(minimumDistance: 12, coordinateSpace: .global)
-            .updating($pull) { drag, pull, _ in
-                if atTop { pull = max(0, drag.translation.height) }
-            }
-            .onEnded { drag in
-                guard atTop else { return }
-                if drag.translation.height > 80 || drag.predictedEndTranslation.height > 240 {
-                    dismiss()
-                }
-            }
-    }
-
-    private func dismiss() {
-        animate { shown = false } completion: { close() }
-    }
-
-    private func animate(_ change: () -> Void, completion: @escaping () -> Void = {}) {
-        if reduceMotion {
-            change()
-            completion()
-        } else {
-            withAnimation(KoanTheme.Motion.settle, change, completion: completion)
-        }
-    }
-}
-#endif
 
 extension View {
     /// The system file picker, which tvOS does not have: there are no files to
@@ -741,16 +471,7 @@ extension View {
         allowsMultipleSelection: Bool,
         onCompletion: @escaping (Result<[URL], any Error>) -> Void
     ) -> some View {
-        #if os(tvOS)
         self
-        #else
-        fileImporter(
-            isPresented: isPresented,
-            allowedContentTypes: allowedContentTypes,
-            allowsMultipleSelection: allowsMultipleSelection,
-            onCompletion: onCompletion
-        )
-        #endif
     }
 }
 
@@ -759,36 +480,20 @@ extension View {
     /// rounded-border style.
     @ViewBuilder
     func borderedField() -> some View {
-        #if os(tvOS)
         textFieldStyle(.automatic)
-        #else
-        if KoanTheme.isOn {
-            koanField()
-        } else {
-            textFieldStyle(.roundedBorder) // theme: raw — the platform's look
-        }
-        #endif
     }
 }
 
 /// Keyboard shortcuts, which tvOS does not have.
 extension View {
     func shortcut(_ key: KeyEquivalent, modifiers: EventModifiers = .command) -> some View {
-        #if os(tvOS)
         self
-        #else
-        keyboardShortcut(key, modifiers: modifiers)
-        #endif
     }
 
     /// A sheet's default or cancel button. Its own type, because tvOS does not
     /// have `KeyboardShortcut` either.
     func shortcut(_ role: ShortcutRole?) -> some View {
-        #if os(tvOS)
         self
-        #else
-        keyboardShortcut(role.map { $0 == .defaultAction ? .defaultAction : .cancelAction })
-        #endif
     }
 }
 
@@ -796,7 +501,6 @@ enum ShortcutRole {
     case defaultAction, cancelAction
 }
 
-#if os(tvOS)
 /// A button as a television draws one: a white label on a soft pill at rest,
 /// and focused, a white platter with the label drawn as on a light screen.
 /// The system's own style takes the label's colour from the tint, which the
@@ -983,19 +687,14 @@ struct TelevisionChip: ButtonStyle {
         }
     }
 }
-#endif
 
 extension View {
     /// A tap a remote can make too. On a television only what takes focus can
     /// be clicked, so there the view becomes a button's label.
     @ViewBuilder
     func tapAction(_ action: @escaping () -> Void) -> some View {
-        #if os(tvOS)
         Button(action: action) { self }
             .buttonStyle(TelevisionChip())
-        #else
-        onTapGesture(perform: action)
-        #endif
     }
 }
 

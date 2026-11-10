@@ -1,8 +1,5 @@
 import KoanFFI
 import SwiftUI
-#if os(iOS)
-import UIKit
-#endif
 
 /// Where music plays, as two choices.
 ///
@@ -31,19 +28,11 @@ enum DevicePicker {
     }
 
     static var platform: String {
-        #if os(iOS)
-        "ios"
-        #else
         "tvos"
-        #endif
     }
 
     @MainActor static var deviceNoun: String {
-        #if os(iOS)
-        UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
-        #else
         "Apple TV"
-        #endif
     }
 
     static func icon(for platform: String) -> String {
@@ -265,10 +254,6 @@ struct OutputPicker: View {
             ForEach(outputs.devices, id: \.id) { device in
                 OutputChoiceRow(output: device, outputs: outputs, choice: .default, icon: DevicePicker.icon(for: platform ?? "ios"))
             }
-            #if os(iOS)
-            // Which route that is, the system alone chooses.
-            if outputs.owner == nil { SystemRouteRow() }
-            #endif
         } else {
             OutputChoiceRow(output: nil, outputs: outputs, choice: .default, icon: Icon.output)
             ForEach(outputs.devices, id: \.id) { device in
@@ -287,35 +272,6 @@ struct OutputPicker: View {
     }
 }
 
-#if os(iOS)
-/// This phone's speaker, AirPlay and Bluetooth: routes an app cannot list or
-/// pick, only offer the system's picker for. Its button lies over the whole
-/// row, all but transparent, so a tap anywhere opens it.
-private struct SystemRouteRow: View {
-    private let name = "Speaker, AirPlay or Bluetooth"
-
-    var body: some View {
-        HStack(spacing: 12) {
-            KoanIcon(Icon.airplay)
-                .font(.role(.titleSmall, system: .title3))
-                .frame(width: 28)
-                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-            Text(name)
-                .font(.role(.body, system: .body))
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, KoanTheme.metric(KoanTheme.Space.s, system: 14))
-        .padding(.vertical, 8)
-        .padding(.horizontal, KoanTheme.metric(14, system: 0))
-        // UIKit stops delivering touches to a view below 1% opacity.
-        .overlay { RoutePicker().opacity(0.02) }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(name)
-        .accessibilityAddTraits(.isButton)
-    }
-}
-#endif
 
 /// One output of the device in view: `output` nil for the system default.
 private struct OutputChoiceRow: View {
@@ -375,7 +331,6 @@ private struct RendererVolume: View {
         VStack(alignment: .leading, spacing: 4) {
             if let volume {
                 HStack(spacing: 8) {
-                    #if os(tvOS)
                     // No slider on tvOS: a step either way, as a remote's own
                     // volume buttons do.
                     Button("Quieter", koan: Icon.volumeDown) {
@@ -387,27 +342,6 @@ private struct RendererVolume: View {
                     Button("Louder", koan: Icon.volumeUp) {
                         player.setOutputVolume(UInt8(min(100, Int(volume) + 5)))
                     }
-                    #else
-                    KoanIcon(Icon.volumeDown)
-                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    KoanSlider(
-                        "Volume on \(name)",
-                        value: Binding(
-                            get: { dragging ?? Double(volume) },
-                            set: { dragging = $0 }
-                        ),
-                        in: 0...100,
-                        onEditingChanged: { editing in
-                            if !editing, let value = dragging {
-                                player.setOutputVolume(UInt8(value.rounded()))
-                                dragging = nil
-                            }
-                        }
-                    )
-                    .labelsHidden()
-                    KoanIcon(Icon.volumeUp)
-                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    #endif
                 }
             }
             if here {
@@ -613,16 +547,6 @@ private struct LocalNetworkBlocked: View {
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .fixedSize(horizontal: false, vertical: true)
-            #if os(iOS)
-            Button("Open Settings") {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            }
-            .font(.role(.fine, system: .caption))
-            .koanButton(.bordered, system: .bordered)
-            .controlSize(.small)
-            #endif
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -121,7 +121,6 @@ targets:
       - path: Sources/KoanIOS
         excludes:
           - RemoteActivity.swift
-          - RemoteActivityController.swift
       - path: Sources/KoanTV
       - path: Sources/Koan
       - path: Resources/Assets.xcassets
@@ -297,18 +296,6 @@ targets:
               NSExtensionActivationSupportsText: true
               NSExtensionActivationSupportsFileWithMaxCount: 10
 
-  KoanUITests:
-    type: bundle.ui-testing
-    platform: iOS
-    sources:
-      - path: UITests
-    dependencies:
-      - target: Koan
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan.uitests
-        GENERATE_INFOPLIST_FILE: YES
-
   # The remote's walk through the television app. See `just tv-walk`.
   KoanTVUITests:
     type: bundle.ui-testing
@@ -329,9 +316,6 @@ schemes:
     build:
       targets:
         Koan: all
-    test:
-      targets:
-        - KoanUITests
     archive:
       config: Release
   KoanTV:

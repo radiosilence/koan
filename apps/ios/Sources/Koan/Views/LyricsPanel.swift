@@ -48,7 +48,6 @@ struct LyricsPanel: View {
         }
         // An inspector's ground and edge, beside the Mac's queue. A phone shows
         // the words in Now Playing's wash, in the sleeve's place.
-        #if os(tvOS)
         .background {
             // Clear over the wash when it runs under the whole window.
             if !KoanTheme.washesWindow(appearance) {
@@ -56,7 +55,6 @@ struct LyricsPanel: View {
             }
         }
         .koanRule(.leading)
-        #endif
         .task(id: player.currentTrackId) { await load() }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { ui.lyricsWidth = $0 }
         .onDisappear { ui.lyricsWidth = 0 }

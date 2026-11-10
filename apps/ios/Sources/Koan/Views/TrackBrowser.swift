@@ -14,9 +14,6 @@ struct TrackBrowser: View {
     @Environment(Navigator.self) private var nav
     @Environment(EngineMirror.self) private var mirror
     @State private var selection: Set<Int64> = []
-    #if os(iOS)
-    @State private var editMode: EditMode = .inactive
-    #endif
 
     private var tracks: [Track] { library.visibleTracks }
 
@@ -38,9 +35,6 @@ struct TrackBrowser: View {
                 list
             }
         }
-        #if os(iOS)
-        .navigationSubtitle(count)
-        #endif
     }
 
     private var count: String { Format.count(Int64(library.trackTotal), "track") }
@@ -63,9 +57,6 @@ struct TrackBrowser: View {
         }
         .insetList()
         .washedGround()
-        #if os(iOS)
-        .listSelectMode($editMode, selection: $selection) { TrackListView.selectionActions($0) }
-        #endif
         .clearsSelection($selection)
         .selectionMenu(for: Int64.self) { ids in
             menu(for: ids)

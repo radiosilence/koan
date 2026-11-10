@@ -355,23 +355,7 @@ struct NowPlayingPresentation: ViewModifier {
     @Binding var isPresented: Bool
 
     func body(content: Content) -> some View {
-        #if os(iOS)
-        if KoanTheme.isOn {
-            content.fullScreenCover(isPresented: $isPresented) {
-                NowPlayingSheet(close: { isPresented = false })
-                    .gesture(
-                        DragGesture(minimumDistance: 24).onEnded { drag in
-                            let down = drag.translation
-                            if down.height > 120, down.height > abs(down.width) * 2 { isPresented = false }
-                        }
-                    )
-            }
-        } else {
-            sheet(content)
-        }
-        #else
         sheet(content)
-        #endif
     }
 
     private func sheet(_ content: Content) -> some View {

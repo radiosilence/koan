@@ -57,11 +57,7 @@ struct AlbumArtwork: View {
         /// A record header's or Now Playing's sleeve: large on an iPad or a
         /// television, a tile elsewhere.
         static var hero: Size {
-            #if os(tvOS)
             return .large
-            #else
-            return UIDevice.current.userInterfaceIdiom == .pad ? .large : .tile
-            #endif
         }
     }
 
