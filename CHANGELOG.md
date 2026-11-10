@@ -12,7 +12,7 @@
 - **A shorter koan.rocks.** The homepage now leads with kōan as one player across server, desktop, phone, TV and terminal, and with the GPUI apps, and says what recent releases added; setup detail moves to the documentation. The compare page loses padding and its kōan cells follow the desktop app onto Linux.
 - **Fewer snaps on the phone.** The mini player fades to a new sleeve and new names, and tapping the tab showing slides the page away to the tab's root.
 - **A search hit on a track plays it.** In the desktop app's search box and on a phone's shelves, choosing a track plays it with the tracks listed after it, where it used to open the record with the row selected.
-- **The iOS app is now the GPUI app.** It updates the SwiftUI app in place under the same bundle id, keeping the library, sign-in and downloads; view preferences such as sort order start again. Live Activities are not yet started by it.
+- **The iOS app is now the GPUI app.** It updates the SwiftUI app in place under the same bundle id, keeping the library, sign-in and downloads; view preferences such as sort order start again.
 - **koan.rocks leads with the GPUI apps.** The homepage presents kōan as your player, server, remote and EQ on every device, with current screenshots, and the compare page and guides drop what described the SwiftUI Mac app.
 
 ### Fixed
