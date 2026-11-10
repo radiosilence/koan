@@ -1682,7 +1682,9 @@ pub(crate) fn track(
                 p,
             )),
             EntryStatus::Queued | EntryStatus::Downloading => d
-                .when(p.look.icons && look.waiting, |d| {
+                // A phone's rows carry the availability mark, and a hollow
+                // square there reads as a tick to be made.
+                .when(p.look.icons && look.waiting && !p.look.touch, |d| {
                     d.child(glyph(Icon::Pending, "", TypeRole::Fine, quiet, p))
                 }),
         });

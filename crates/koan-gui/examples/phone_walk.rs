@@ -84,6 +84,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     cx.update(|cx| {
         theme::init(cx);
         theme::KoanTheme::set_touch(true, cx);
+        // Every page as it stands, none caught part way through arriving.
+        cx.set_reduce_motion(true);
         app::install(&engine, cx);
         koan_gui::library::bind_keys(cx);
     });

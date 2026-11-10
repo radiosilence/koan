@@ -180,7 +180,7 @@ pub fn track_row<V: TrackList>(
     let names_artist = state.gathered
         || track.credit_differs
         || page_artist.is_some_and(|a| track.artist_id != Some(a));
-    let mut detail = div().flex();
+    let mut detail = div().flex().min_w_0();
     if names_artist {
         detail = detail.children(track.artist_credit.iter().enumerate().map(|(i, part)| {
             let span = div()
@@ -208,6 +208,8 @@ pub fn track_row<V: TrackList>(
                     .cursor_pointer()
                     .hover(|s| s.underline().text_color(p.ink))
                     .on_click(click(RowPart::Album(album)))
+                    .min_w_0()
+                    .truncate()
                     .child(track.album_title.clone()),
             );
     }

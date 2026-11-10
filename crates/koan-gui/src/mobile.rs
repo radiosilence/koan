@@ -765,8 +765,12 @@ impl PhoneShell {
     /// walk the pages headlessly.
     pub fn show(&mut self, route: Route, cx: &mut Context<Self>) {
         self.now_playing = None;
+        let tab = TABS.iter().position(|(root, ..)| *root == route);
         self.nav.update(cx, |nav, cx| {
-            if nav.go(route) {
+            if let Some(tab) = tab {
+                nav.switch(tab, route);
+                cx.notify();
+            } else if nav.go(route) {
                 cx.notify();
             }
         });
@@ -1090,9 +1094,18 @@ impl Render for PhoneShell {
                                     div()
                                         .absolute()
                                         .inset_0()
-                                        .border_l(p.look.hairline)
-                                        .border_color(p.rule)
-                                        .child(stage),
+                                        .child(stage)
+                                        // Over the page, taking no room: the
+                                        // page stands where it will land.
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .left_0()
+                                                .top_0()
+                                                .bottom_0()
+                                                .w(p.look.hairline)
+                                                .bg(p.rule),
+                                        ),
                                 ),
                             ),
                     })
