@@ -19,7 +19,7 @@ Plus **apps/ios** — the Xcode project XcodeGen generates from `project.yml`: t
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 
-On iOS koan-gui also depends on koan-ffi, so that the app's Swift (push, App Attest) drives the engine Rust opened. Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-runtime embeds koan-server as koan-cli does, starting and stopping it on the app's own player; koan-ffi depends only on koan-runtime, and nothing but the native apps' bindings depends on koan-ffi; koan-gui depends on koan-runtime and koan-kit, and nothing else depends on it; koan-kit depends on neither the engine nor kōan's data. Native clients reach koan-core through koan-ffi, the GUI through koan-runtime. Something a GUI page needs that `KoanEngine` lacks goes into koan-core and koan-runtime, with its binding in koan-ffi, so the Mac app could share it.
+On iOS koan-gui also depends on koan-ffi, so that the app's Swift (push, App Attest, the Live Activity) drives the engine Rust opened. Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-runtime embeds koan-server as koan-cli does, starting and stopping it on the app's own player; koan-ffi depends only on koan-runtime, and nothing but the native apps' bindings depends on koan-ffi; koan-gui depends on koan-runtime and koan-kit, and nothing else depends on it; koan-kit depends on neither the engine nor kōan's data. Native clients reach koan-core through koan-ffi, the GUI through koan-runtime. Something a GUI page needs that `KoanEngine` lacks goes into koan-core and koan-runtime, with its binding in koan-ffi, so the Mac app could share it.
 
 **Local UI goes through FFI, not GraphQL.** The apps link the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the TUI's remote bridge, the MCP server, scripts and jukebox remotes. The web UI is server-rendered and calls koan-core in-process. The desktop, iOS and Android apps all link the core. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
@@ -389,6 +389,8 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `platform/startup_error.rs` | The window shown when the engine cannot open, saying what failed and what to do in the engine's words, as the Mac's `StartupErrorView`; closing it quits, and another launch brings it to the front |
 | `platform/shortcuts_sheet.rs` | What `?` and ⌘/ show |
 | `platform/media.rs` | souvlaki: MPRIS on Linux, Now Playing on macOS, cover included, from a state stream of its own; `Playhead`, the anchor the skip shortcuts read |
+| `platform/interruption.rs` | iOS: what an audio-session interruption has left to do, from each way one can finish; `ios.rs` hears the notifications |
+| `platform/inbox.rs` | iOS: files other apps gave kōan, taken out of the share extension's inbox and swept when a run leaves them behind |
 | `platform/drop.rs` | Files from outside — drops, the command line, a second launch — indexed where they lie and queued, or added to a playlist. `Imports` for the shell's activity row and error line |
 | `platform/instance.rs` | One app per configuration directory: a lock beside the device's, a Unix socket a second launch hands its paths to |
 | `platform/runtime_files.rs` | The app's runtime files (window and browse state, locks, Now Playing's covers) outside the config directory, in `koan_core::places`; files an earlier version left there are moved on start-up, once |
@@ -443,7 +445,7 @@ follows the top of the stack in front — see `TabShell`.
 | `Views/ActivityIndicator.swift` | The running-task rows |
 | `Views/FavouriteButton.swift` | The heart, wherever something can be favourited |
 | `Views/DevicePicker.swift` | Play on: pick a device to control, Move here to send the music there. While another device is controlled the engine publishes its state as the app's own — see ARCHITECTURE |
-| `KoanIOS/RemoteActivity.swift` | The Live Activity for a device the phone controls, and the intent its buttons run. Compiled into the widget extension too (`apps/ios/Widgets`) |
+| `KoanIOS/RemoteActivity.swift` | The Live Activity for a device the phone controls, and the intent its buttons run. Compiled into the widget extension too (`apps/ios/Widgets`). `KoanGUI/RemoteActivityController.swift` runs it from the Devices slice |
 | `Views/HistoryView.swift` | Play history, grouped by day — read-only, select and ⌫ to forget |
 | `Views/PlaylistView.swift` | A playlist, laid out like the queue — grouped or flat, drag reorder, drop to add |
 | `Support/PlaylistsModel.swift` | The playlists and everything done to them. Rows held whole; contents one at a time |

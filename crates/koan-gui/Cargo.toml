@@ -104,6 +104,16 @@ objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
   "AVAudioSessionRoute",
   "AVAudioSessionTypes",
 ] }
+# Now Playing's playback rate and repeat control, which souvlaki does not reach.
+objc2-media-player = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "block2",
+  "MPNowPlayingInfoCenter",
+  "MPRemoteCommand",
+  "MPRemoteCommandCenter",
+  "MPRemoteCommandEvent",
+  "MPRemoteControlTypes",
+] }
 # Its interruptions and route changes, heard as notifications.
 block2 = "0.6"
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
