@@ -7,7 +7,7 @@ version = "0.71.4"
 edition = "2024"
 homepage = "https://github.com/radiosilence/koan"
 repository = "https://github.com/radiosilence/koan"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 # GPUI from koan's fork of Zed (radiosilence/zed, branch `koan`): Zed's GPUI

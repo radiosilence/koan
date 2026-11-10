@@ -212,4 +212,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT
+AGPL-3.0-or-later, so anyone who runs a changed kōan, including as a network service, has to publish their changes. [NOTICE](NOTICE) carries an additional permission for app store distribution, which the licence would otherwise conflict with. Releases up to 0.71.4 remain under MIT.
