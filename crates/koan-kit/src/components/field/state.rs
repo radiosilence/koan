@@ -1000,6 +1000,15 @@ impl FieldState {
         let Some((unit, from)) = self.drag.clone() else {
             return;
         };
+        // An edit made mid-drag (a key, an undo, the owner setting the value)
+        // can leave the range the drag began from past the text.
+        if from.end > self.text.len()
+            || !self.text.is_char_boundary(from.start)
+            || !self.text.is_char_boundary(from.end)
+        {
+            self.drag = None;
+            return;
+        }
         if !event.dragging() {
             self.drag = None;
             return;

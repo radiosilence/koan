@@ -36,6 +36,8 @@ pub struct OpusBridge {
     pre_skip: u32,
     /// Samples per channel already skipped.
     skipped: u32,
+    /// The header's output gain, linear.
+    gain: f32,
 }
 
 /// Opus identification header layout (first 19 bytes minimum):
@@ -71,6 +73,13 @@ fn parse_opus_head(data: &[u8]) -> Result<(usize, u32), OpusError> {
     Ok((channels, pre_skip))
 }
 
+/// The header's output gain as a linear factor. A player must apply it
+/// (RFC 7845 §5.1): the stream's `R128_*` tags are relative to it.
+fn output_gain(head: &[u8]) -> f32 {
+    let q8 = i16::from_le_bytes([head[16], head[17]]);
+    10f32.powf(f32::from(q8) / 256.0 / 20.0)
+}
+
 impl OpusBridge {
     /// Create a new Opus decoder from Symphonia codec parameters.
     ///
@@ -79,12 +88,13 @@ impl OpusBridge {
     /// channel count from codec params.
     pub fn new(params: &AudioCodecParameters) -> Result<Self, OpusError> {
         // Try to get channel count and pre-skip from the OpusHead extra data.
-        let (channels, pre_skip) = if let Some(extra) = &params.extra_data {
-            parse_opus_head(extra)?
+        let (channels, pre_skip, gain) = if let Some(extra) = &params.extra_data {
+            let (channels, pre_skip) = parse_opus_head(extra)?;
+            (channels, pre_skip, output_gain(extra))
         } else {
             // Fallback: use codec params channel count, assume no pre-skip.
             let ch = params.channels.as_ref().map(|c| c.count()).unwrap_or(2);
-            (ch, 0)
+            (ch, 0, 1.0)
         };
 
         if channels == 0 || channels > 2 {
@@ -106,6 +116,7 @@ impl OpusBridge {
             pcm_buf,
             pre_skip,
             skipped: 0,
+            gain,
         })
     }
 
@@ -154,6 +165,11 @@ impl OpusBridge {
             0
         };
 
+        if self.gain != 1.0 {
+            for sample in &mut self.pcm_buf[start..total_samples] {
+                *sample *= self.gain;
+            }
+        }
         Ok(&self.pcm_buf[start..total_samples])
     }
 
@@ -186,6 +202,15 @@ mod tests {
         let (channels, pre_skip) = parse_opus_head(&header).unwrap();
         assert_eq!(channels, 2);
         assert_eq!(pre_skip, 312);
+    }
+
+    #[test]
+    fn output_gain_is_q8_decibels() {
+        let mut header = vec![0u8; 19];
+        header[..8].copy_from_slice(b"OpusHead");
+        assert_eq!(output_gain(&header), 1.0);
+        header[16..18].copy_from_slice(&(-6i16 * 256).to_le_bytes());
+        assert!((output_gain(&header) - 0.5012).abs() < 1e-3);
     }
 
     #[test]

@@ -828,7 +828,12 @@ impl Wash {
             // The phase (now - epoch) * pace stays where it was.
             let since = now.saturating_duration_since(self.epoch).as_secs_f64();
             let kept = since * self.pace as f64 / pace as f64;
-            self.epoch = now - Duration::from_secs_f64(kept);
+            // An instant cannot precede the clock's start, which a slower
+            // pace late in a long run would ask for: the drift starts over.
+            self.epoch = Duration::try_from_secs_f64(kept)
+                .ok()
+                .and_then(|kept| now.checked_sub(kept))
+                .unwrap_or(now);
             self.pace = pace;
         }
     }
@@ -1027,7 +1032,13 @@ impl Wash {
                 let half = Duration::from_secs_f32(TRAVEL_PERIOD / pace / 2.0);
                 for (k, from, to, start, period) in [
                     (2, 1.0, FAR / NEAR, self.epoch, SCALE_PERIOD / pace),
-                    (3, -1.0, 1.0, self.epoch - half, TRAVEL_PERIOD / pace),
+                    (
+                        3,
+                        -1.0,
+                        1.0,
+                        self.epoch.checked_sub(half).unwrap_or(self.epoch),
+                        TRAVEL_PERIOD / pace,
+                    ),
                     (4, -1.0, 1.0, self.epoch, TURN_PERIOD / pace),
                 ] {
                     shader.segment(

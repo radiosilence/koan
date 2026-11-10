@@ -91,6 +91,19 @@ fn run(args: &[&str]) -> Result<String, FunnelError> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| FunnelError::Failed(e.to_string()))?;
+    // Read as it is written: output past what a pipe holds would otherwise
+    // block the CLI until the timeout.
+    let read = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut out = String::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_string(&mut out);
+            }
+            out
+        })
+    };
+    let stdout = read(child.stdout.take().map(|p| Box::new(p) as _));
+    let stderr = read(child.stderr.take().map(|p| Box::new(p) as _));
     let deadline = Instant::now() + COMMAND_TIMEOUT;
     let status = loop {
         match child.try_wait() {
@@ -104,13 +117,8 @@ fn run(args: &[&str]) -> Result<String, FunnelError> {
             Err(e) => return Err(FunnelError::Failed(e.to_string())),
         }
     };
-    let mut out = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        let _ = stdout.read_to_string(&mut out);
-    }
-    if let Some(mut stderr) = child.stderr.take() {
-        let _ = stderr.read_to_string(&mut out);
-    }
+    let mut out = stdout.join().unwrap_or_default();
+    out.push_str(&stderr.join().unwrap_or_default());
     if status.success() {
         Ok(out)
     } else {

@@ -21,6 +21,8 @@ private func koanGuiOnEvents(
 // Held for the life of the process: GPUI retains it too, once forwarded.
 private let push = PushDelegate()
 private var remoteActivity: RemoteActivityController?
+private var networkWatch: NetworkWatch?
+private var saveOnLeaving: SaveOnLeaving?
 koanGuiForwardDelegate(Unmanaged.passUnretained(push).toOpaque())
 koanGuiOnEvents(
     {
@@ -28,6 +30,8 @@ koanGuiOnEvents(
             guard let engine = openedEngine() else { return }
             PushDelegate.engine = engine
             remoteActivity = RemoteActivityController(engine: engine)
+            networkWatch = NetworkWatch(engine: engine)
+            saveOnLeaving = SaveOnLeaving(engine: engine)
         }
     },
     { Task { await PushDelegate.requestAlerts() } },
