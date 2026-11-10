@@ -592,7 +592,7 @@ impl TrackList for HistoryPage {
 impl HistoryPage {
     /// The page's controls in the window's toolbar: the pick and forgetting
     /// it, the filter, and clearing everything under ⋯.
-    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub fn controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let view = cx.entity();
         let mut group = ToolbarGroup::new();
         if !self.selected.is_empty() {
@@ -627,7 +627,7 @@ impl HistoryPage {
         // does not take it away.
         let empty = self.entries.is_empty() && self.lib.browse.read(cx).search().is_none();
         // A phone's filter field leads the list, as its browsers' do.
-        if !crate::mobile::phone() {
+        if !crate::theme::Look::of(window, cx).compact {
             group = group.child(self.search.clone());
         }
         group
@@ -686,7 +686,7 @@ impl Render for HistoryPage {
             } else {
                 "Everything you play lands here, most recent first."
             });
-            if narrowed && crate::mobile::phone() {
+            if narrowed && crate::theme::Look::of(window, cx).compact {
                 // Still here, to change what matched nothing.
                 let p = Paint::of(window, cx);
                 div()
@@ -713,7 +713,8 @@ impl Render for HistoryPage {
             .lead(move |window, cx| {
                 let look = crate::theme::Look::of(window, cx);
                 let plays = head.read(cx).entries.len();
-                let filter = crate::mobile::phone()
+                let filter = look
+                    .compact
                     .then(|| chrome::with_filter(&search, &Paint::of(window, cx)));
                 div()
                     .child(crate::components::page_head(header(plays), &look))

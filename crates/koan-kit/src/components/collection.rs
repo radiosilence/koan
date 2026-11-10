@@ -35,10 +35,10 @@ impl CollectionWidth {
     /// The grid the collection lays tiles out on, once it has been measured.
     pub fn grid(&self, look: &Look) -> Option<TileGrid> {
         let width = self.0.get()?;
-        Some(TileGrid::inside(
+        Some(TileGrid::inside_on(
             width,
             RowMetrics::page_margin(look),
-            &look.scale,
+            look,
         ))
     }
 }

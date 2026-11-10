@@ -10,13 +10,14 @@
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example phone_walk -- target/phone-walk
 //! `KOAN_WALK_PAGES=library,now-playing` walks only those, and
-//! `KOAN_WALK_WIDTH=375` walks a narrower phone, an iPhone mini.
+//! `KOAN_WALK_WIDTH=375` walks a narrower phone, an iPhone mini, and
+//! `KOAN_WALK_WIDTH=1366 KOAN_WALK_HEIGHT=1024` a tablet.
 
 use std::error::Error;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use koan_gui::mobile::PhoneShell;
+use koan_gui::mobile::TouchShell;
 use koan_gui::navigator::Route;
 use koan_gui::{app, root::WindowRoot, theme};
 use koan_kit::app::{AppContext, Entity, Modifiers, ScrollEvent};
@@ -40,6 +41,14 @@ fn width() -> f32 {
 }
 const HEIGHT: f32 = 874.0;
 
+/// The height walked: an iPhone 17 Pro's, or `KOAN_WALK_HEIGHT`'s.
+fn height() -> f32 {
+    std::env::var("KOAN_WALK_HEIGHT")
+        .ok()
+        .and_then(|h| h.parse().ok())
+        .unwrap_or(HEIGHT)
+}
+
 enum Step {
     Page(Route),
     NowPlaying,
@@ -50,6 +59,10 @@ enum Step {
     /// A page swiped back to the page under it: pictured part way, and
     /// the settle after the release counted for the frames it asks for.
     SwipeBack(Route),
+    /// A window wide enough for a tablet's layout narrowed to a phone's and
+    /// widened again, as Split View does: pictured at each, and failing if
+    /// the page changed.
+    Across(Route),
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -91,14 +104,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let mut shell = None;
-    let window = cx.open_window(size(px(width()), px(HEIGHT)), |window, cx| {
-        let made = cx.new(|cx| PhoneShell::new(window, cx));
+    let window = cx.open_window(size(px(width()), px(height())), |window, cx| {
+        let made = cx.new(|cx| TouchShell::new(window, cx));
         shell = Some(made.clone());
         let root = cx.new(|cx| WindowRoot::new(made, window, cx));
         koan_kit::components::host(root, window, cx)
     })?;
     let window: AnyWindowHandle = window.into();
-    let shell: Entity<PhoneShell> = shell.ok_or("the shell was not made")?;
+    let shell: Entity<TouchShell> = shell.ok_or("the shell was not made")?;
     cx.allow_parking();
     settle(&mut cx, window)?;
 
@@ -114,6 +127,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             swipe_back(&mut cx, window, &shell, route, &out)?;
             continue;
         }
+        if let Step::Across(route) = step {
+            across(&mut cx, window, &shell, route, &out)?;
+            continue;
+        }
         match step {
             Step::Page(route) => cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx))),
             Step::NowPlaying => cx.update_window(window, |_, window, cx| {
@@ -127,7 +144,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Step::PlaylistSheet(tracks) => cx.update_window(window, |_, window, cx| {
                 shell.update(cx, |s, cx| s.walk_playlist_sheet(tracks, window, cx))
             })?,
-            Step::SwipeBack(_) => unreachable!(),
+            Step::SwipeBack(_) | Step::Across(_) => unreachable!(),
         }
         for dark in [true, false] {
             cx.update_window(window, |_, window, cx| {
@@ -206,17 +223,49 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     }
     if let Some(album) = tracks.iter().find_map(|t| t.album_id) {
         steps.push(page("album", Route::Album(album)));
+        if width() >= f32::from(koan_kit::theme::COMPACT_WIDTH) {
+            steps.push(("across".into(), Step::Across(Route::Album(album))));
+        }
     }
     steps.push(("swipe-back".into(), Step::SwipeBack(Route::Albums)));
     if let Some(artist) = tracks.iter().find_map(|t| t.artist_id) {
         steps.push(page("artist", Route::Artist(artist)));
     }
-    steps.push(("now-playing".into(), Step::NowPlaying));
+    // A tablet has the transport bar and no Now Playing screen.
+    if width() < f32::from(koan_kit::theme::COMPACT_WIDTH) {
+        steps.push(("now-playing".into(), Step::NowPlaying));
+    }
     if !ids.is_empty() {
         steps.push(("queue-pick".into(), Step::QueuePick));
         steps.push(("playlist-sheet".into(), Step::PlaylistSheet(ids)));
     }
     Ok(steps)
+}
+
+/// Stands on `route` in a tablet's window, then narrows the window past the
+/// point where the layout becomes a phone's and widens it again.
+fn across(
+    cx: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    shell: &Entity<TouchShell>,
+    route: Route,
+    out: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx)));
+    for (name, wide) in [("compact", 500.0), ("regular", width())] {
+        cx.update_window(window, |_, window, cx| {
+            window.resize(size(px(wide), px(height())));
+            window.bounds_changed(cx);
+        })?;
+        settle(cx, window)?;
+        cx.capture_screenshot(window)?
+            .save(out.join(format!("phone-across-{name}.png")))?;
+        let at = cx.update(|cx| shell.read(cx).route(cx));
+        if at != route {
+            return Err(format!("resized to {wide} and landed on {at:?}").into());
+        }
+    }
+    Ok(())
 }
 
 /// Goes from the library to `route`, swipes it part way back for a picture
@@ -226,7 +275,7 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
 fn swipe_back(
     cx: &mut HeadlessAppContext,
     window: AnyWindowHandle,
-    shell: &Entity<PhoneShell>,
+    shell: &Entity<TouchShell>,
     route: Route,
     out: &std::path::Path,
 ) -> Result<(), Box<dyn Error>> {

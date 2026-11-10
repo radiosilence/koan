@@ -713,6 +713,18 @@ impl Render for Sidebar {
                     .min_h_0()
                     .child(ScrollArea::new("sidebar-rows", body).follow(&self.spot)),
             )
+            // A touch window has no menu bar to find Settings in.
+            .when(p.look.touch, |d| {
+                d.child(
+                    NavRow::new("nav-settings", "settings")
+                        .icon(Icon::Settings)
+                        .selected(matches!(
+                            current,
+                            Some(Route::Settings | Route::SettingsSection(_))
+                        ))
+                        .on_click(go(Route::Settings, cx)),
+                )
+            })
             .child(self.status.clone())
             // Scans, rebuilds and syncs running; nothing while idle.
             .child(

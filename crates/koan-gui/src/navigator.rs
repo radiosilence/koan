@@ -204,6 +204,21 @@ impl Navigator {
         Chosen::Moved
     }
 
+    /// The page showing given to a phone's `tab`, over its `root`, as a
+    /// window narrows from a tablet's single history to a phone's tabs. The
+    /// other tabs start again from their roots.
+    pub fn adopt(&mut self, tab: usize, root: Route) {
+        let showing = self.current();
+        self.history = if showing == root {
+            vec![root]
+        } else {
+            vec![root, showing]
+        };
+        self.cursor = self.history.len() - 1;
+        self.tab = tab;
+        self.stashed.clear();
+    }
+
     /// Leaves only the tab's root behind the page showing, so that going
     /// back from it lands on the root.
     pub fn skip_to_root(&mut self) {
@@ -299,6 +314,32 @@ mod tests {
     const ALBUMS: Route = Route::Albums;
     const TRACKS: Route = Route::Tracks;
     const PLAYLIST: Route = Route::Playlist(7);
+
+    #[test]
+    fn adopting_puts_the_page_over_its_tabs_root() {
+        let mut nav = Navigator::default();
+        nav.go(ALBUMS);
+        nav.go(Route::Settings);
+        nav.go(Route::SettingsSection(crate::settings::Tab::Playback));
+        nav.adopt(2, Route::Settings);
+        assert_eq!(nav.tab(), 2);
+        assert_eq!(
+            nav.current(),
+            Route::SettingsSection(crate::settings::Tab::Playback)
+        );
+        assert_eq!(nav.behind(), Some(Route::Settings));
+        assert!(!nav.can_go_forward());
+        // The tab the history was kept under starts again from its root.
+        nav.switch(0, QUEUE);
+        assert_eq!(nav.current(), QUEUE);
+        assert!(nav.at_root());
+
+        let mut nav = Navigator::default();
+        nav.go(Route::Settings);
+        nav.adopt(2, Route::Settings);
+        assert!(nav.at_root());
+        assert_eq!(nav.current(), Route::Settings);
+    }
 
     #[test]
     fn going_somewhere_new_drops_what_was_ahead() {

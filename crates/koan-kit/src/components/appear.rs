@@ -130,7 +130,7 @@ impl Rise {
         }
     }
 
-    /// Under touch, a panel going back down to the foot it came from.
+    /// On a phone, a panel going back down to the foot it came from.
     pub fn leaving(mut self, leaving: bool) -> Self {
         self.leaving = leaving;
         self
@@ -139,7 +139,7 @@ impl Rise {
 
 impl RenderOnce for Rise {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        if Look::of(window, cx).touch && !self.in_place {
+        if Look::of(window, cx).compact && !self.in_place {
             return SlideUp::new(self.child)
                 .fits()
                 .leaving(self.leaving)

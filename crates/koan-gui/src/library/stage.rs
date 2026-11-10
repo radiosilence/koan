@@ -311,7 +311,7 @@ impl Render for LibraryStage {
             .nav
             .read(cx)
             .info
-            .filter(|_| !crate::mobile::phone());
+            .filter(|_| !crate::mobile::handheld());
         if self.info.as_ref().map(|(id, _)| *id) != wanted {
             let lib = self.lib.clone();
             self.info = wanted.map(|id| {

@@ -517,8 +517,8 @@ impl TrackBrowser {
     }
 
     /// The browser's controls, in the window's toolbar.
-    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        chrome::browser_controls(&self.search)
+    pub fn controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        chrome::browser_controls(&self.search, window, cx)
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .child(chrome::track_sort_button(&self.lib, cx))
             .into_any_element()
@@ -590,7 +590,7 @@ impl Render for TrackBrowser {
         // The list scrolls its header away with the rows, as the iOS app's
         // does, and passes under the toolbar.
         let away = !held;
-        let phone = crate::mobile::phone();
+        let phone = p.look.compact;
         // The header starts below the bar, which the list scrolls under; a
         // phone's filter field a step further down.
         let bar = crate::components::bar_inset(window, cx);

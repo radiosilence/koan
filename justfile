@@ -96,6 +96,11 @@ gui-phone-walk out="target/phone-walk":
     rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
     KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run -p koan-gui --features runtime-shaders --example phone_walk -- "{{out}}"
 
+# The tablet layout walked the same way: a 13-inch iPad in landscape, unless
+# `width` and `height` name another window, such as Split View's.
+gui-pad-walk out="target/pad-walk" width="1366" height="1024":
+    KOAN_WALK_WIDTH={{width}} KOAN_WALK_HEIGHT={{height}} just gui-phone-walk "{{out}}"
+
 # Run tests + clippy + actionlint
 # Tests run against a config dir of their own. One that reaches past
 # `isolate_config_for_tests` would otherwise open the real library and run the
@@ -574,6 +579,10 @@ kit-ios story="" shot="":
 gui-ios shot="":
     just _gpui-sim koan-gui cc.blit.koan "" "{{shot}}"
 
+# The same on an iPad simulator, for the tablet layout.
+gui-ios-pad shot="":
+    just _gpui-sim koan-gui cc.blit.koan "" "{{shot}}" iPad
+
 # The kōan GUI app on an iPhone, without Xcode: a release build for the device,
 # bundled with `ios/Info.plist` and a development profile that names the phone
 # (made in App Store Connect), signed with the profile's entitlements,
@@ -629,8 +638,8 @@ gui-ios-lib platform="iphonesimulator":
     echo "koan-gui ready for {{platform}}"
 
 # A GPUI crate's binary bundled with its `ios/Info.plist`, installed and
-# launched on a single-screen iPhone simulator with one `NAME=value` set.
-_gpui-sim crate bundle env shot:
+# launched on a single-screen simulator of `family` with one `NAME=value` set.
+_gpui-sim crate bundle env shot family="iPhone":
     #!/usr/bin/env bash
     set -euo pipefail
     IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}} cargo build -p {{crate}} --bin {{crate}} --target aarch64-apple-ios-sim
@@ -641,8 +650,8 @@ _gpui-sim crate bundle env shot:
     /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 1.0' -c 'Set :CFBundleVersion 1' "$app/Info.plist"
     codesign --force --sign - "$app"
     device=$(xcrun simctl list devices available -j \
-        | python3 -c 'import json,sys; want=int("{{ios_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k and int(k.split("iOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"] and d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
-    [ -n "$device" ] || { echo "Needs an iPhone simulator on iOS {{ios_deployment_target}} or later." >&2; exit 1; }
+        | python3 -c 'import json,sys; want=int("{{ios_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k and int(k.split("iOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"] and d["name"].startswith("{{family}}") and "Duo" not in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    [ -n "$device" ] || { echo "Needs an {{family}} simulator on iOS {{ios_deployment_target}} or later." >&2; exit 1; }
     xcrun simctl boot "$device" 2>/dev/null || true
     xcrun simctl bootstatus "$device" -b
     xcrun simctl install "$device" "$app"

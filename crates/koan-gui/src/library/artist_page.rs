@@ -1145,7 +1145,7 @@ impl Render for ArtistPage {
         // Cut again when the record or the columns change; the scroll goes
         // back to where it was left once there is content under it.
         if let (Some(width), Some(record)) = (self.width.get(), self.record.clone()) {
-            let grid = Grid::for_width(width, &p.look.scale);
+            let grid = Grid::for_look(width, &p.look);
             // Only the room between tiles moved: the rows are cut as they were.
             if self.grid.is_some_and(|g| g.same_rows(&grid)) {
                 self.grid = Some(grid);

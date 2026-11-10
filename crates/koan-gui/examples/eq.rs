@@ -340,13 +340,13 @@ fn phone_shots(
     end: bool,
     out: &str,
 ) -> Result<(), Box<dyn Error>> {
-    use koan_gui::mobile::PhoneShell;
+    use koan_gui::mobile::TouchShell;
     use koan_gui::root::WindowRoot;
     use koan_kit::app::{Modifiers, ScrollEvent};
     use koan_kit::raw::{PlatformInput, ScrollDelta, ScrollSource, TouchPhase, point};
     let mut shell = None;
     let window = cx.open_window(size(px(PHONE_W), px(PHONE_H)), |window, cx| {
-        let made = cx.new(|cx| PhoneShell::new(window, cx));
+        let made = cx.new(|cx| TouchShell::new(window, cx));
         shell = Some(made.clone());
         let root = cx.new(|cx| WindowRoot::new(made, window, cx));
         koan_kit::components::host(root, window, cx)

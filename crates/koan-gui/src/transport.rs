@@ -850,6 +850,8 @@ impl Trailing {
 /// The least the record's side keeps beside its sleeve, at 100 %: a few
 /// letters of its title and its credit.
 const LEFT_TEXT_LEAST: f32 = 56.0;
+/// The same under a finger, where no tooltip reads out what was cut.
+const LEFT_TEXT_LEAST_TOUCH: f32 = 140.0;
 /// The least the centre gives way to, at 100 %: the controls, and a seek bar
 /// with its times either side.
 const CENTRE_LEAST: f32 = 300.0;
@@ -1206,7 +1208,11 @@ impl Render for Transport {
         // The sleeve, a line's start and the heart beside it.
         let left_least = COVER
             + p.space(Space::M)
-            + p.look.sized(LEFT_TEXT_LEAST)
+            + p.look.sized(if p.look.touch {
+                LEFT_TEXT_LEAST_TOUCH
+            } else {
+                LEFT_TEXT_LEAST
+            })
             + Pixels::from(crate::theme::icons::side(p.look.points(TypeRole::Meta)))
             + p.space(Space::Xs);
         let centre_least = p.look.sized(CENTRE_LEAST);

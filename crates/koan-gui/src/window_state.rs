@@ -23,6 +23,39 @@ pub static SIDEBAR_WIDTH: AtomicU32 = AtomicU32::new(f32::to_bits(220.0));
 /// until the person drags it, so it follows the text size until then.
 pub static LYRICS_WIDTH: AtomicU32 = AtomicU32::new(0);
 
+/// The sidebar's width as kept.
+pub fn sidebar_width() -> Pixels {
+    f32::from_bits(SIDEBAR_WIDTH.load(Ordering::Relaxed)).into()
+}
+
+/// Keeps the sidebar's width once a drag ends.
+pub fn keep_sidebar_width(width: Pixels, window: &Window, cx: &App) {
+    SIDEBAR_WIDTH.store(f32::from(width).to_bits(), Ordering::Relaxed);
+    save(window.window_bounds(), cx);
+}
+
+/// The lyrics' width as kept, if the person has set one.
+pub fn lyrics_width() -> Option<Pixels> {
+    Some(f32::from_bits(LYRICS_WIDTH.load(Ordering::Relaxed)))
+        .filter(|w| *w > 0.0)
+        .map(Pixels::from)
+}
+
+/// Keeps the lyrics' width once a drag ends, and returns it. The reset
+/// width, `inspector`, is no width of the person's: it follows the text
+/// size, so it is kept as none.
+pub fn keep_lyrics_width(
+    width: Pixels,
+    inspector: Pixels,
+    window: &Window,
+    cx: &App,
+) -> Option<Pixels> {
+    let kept = (width != inspector).then_some(width);
+    LYRICS_WIDTH.store(kept.map_or(0.0, f32::from).to_bits(), Ordering::Relaxed);
+    save(window.window_bounds(), cx);
+    kept
+}
+
 /// Whether the queue is laid out under record headings ("group by album").
 /// Read where the queue is laid out, off the main thread.
 pub static GROUPED: AtomicBool = AtomicBool::new(true);

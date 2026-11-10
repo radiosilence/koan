@@ -279,7 +279,7 @@ impl QueueView {
         list.on_scroll(move |start, _, cx| {
             weak.update(cx, |this, cx| this.keep_top(start, cx)).ok();
         });
-        let follow_demo = crate::mobile::phone()
+        let follow_demo = crate::mobile::handheld()
             .then(|| cx.try_global::<crate::settings::Settings>())
             .flatten()
             .map(|settings| (settings.model.clone(), settings.sharing.clone()))
@@ -291,7 +291,7 @@ impl QueueView {
             })
             .unwrap_or_default();
         let mut view = Self {
-            demo_offered: crate::mobile::phone() && crate::settings::demo_offered(cx),
+            demo_offered: crate::mobile::handheld() && crate::settings::demo_offered(cx),
             _demo: follow_demo,
             queue,
             focus: cx.focus_handle().tab_stop(true),
@@ -1290,7 +1290,7 @@ fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut Context<Menu>) -> Men
             .item(actions::playlist_entry(lib, picked, None));
     }
     // A phone keeps no folders of its own to organise, as on iOS.
-    if !crate::mobile::phone() {
+    if !crate::mobile::handheld() {
         menu = menu
             .separator()
             .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click({

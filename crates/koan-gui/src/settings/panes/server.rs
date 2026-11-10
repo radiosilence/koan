@@ -862,7 +862,7 @@ impl Render for ServerPane {
         let doing = doing_now(&self.ctx, cx);
         // A phone signs in to a server and shares nothing, as the iOS app:
         // no choice is offered, and the sign-in side is the pane.
-        let phone = crate::mobile::phone();
+        let phone = crate::mobile::handheld();
         let mode = if phone {
             Mode::Connect
         } else {

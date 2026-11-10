@@ -151,7 +151,7 @@ impl RenderOnce for SelectionBar {
         // top, the verbs sharing the width under them, each a thumb's target.
         // Its ground runs on under the phone's foot, which is drawn over the
         // page, and its controls sit above it.
-        if look.touch {
+        if look.compact {
             return div()
                 .flex()
                 .flex_col()

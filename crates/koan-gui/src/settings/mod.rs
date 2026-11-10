@@ -483,7 +483,7 @@ impl SettingsWindow {
         // with the window closed, opening at login and updating itself are a
         // desktop app's. Nor a Library pane: a phone keeps no folders to
         // scan, and its library is the server's.
-        let mut tabs = if crate::mobile::phone() {
+        let mut tabs = if crate::mobile::handheld() {
             vec![Tab::Server]
         } else {
             vec![Tab::General, Tab::Library, Tab::Server]

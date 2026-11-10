@@ -31,8 +31,8 @@ pub use accent::{Accent, Shade};
 pub use gpui::Hsla;
 pub use icons::{Icon, KoanIcon};
 pub use tokens::{
-    DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Motion, Palette, ROW_HOVER_OPACITY,
-    ROW_RULE_OPACITY, Scale, Space, TOOLBAR_BUTTON, TypeRole,
+    COMPACT_WIDTH, DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Motion, Palette,
+    ROW_HOVER_OPACITY, ROW_RULE_OPACITY, Scale, Space, TOOLBAR_BUTTON, TypeRole,
 };
 
 /// The colours text and glyphs take.
@@ -811,6 +811,10 @@ pub struct Look {
     pub opaque: bool,
     /// Used by touch (`KoanTheme::touch`).
     pub touch: bool,
+    /// Under touch, a window narrower than `COMPACT_WIDTH`: a phone, or a
+    /// tablet's window in Split View or Stage Manager with a phone's room.
+    /// Layout follows this; what touch asks of a control follows `touch`.
+    pub compact: bool,
 }
 
 impl Look {
@@ -834,6 +838,7 @@ impl Look {
             hairline: if contrast { HAIRLINE * 2.0 } else { HAIRLINE },
             opaque: theme.opaque,
             touch: theme.touch,
+            compact: theme.touch && window.viewport_size().width < COMPACT_WIDTH,
         }
     }
 

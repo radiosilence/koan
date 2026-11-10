@@ -35,7 +35,7 @@ pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
     .w(px(560.0))
     .max_w_full()
     // On a phone the room above the keyboard holds it instead (`Rise`).
-    .when(!look.touch, |panel| panel.max_h(relative(TALLEST)))
+    .when(!look.compact, |panel| panel.max_h(relative(TALLEST)))
     // Shrinks within what holds it, its body scrolling.
     .min_h_0()
     .bg(look.palette.bg.hsla())
@@ -71,7 +71,7 @@ pub fn screen(
     window: &Window,
     cx: &App,
 ) -> Stateful<Div> {
-    if !look.touch {
+    if !look.compact {
         return scrim(id, look, window).child(Rise::new(panel(name, look).child(content)));
     }
     let insets = super::system_insets(super::Clear::Keyboard, window);
@@ -134,7 +134,7 @@ pub fn wide_panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
 /// `TALLEST` of the window on the desktop.
 pub fn tall_panel(name: impl AsRef<str>, look: &Look, window: &Window) -> Stateful<Div> {
     let panel = panel(name, look);
-    if look.touch {
+    if look.compact {
         panel.h(room(look, window))
     } else {
         panel.h(relative(TALLEST))
@@ -219,7 +219,9 @@ fn scrim_leaving(
     look: &Look,
     window: &Window,
 ) -> Stateful<Div> {
-    if !look.touch {
+    if !look.compact {
+        // A tablet's safe area and keyboard, nothing on the desktop.
+        let insets = super::system_insets(super::Clear::Keyboard, window);
         return div()
             .id(id.into())
             .absolute()
@@ -227,7 +229,10 @@ fn scrim_leaving(
             .flex()
             .justify_center()
             .items_center()
-            .p(look.space(Space::L))
+            .pl(insets.left + look.space(Space::L))
+            .pr(insets.right + look.space(Space::L))
+            .pt(insets.top + look.space(Space::L))
+            .pb(insets.bottom + look.space(Space::L))
             .occlude()
             .child(Veil::new(look.veil(0.6)));
     }
@@ -260,7 +265,7 @@ pub fn scrim_top(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .pt(look.space(Space::Xxl))
         // On a phone the panel takes the width less a margin, under the
         // status bar.
-        .when(look.touch, |scrim| {
+        .when(look.compact, |scrim| {
             scrim
                 .px(look.space(Space::S))
                 .pt(look.space(Space::Xxl) * 2.)
@@ -805,6 +810,9 @@ mod tests {
         });
         let (_view, cx) = cx.add_window_view(|_, _| Tall { in_place });
         let cx: &mut VisualTestContext = cx;
+        if touch {
+            cx.simulate_resize(size(px(402.), px(874.)));
+        }
         cx.run_until_parked();
         let height = cx.update(|window, _| window.viewport_size().height);
         let panel = cx.debug_bounds("panel").expect("the panel is drawn");
