@@ -2029,15 +2029,18 @@ impl SharedPlayerState {
             .collect()
     }
 
-    /// Every item that failed for any reason but a cancel goes back to
-    /// waiting for its file: what a way back to the server may now fetch.
-    /// A cancel stands until the person retries it. Returns the tracks.
-    pub fn retry_lost(&self) -> Vec<i64> {
+    /// Every item for one of `track_ids` — tracks whose downloads failed
+    /// for want of a network — goes back to waiting for its file, unless it
+    /// was cancelled, which stands until the person retries it. A failure
+    /// for any other reason (a renderer refusing the format, no copy
+    /// anywhere) is left as it is. Returns the tracks.
+    pub fn retry_lost(&self, track_ids: &[i64]) -> Vec<i64> {
         let mut pl = self.playlist.write();
         let mut retried = Vec::new();
         for item in pl.items.iter_mut() {
             let lost = matches!(&item.state, ItemState::Failed(reason)
-                if reason != crate::remote::downloads::CANCELLED);
+                if reason != crate::remote::downloads::CANCELLED)
+                && item.db_id.is_some_and(|t| track_ids.contains(&t));
             if let (true, Some(track)) = (lost, item.db_id) {
                 item.state = ItemState::Pending;
                 if !retried.contains(&track) {

@@ -33,9 +33,9 @@ The number of tracks past the playing one that are fetched before they are reach
 
 ## Downloads you asked for
 
-**Download to Cache** is recorded in the library the moment you ask, not when the files arrive, so a download is owed until every file is on the device. Each start of kōan fetches what is still owed, including after iOS has suspended or closed the app part way through. When the server comes back after being out of reach (the network returns, the link reconnects, or the iPhone app comes forward again), kōan fetches both what is owed and what failed while the server was away, with nothing for you to do. Cancelling a download ends what is owed. A track that fails for its own reasons, such as a file missing on the server, is tried again once each time the server comes back.
+**Download to Cache** is recorded in the library the moment you ask, not when the files arrive, so a download is owed until every file is on the device. Each start of kōan fetches what is still owed, including after iOS has suspended or closed the app part way through. When the server comes back after being out of reach (the network returns, the link reconnects, or the iPhone app comes forward again), kōan fetches both what is owed and what failed while the server was away, with nothing for you to do. Cancelling a download ends what is owed. Only downloads lost to the network are tried again; one that failed for its own reasons, such as a file missing on the server, stays failed until you retry it. Clearing the cache, or a download's file, ends the ask as well.
 
-While the server cannot be reached, a track whose download is still waiting shows as not on this device, in the lists and on the Downloads page, so a waiting download is never mistaken for a kept one. The page's heading says how many listed tracks are not downloaded yet.
+While the server cannot be reached, a track whose download is still waiting shows as not on this device, in the lists and on the Downloads page, so a waiting download is never mistaken for a kept one. The page's heading says how many of the downloads you asked for have not arrived yet, counting the ones still waiting their turn.
 
 ## Size limit
 

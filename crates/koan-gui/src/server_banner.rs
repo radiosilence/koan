@@ -73,17 +73,29 @@ impl ServerBanner {
     }
 }
 
+/// What the banner says, if anything. Unreachable, the engine's reason for
+/// a wait no download can end takes the place of the plain message; any
+/// other reason a track did not start is not the server's, and is not said
+/// here.
+fn message(standing: ServerStanding, why: Option<&str>) -> Option<SharedString> {
+    Some(match (standing, why) {
+        (ServerStanding::Fine, _) => return None,
+        (ServerStanding::SignedOut, _) => "Signed out of your server".into(),
+        (ServerStanding::Refused, _) => "Your server refused kōan's sign-in".into(),
+        (ServerStanding::Unreachable, Some(why))
+            if why == koan_runtime::NOTHING_HERE || why == koan_runtime::NOT_HERE =>
+        {
+            SharedString::from(why.to_owned())
+        }
+        (ServerStanding::Unreachable, _) => "Can't reach your server. kōan keeps trying.".into(),
+    })
+}
+
 impl Render for ServerBanner {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let leaving = self.leaving.as_ref().map(|(was, _)| *was);
-        let message: SharedString = match (leaving.unwrap_or(self.standing), &self.why) {
-            (ServerStanding::Fine, _) => return div().into_any_element(),
-            (ServerStanding::SignedOut, _) => "Signed out of your server".into(),
-            (ServerStanding::Refused, _) => "Your server refused kōan's sign-in".into(),
-            (ServerStanding::Unreachable, Some(why)) => why.clone().into(),
-            (ServerStanding::Unreachable, None) => {
-                "Can't reach your server. kōan keeps trying.".into()
-            }
+        let Some(message) = message(leaving.unwrap_or(self.standing), self.why.as_deref()) else {
+            return div().into_any_element();
         };
         let unreachable = leaving.unwrap_or(self.standing) == ServerStanding::Unreachable;
         let banner = Banner::new(
@@ -103,5 +115,30 @@ impl Render for ServerBanner {
         Hang::new(banner)
             .leaving(leaving.is_some())
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unreachable_says_why_nothing_plays_and_nothing_else() {
+        let plain = "Can't reach your server. kōan keeps trying.";
+        let said = |why| message(ServerStanding::Unreachable, why).map(|m| m.to_string());
+        assert_eq!(said(None).as_deref(), Some(plain));
+        assert_eq!(
+            said(Some(koan_runtime::NOTHING_HERE)).as_deref(),
+            Some(koan_runtime::NOTHING_HERE)
+        );
+        assert_eq!(
+            said(Some("Couldn't play this track: device busy")).as_deref(),
+            Some(plain),
+            "a failure that is not the server's is not said here"
+        );
+        assert_eq!(
+            message(ServerStanding::Fine, Some(koan_runtime::NOT_HERE)),
+            None
+        );
     }
 }

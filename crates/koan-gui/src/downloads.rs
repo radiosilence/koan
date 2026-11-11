@@ -44,6 +44,10 @@ pub struct DownloadsPage {
     /// The cache's limit in bytes, `None` for none; read as the page opens.
     limit: Option<u64>,
     _limit: Task<()>,
+    /// Downloads asked for that have not arrived, listed or waiting their
+    /// turn: read again whenever the transfers move.
+    owed: u32,
+    _owed: Task<()>,
     focus: FocusHandle,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
@@ -63,7 +67,10 @@ impl DownloadsPage {
         Self {
             nav: nav.clone(),
             _subscriptions: [
-                cx.observe(&mirror.transfers, |_, _, cx| cx.notify()),
+                cx.observe(&mirror.transfers, |this, _, cx| {
+                    this._owed = Self::read_owed(cx);
+                    cx.notify();
+                }),
                 // The rates; a running row's bar takes frames of its own.
                 cx.observe(&mirror.figures, |_, _, cx| cx.notify()),
                 cx.observe(&mirror.cache, |_, _, cx| cx.notify()),
@@ -74,6 +81,8 @@ impl DownloadsPage {
             cache: mirror.cache,
             connection: mirror.connection,
             limit: None,
+            owed: 0,
+            _owed: Self::read_owed(cx),
             focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
             spot: Default::default(),
@@ -90,6 +99,20 @@ impl DownloadsPage {
         }
     }
 
+    fn read_owed(cx: &mut Context<Self>) -> Task<()> {
+        let read = engine(cx).owed_downloads();
+        cx.spawn(async move |this, cx| {
+            let Ok(owed) = read.await else { return };
+            this.update(cx, |this, cx| {
+                if this.owed != owed {
+                    this.owed = owed;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+    }
+
     /// Nothing can be fetched now: waiting downloads wait for the server.
     fn out_of_reach(&self, cx: &App) -> bool {
         self.connection
@@ -99,7 +122,7 @@ impl DownloadsPage {
             .is_some_and(|c| c.out_of_reach)
     }
 
-    fn header(&self, settled: usize, waiting: usize, cx: &mut Context<Self>) -> PageHeader {
+    fn header(&self, settled: usize, cx: &mut Context<Self>) -> PageHeader {
         let used = self.cache.read(cx).0;
         let detail = match self.limit {
             _ if used == 0 => "nothing cached".to_string(),
@@ -110,7 +133,7 @@ impl DownloadsPage {
         };
         // What is listed but not here, said first: a page of rows is
         // otherwise easily taken for music already on this device.
-        let detail = match (waiting, self.out_of_reach(cx)) {
+        let detail = match (self.owed, self.out_of_reach(cx)) {
             (0, _) => detail,
             (n, true) => format!("{n} not downloaded, waiting for your server · {detail}"),
             (n, false) => format!("{n} not downloaded yet · {detail}"),
@@ -245,11 +268,7 @@ impl Render for DownloadsPage {
             .iter()
             .filter(|t| matches!(t.state, TransferState::Done | TransferState::Failed))
             .count();
-        let waiting = transfers
-            .iter()
-            .filter(|t| matches!(t.state, TransferState::Queued | TransferState::Running))
-            .count();
-        let header = self.header(settled, waiting, cx);
+        let header = self.header(settled, cx);
         // The heading scrolls away with the transfers, which pass under the
         // toolbar.
         let (page, body) = if transfers.is_empty() {

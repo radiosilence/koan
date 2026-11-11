@@ -326,9 +326,16 @@ pub fn of_queue_row(
         (EntryStatus::PriorityPending, _) if waiting && !on_disk && !out_of_reach => {
             Some(Availability::Pending)
         }
+        _ if out_of_reach
+            && !on_disk
+            && on_server
+            && transfer != Some(TransferState::Running)
+            && transfer != Some(TransferState::Done) =>
+        {
+            Some(Availability::NotHere)
+        }
         (EntryStatus::Failed, _) if transfer.is_none() => Some(Availability::Failed),
         (_, Some(track)) => of_track(track, on_server, on_disk, transfer, out_of_reach),
-        _ if out_of_reach && !on_disk && on_server => Some(Availability::NotHere),
         _ => stored(on_server, on_disk),
     }
 }
@@ -432,14 +439,16 @@ mod tests {
             Some(TransferState::Failed),
             true
         )));
-        assert!(not_here(of_queue_row(
-            EntryStatus::PriorityPending,
-            Some(1),
-            true,
-            false,
-            None,
-            true,
-        )));
+        for status in [EntryStatus::PriorityPending, EntryStatus::Failed] {
+            assert!(not_here(of_queue_row(
+                status,
+                Some(1),
+                true,
+                false,
+                None,
+                true
+            )));
+        }
         assert!(stored_here(of_track(1, true, true, None, true)));
         assert!(stored_here(of_track(
             1,

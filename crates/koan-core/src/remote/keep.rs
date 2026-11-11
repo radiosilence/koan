@@ -14,6 +14,9 @@ use crate::db::queries;
 enum Change {
     Want(Vec<i64>),
     Unwant(Vec<i64>),
+    /// Downloads were cleared: what is still owed goes to the queue, in
+    /// order behind every ask made before the clear.
+    Cleared,
 }
 
 fn lane() -> Option<&'static crossbeam_channel::Sender<Change>> {
@@ -35,6 +38,10 @@ fn lane() -> Option<&'static crossbeam_channel::Sender<Change>> {
 }
 
 fn write(change: &Change) {
+    if let Change::Cleared = change {
+        crate::remote::queue::still_owed(owed().into_iter().collect());
+        return;
+    }
     let result = crate::db::pool::shared()
         .get()
         .map_err(|e| e.to_string())
@@ -42,6 +49,7 @@ fn write(change: &Change) {
             match change {
                 Change::Want(ids) => queries::want_kept(&db.conn, ids),
                 Change::Unwant(ids) => queries::unwant(&db.conn, ids),
+                Change::Cleared => Ok(()),
             }
             .map_err(|e| e.to_string())
         });
@@ -73,6 +81,12 @@ pub fn unwant(track_ids: &[i64]) {
     if !track_ids.is_empty() {
         send(Change::Unwant(track_ids.to_vec()));
     }
+}
+
+/// Downloads were cleared, all or some, and with them the asks for those
+/// tracks: the queue drops what is no longer owed.
+pub fn cleared() {
+    send(Change::Cleared);
 }
 
 /// Downloads asked for that have not arrived, to fetch again. Read on the
