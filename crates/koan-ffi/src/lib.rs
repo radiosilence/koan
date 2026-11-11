@@ -5122,6 +5122,7 @@ mod types {
         pub offline: bool,
         /// Turned on by hand, rather than by the server being out of reach.
         pub offline_manual: bool,
+        pub out_of_reach: bool,
         /// The server can sign a device without a keyboard in, once someone here
         /// approves it.
         pub pairing: bool,

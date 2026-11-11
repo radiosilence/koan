@@ -673,6 +673,16 @@ impl DownloadStore {
         pinned
     }
 
+    /// The tracks whose transfers failed, not as cancelled.
+    pub fn failed_tracks(&self) -> Vec<i64> {
+        self.entries
+            .read()
+            .iter()
+            .filter(|e| matches!(&e.download.state, DownloadState::Failed(r) if r != CANCELLED))
+            .map(|e| e.download.track_id)
+            .collect()
+    }
+
     /// Drop the finished rows whose file is gone: cleared or evicted from
     /// the cache. A finished row says its track is on this device, which
     /// every client shows at once, ahead of the library catching up; once the

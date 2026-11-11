@@ -40,6 +40,7 @@ pub struct DownloadsPage {
     transfers: Entity<Slice<Vec<Transfer>>>,
     figures: Entity<Slice<Vec<TransferFigure>>>,
     cache: Entity<Slice<u64>>,
+    connection: Entity<Slice<Option<koan_runtime::ConnectionInfo>>>,
     /// The cache's limit in bytes, `None` for none; read as the page opens.
     limit: Option<u64>,
     _limit: Task<()>,
@@ -52,7 +53,7 @@ pub struct DownloadsPage {
     keyed: bool,
     /// How many transfers the list shows, as of the last frame.
     count: usize,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 impl DownloadsPage {
@@ -66,10 +67,12 @@ impl DownloadsPage {
                 // The rates; a running row's bar takes frames of its own.
                 cx.observe(&mirror.figures, |_, _, cx| cx.notify()),
                 cx.observe(&mirror.cache, |_, _, cx| cx.notify()),
+                cx.observe(&mirror.connection, |_, _, cx| cx.notify()),
             ],
             transfers: mirror.transfers,
             figures: mirror.figures,
             cache: mirror.cache,
+            connection: mirror.connection,
             limit: None,
             focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
@@ -87,7 +90,16 @@ impl DownloadsPage {
         }
     }
 
-    fn header(&self, settled: usize, cx: &mut Context<Self>) -> PageHeader {
+    /// Nothing can be fetched now: waiting downloads wait for the server.
+    fn out_of_reach(&self, cx: &App) -> bool {
+        self.connection
+            .read(cx)
+            .0
+            .as_ref()
+            .is_some_and(|c| c.out_of_reach)
+    }
+
+    fn header(&self, settled: usize, waiting: usize, cx: &mut Context<Self>) -> PageHeader {
         let used = self.cache.read(cx).0;
         let detail = match self.limit {
             _ if used == 0 => "nothing cached".to_string(),
@@ -95,6 +107,13 @@ impl DownloadsPage {
             Some(0) => format!("{} cached, kept only while needed", bytes(used)),
             Some(limit) => format!("{} cached of {}", bytes(used), bytes(limit)),
             None => format!("{} cached", bytes(used)),
+        };
+        // What is listed but not here, said first: a page of rows is
+        // otherwise easily taken for music already on this device.
+        let detail = match (waiting, self.out_of_reach(cx)) {
+            (0, _) => detail,
+            (n, true) => format!("{n} not downloaded, waiting for your server · {detail}"),
+            (n, false) => format!("{n} not downloaded yet · {detail}"),
         };
         let header = PageHeader::new("downloads").detail(detail);
         if settled == 0 {
@@ -136,7 +155,10 @@ impl DownloadsPage {
             .find(|f| f.track_id == id)
             .cloned();
         let (status, warns) = match t.state {
-            TransferState::Queued => ("queued".to_owned(), false),
+            TransferState::Queued if self.out_of_reach(cx) => {
+                ("waiting for your server".to_owned(), false)
+            }
+            TransferState::Queued => ("waiting".to_owned(), false),
             TransferState::Running => (
                 figure.as_ref().map(rate_and_size).unwrap_or_default(),
                 false,
@@ -223,7 +245,11 @@ impl Render for DownloadsPage {
             .iter()
             .filter(|t| matches!(t.state, TransferState::Done | TransferState::Failed))
             .count();
-        let header = self.header(settled, cx);
+        let waiting = transfers
+            .iter()
+            .filter(|t| matches!(t.state, TransferState::Queued | TransferState::Running))
+            .count();
+        let header = self.header(settled, waiting, cx);
         // The heading scrolls away with the transfers, which pass under the
         // toolbar.
         let (page, body) = if transfers.is_empty() {

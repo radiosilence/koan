@@ -7807,6 +7807,7 @@ fn connection_info() -> ConnectionInfo {
         share_accounts: devices::accounts(),
         offline: koan_core::remote::offline::active(),
         offline_manual: koan_core::remote::offline::manual(),
+        out_of_reach: koan_core::remote::offline::out_of_reach(),
         sign_in_refused: koan_core::helpers::sign_in_refused(&Config::cached()),
         standing: koan_core::helpers::server_standing(&Config::cached()).into(),
         share_links_unavailable: share_links_unavailable(&Config::cached()),

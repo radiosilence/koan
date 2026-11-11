@@ -425,6 +425,7 @@ impl HistoryPage {
                     selected,
                     gathered: true,
                     transfer: feed.transfers.get(&track.id).copied(),
+                    out_of_reach: feed.out_of_reach,
                     drag,
                     kind: RowKind::Art,
                     note: elsewhere.then_some((Icon::Renderer, "Scrobbled by another client")),

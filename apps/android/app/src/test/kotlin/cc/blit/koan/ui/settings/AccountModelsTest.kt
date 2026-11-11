@@ -162,7 +162,7 @@ class AccountModelsTest {
         extensions = extensions.map { ServerExtension(it, listOf(1)) },
         devices = true, linked = true, listeningPort = null, localNetworkBlocked = false, thisDevice = "phone",
         sharing = false, sharedWith = emptyList(), shareError = null, shareAccounts = emptyList(),
-        offline = offline, offlineManual = false, pairing = true, scrobbling = false, signInRefused = false,
+        offline = offline, offlineManual = false, outOfReach = false, pairing = true, scrobbling = false, signInRefused = false,
         standing = ServerStanding.FINE, shareLinksUnavailable = null,
         nearbyServers = emptyList(), commandNotice = null,
         connections = emptyList(), held = emptyList(),

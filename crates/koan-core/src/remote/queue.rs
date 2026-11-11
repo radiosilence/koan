@@ -240,7 +240,25 @@ impl DownloadQueue {
         if track_ids.is_empty() {
             return;
         }
-        self.inner.queue.lock().cache.extend(track_ids);
+        crate::remote::keep::want(&track_ids);
+        self.owe(track_ids);
+    }
+
+    /// Fetch these tracks into the cache, as asked before: by the person
+    /// in an earlier run, or before a failure. Ones already waiting or
+    /// being fetched are left where they are.
+    fn owe(&self, track_ids: Vec<i64>) {
+        if track_ids.is_empty() {
+            return;
+        }
+        let store = self.inner.state.downloads();
+        let mut q = self.inner.queue.lock();
+        for track in track_ids {
+            if !q.cache.contains(&track) && !store.in_flight(track) {
+                q.cache.push_back(track);
+            }
+        }
+        drop(q);
         wake_workers(&self.inner);
     }
 
@@ -259,6 +277,7 @@ impl DownloadQueue {
         let mut q = self.inner.queue.lock();
         q.pending.retain(|(track, _)| !track_ids.contains(track));
         q.cache.retain(|track| !track_ids.contains(track));
+        crate::remote::keep::unwant(track_ids);
         for &track in track_ids {
             store.let_go(track);
         }
@@ -658,8 +677,20 @@ fn follow_playlist(inner: Arc<Inner>) {
     let mut last_version: Option<u64> = None;
     let mut last_cursor: Option<QueueItemId> = None;
     let mut last_limit = LIMIT_CHANGES.load(std::sync::atomic::Ordering::Acquire);
+    let mut last_reconnect = RECONNECTS.load(std::sync::atomic::Ordering::Acquire);
+    // What was asked for in an earlier run and never arrived.
+    DownloadQueue {
+        inner: inner.clone(),
+    }
+    .owe(crate::remote::keep::owed());
     loop {
         follow_reach(&inner);
+        let reconnect = RECONNECTS.load(std::sync::atomic::Ordering::Acquire);
+        if reconnect != last_reconnect {
+            last_reconnect = reconnect;
+            retry_server_now();
+            fetch_what_is_owed(&inner);
+        }
         // The queue runs from the cursor, so a cursor move reorders it as
         // well. Synced before promoting, so the cursor's track is queued by
         // the time it is looked for.
@@ -708,11 +739,11 @@ fn follow_playlist(inner: Arc<Inner>) {
 /// on every wake of the engine's signal, which each way in and out of reach
 /// rings: a download meeting no connection, the server answering, the link
 /// coming up, offline mode switched. Two atomic-cheap reads.
-fn follow_reach(inner: &Inner) {
+fn follow_reach(inner: &Arc<Inner>) {
     reach_is(inner, crate::remote::offline::out_of_reach());
 }
 
-fn reach_is(inner: &Inner, out_of_reach: bool) {
+fn reach_is(inner: &Arc<Inner>, out_of_reach: bool) {
     if inner.state.set_here_only(out_of_reach) {
         log::info!(
             "server {}",
@@ -723,7 +754,56 @@ fn reach_is(inner: &Inner, out_of_reach: bool) {
             }
         );
         inner.cmd_tx.send(PlayerCommand::ReachChanged).ok();
+        // The apps' Connection slice carries it, and is sent when the
+        // device list's version moves.
+        crate::remote::devices::touch();
+        if !out_of_reach {
+            fetch_what_is_owed(inner);
+        }
     }
+}
+
+/// Moved whenever the way to the server may have opened again without the
+/// queue seeing it close: the app coming forward on iOS, whose suspension
+/// cut every transfer short, or the link coming back.
+static RECONNECTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The way to the server may be open again: fetch what is owed now, and try
+/// the server at once rather than when an outage's backoff next says to.
+pub fn reconnected() {
+    RECONNECTS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    crate::signal::engine_changed().bump();
+}
+
+/// Everything a way back to the server should fetch: what failed while it
+/// was away (a transfer cut short, a server not answering past the attempts
+/// a track gets) and every download the person asked for that has not
+/// arrived, in this run or an earlier one. A track that fails for its own
+/// reasons, a 404, fails again here once per reconnect, which is the price
+/// of never leaving behind one that failed only for want of a network.
+fn fetch_what_is_owed(inner: &Arc<Inner>) {
+    let queue = DownloadQueue {
+        inner: inner.clone(),
+    };
+    let store = inner.state.downloads();
+    let waiting = inner.state.retry_lost();
+    let mut failed = store.failed_tracks();
+    failed.extend(&waiting);
+    failed.sort_unstable();
+    failed.dedup();
+    if !failed.is_empty() {
+        log::info!("fetching {} failed download(s) again", failed.len());
+    }
+    // Their failed rows go; a track asked into the cache that no entry
+    // waits on is fetched into it again.
+    let pinned = store.forget_settled(&failed);
+    queue.owe(
+        pinned
+            .into_iter()
+            .filter(|track| !waiting.contains(track))
+            .chain(crate::remote::keep::owed())
+            .collect(),
+    );
 }
 
 /// Send the cursor's track, and the one after it, down the priority lane, if
@@ -1195,6 +1275,49 @@ mod tests {
         reach_is(&inner, false);
         assert!(!inner.state.here_only());
         assert_eq!(told(), 1);
+    }
+
+    /// Asked into the cache again, a track already waiting or being fetched
+    /// is not queued twice.
+    #[test]
+    fn a_download_owed_twice_is_fetched_once() {
+        let (inner, _, _) = queue_over(&[1]);
+        inner.state.downloads().claim(2, None);
+        let queue = DownloadQueue {
+            inner: inner.clone(),
+        };
+        queue.owe(vec![3, 2, 3]);
+        queue.owe(vec![3]);
+        let cache: Vec<i64> = inner.queue.lock().cache.iter().copied().collect();
+        assert_eq!(cache, vec![3], "2 is in flight, 3 is waiting already");
+    }
+
+    /// A download that failed while the server was away is fetched again
+    /// when it comes back, without anyone asking.
+    #[test]
+    fn what_failed_while_out_of_reach_is_fetched_again_when_the_server_is_back() {
+        let (inner, ids, _) = queue_over(&[1, 2]);
+        const CUT_SHORT: &str = "connection reset";
+        for (_, id) in &ids {
+            inner
+                .state
+                .update_item_state(*id, ItemState::Failed(CUT_SHORT.into()));
+        }
+        let cancelled = qid();
+        inner.state.add_items(vec![PlaylistItem {
+            id: cancelled,
+            state: ItemState::Failed(downloads::CANCELLED.into()),
+            ..inner.state.get_item(ids[0].1).unwrap()
+        }]);
+        reach_is(&inner, true);
+        reach_is(&inner, false);
+
+        let retried = |id: QueueItemId| !matches!(inner.state.item_state(id), Some(ItemState::Failed(r)) if r == CUT_SHORT);
+        assert!(ids.iter().all(|(_, id)| retried(*id)), "each fetched again");
+        assert!(
+            matches!(inner.state.item_state(cancelled), Some(ItemState::Failed(r)) if r == downloads::CANCELLED),
+            "a cancel stands"
+        );
     }
 
     #[test]

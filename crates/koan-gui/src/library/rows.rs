@@ -94,6 +94,8 @@ pub struct RowState {
     /// Gathered from many records: the sleeve, and the record named.
     pub gathered: bool,
     pub transfer: Option<TransferState>,
+    /// Nothing can be fetched now: see `transfers::of_track`.
+    pub out_of_reach: bool,
     /// What dragging the row carries, and what its menu acts on: the list's
     /// selection when the row is in it, built once for the selection.
     pub drag: PlayableDrag,
@@ -298,6 +300,7 @@ pub fn track_row<V: TrackList>(
                 track.on_server,
                 track.on_disk,
                 state.transfer,
+                state.out_of_reach,
             ))
             .id(("row-availability", key))
             .picked(state.selected),

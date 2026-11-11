@@ -898,6 +898,48 @@ pub fn pin_cached(conn: &Connection, track_ids: &[i64]) -> Result<(), DbError> {
     Ok(())
 }
 
+/// The person asked for these tracks on this device: pinned now, before
+/// their files arrive, so the ask outlives the process that took it. A track
+/// pinned with no file yet is a download still owed (`owed_downloads`).
+pub fn want_kept(conn: &Connection, track_ids: &[i64]) -> Result<(), DbError> {
+    if track_ids.is_empty() {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE tracks SET cache_pinned = 1
+         WHERE id IN (SELECT value FROM json_each(?1)) AND cache_pinned = 0",
+        [super::json_list(track_ids)],
+    )?;
+    Ok(())
+}
+
+/// The person no longer wants these downloads: what has not arrived is owed
+/// no more. A file already here keeps its pin until it is removed.
+pub fn unwant(conn: &Connection, track_ids: &[i64]) -> Result<(), DbError> {
+    if track_ids.is_empty() {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE tracks SET cache_pinned = 0
+         WHERE id IN (SELECT value FROM json_each(?1)) AND cached_path IS NULL",
+        [super::json_list(track_ids)],
+    )?;
+    Ok(())
+}
+
+/// Tracks the person asked for whose files have not arrived: pinned, with
+/// a copy on the server and none recorded here. In library order, so an
+/// album arrives in its running order.
+pub fn owed_downloads(conn: &Connection) -> Result<Vec<i64>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id FROM tracks
+         WHERE cache_pinned != 0 AND cached_path IS NULL AND remote_id IS NOT NULL
+         ORDER BY album_id, disc, track_number, id",
+    )?;
+    let rows = stmt.query_map([], |r| r.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 /// One downloaded file eviction may remove.
 #[derive(Debug, Clone)]
 pub struct CachedFile {
@@ -1397,6 +1439,43 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    /// A download the person asked for is owed from the ask until its file
+    /// is recorded, across any number of runs, in the record's running
+    /// order; a cancel before then ends it, and a file already here is not
+    /// owed at all.
+    #[test]
+    fn a_download_asked_for_is_owed_until_it_arrives() {
+        let db = test_db();
+        let track = |title: &str, n: i32| {
+            let mut meta = sample_meta(title, "Polar Bear", "Peepers");
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.track_number = Some(n);
+            meta.remote_id = Some(format!("peepers-{n}"));
+            upsert_track(&db.conn, &meta).unwrap()
+        };
+        let (two, one, three) = (track("b", 2), track("a", 1), track("c", 3));
+        assert!(owed_downloads(&db.conn).unwrap().is_empty());
+
+        want_kept(&db.conn, &[three, two, one]).unwrap();
+        assert_eq!(owed_downloads(&db.conn).unwrap(), vec![one, two, three]);
+
+        set_cached_path(&db.conn, one, "/cache/a.flac").unwrap();
+        assert_eq!(owed_downloads(&db.conn).unwrap(), vec![two, three]);
+
+        unwant(&db.conn, &[two, one]).unwrap();
+        assert_eq!(owed_downloads(&db.conn).unwrap(), vec![three]);
+        let pinned: bool = db
+            .conn
+            .query_row(
+                "SELECT cache_pinned != 0 FROM tracks WHERE id = ?1",
+                [one],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(pinned, "a file already here keeps its pin");
     }
 
     /// A record's cover is asked of the server only where none of its
