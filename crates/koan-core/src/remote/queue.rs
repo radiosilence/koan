@@ -251,14 +251,11 @@ impl DownloadQueue {
         if track_ids.is_empty() {
             return;
         }
-        let store = self.inner.state.downloads();
-        let mut q = self.inner.queue.lock();
-        for track in track_ids {
-            if !q.cache.contains(&track) && !store.in_flight(track) {
-                q.cache.push_back(track);
-            }
-        }
-        drop(q);
+        owe_into(
+            &mut self.inner.queue.lock(),
+            self.inner.state.downloads(),
+            track_ids,
+        );
         wake_workers(&self.inner);
     }
 
@@ -326,6 +323,16 @@ impl DownloadQueue {
         q.pending.clear();
         q.cache.clear();
         self.inner.state.downloads().forget_all();
+    }
+}
+
+/// Queue `track_ids` for the cache behind what is there, leaving out any
+/// already waiting or being fetched.
+fn owe_into(q: &mut Queue, store: &DownloadStore, track_ids: Vec<i64>) {
+    for track in track_ids {
+        if !q.cache.contains(&track) && !store.in_flight(track) {
+            q.cache.push_back(track);
+        }
     }
 }
 
@@ -1281,15 +1288,12 @@ mod tests {
     /// is not queued twice.
     #[test]
     fn a_download_owed_twice_is_fetched_once() {
-        let (inner, _, _) = queue_over(&[1]);
-        inner.state.downloads().claim(2, None);
-        let queue = DownloadQueue {
-            inner: inner.clone(),
-        };
-        queue.owe(vec![3, 2, 3]);
-        queue.owe(vec![3]);
-        let cache: Vec<i64> = inner.queue.lock().cache.iter().copied().collect();
-        assert_eq!(cache, vec![3], "2 is in flight, 3 is waiting already");
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
+        store.claim(2, None);
+        owe_into(&mut q, &store, vec![3, 2, 3]);
+        owe_into(&mut q, &store, vec![3, 4]);
+        let cache: Vec<i64> = q.cache.iter().copied().collect();
+        assert_eq!(cache, vec![3, 4], "2 is in flight, 3 is waiting already");
     }
 
     /// A download that failed while the server was away is fetched again
