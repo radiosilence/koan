@@ -82,6 +82,14 @@ pub fn active() -> bool {
     manual() || cut_off()
 }
 
+/// Whether a track not on this device cannot be fetched now: offline as
+/// above, or the server not answering downloads (`download::Outage`), which
+/// is how a server keeping no link, or a phone with no network at all, is
+/// found out of reach.
+pub fn out_of_reach() -> bool {
+    active() || crate::helpers::server_unreachable().is_some()
+}
+
 /// Whether this device has lost its server: iOS and tvOS only, for now, with the app
 /// awake and a server that keeps a link.
 pub fn cut_off() -> bool {

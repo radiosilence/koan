@@ -217,6 +217,18 @@ impl PlaylistItem {
     pub(crate) fn playable(&self) -> bool {
         !matches!(self.state, ItemState::Failed(_))
     }
+
+    /// Whether the advance may land here. With `here_only` — the server out
+    /// of reach — an item still waiting for its file is passed over as a
+    /// failed one is: nothing can fetch it, and parking on it would play
+    /// nothing at all while tracks on this device wait behind it.
+    fn plays(&self, here_only: bool) -> bool {
+        match self.state {
+            ItemState::Ready => true,
+            ItemState::Pending => !here_only,
+            ItemState::Failed(_) => false,
+        }
+    }
 }
 
 /// The order shuffle plays the queue in, held beside it and never shown as
@@ -284,16 +296,18 @@ fn upcoming_start(pl: &Playlist) -> Option<usize> {
 /// whatever the mode, since wrapping from it would replay the queue from a
 /// place nobody is at. The flag says the step went back to the top.
 ///
-/// Failed items are passed over. Repeating one item plays it again unless it
-/// has failed, in which case the queue carries on as it would when repeating
-/// the queue.
+/// Failed items are passed over, and with `here_only` so is every item whose
+/// file is not on this device. Repeating one item plays it again unless it
+/// is passed over, in which case the queue carries on as it would when
+/// repeating the queue.
 fn follows(
     items: &[PlaylistItem],
     after: QueueItemId,
     repeat: Repeat,
+    here_only: bool,
 ) -> Option<(Option<&PlaylistItem>, bool)> {
     let at = items.iter().position(|item| item.id == after)?;
-    let playable = |item: &&PlaylistItem| !matches!(item.state, ItemState::Failed(_));
+    let playable = |item: &&PlaylistItem| item.plays(here_only);
     if repeat == Repeat::One && playable(&&items[at]) {
         return Some((Some(&items[at]), false));
     }
@@ -596,15 +610,16 @@ impl Playlist {
         after: Option<QueueItemId>,
         ahead: bool,
         repeat: Repeat,
+        here_only: bool,
     ) -> Option<(Option<QueueItemId>, bool)> {
         let Some(order) = self.order.as_ref() else {
             return match after {
-                Some(after) => follows(&self.items, after, repeat)
+                Some(after) => follows(&self.items, after, repeat, here_only)
                     .map(|(next, wrapped)| (next.map(|item| item.id), wrapped)),
                 None => Some((
                     self.items
                         .iter()
-                        .find(|item| item.playable())
+                        .find(|item| item.plays(here_only))
                         .map(|item| item.id),
                     false,
                 )),
@@ -612,11 +627,12 @@ impl Playlist {
         };
         if let Some(after) = after {
             let item = self.find(after)?;
-            if repeat == Repeat::One && item.playable() {
+            if repeat == Repeat::One && item.plays(here_only) {
                 return Some((Some(after), false));
             }
         }
-        let playable = |id: &&QueueItemId| self.find(**id).is_some_and(PlaylistItem::playable);
+        let playable =
+            |id: &&QueueItemId| self.find(**id).is_some_and(|item| item.plays(here_only));
         let from = |order: &[QueueItemId]| {
             after
                 .and_then(|after| order.iter().position(|id| *id == after))
@@ -642,7 +658,8 @@ impl Playlist {
             self.order.as_mut().expect("checked above").next_pass = Some(pass);
         }
         let next = self.order.as_ref()?.next_pass.as_ref()?;
-        let playable = |id: &&QueueItemId| self.find(**id).is_some_and(PlaylistItem::playable);
+        let playable =
+            |id: &&QueueItemId| self.find(**id).is_some_and(|item| item.plays(here_only));
         Some((next.iter().find(playable).copied(), true))
     }
 
@@ -831,6 +848,10 @@ pub const OUTPUT_WAIT_NOTE: std::time::Duration = std::time::Duration::from_secs
 /// The engine writes these, the UI reads them. No mutexes in the hot path.
 #[derive(Debug)]
 pub struct SharedPlayerState {
+    /// The server is out of reach: only what is on this device plays, and
+    /// the advance passes over items still waiting for their files
+    /// (`PlaylistItem::plays`).
+    here_only: AtomicBool,
     /// The output opening, while one is (`OutputOpening`).
     output_opening: parking_lot::Mutex<Option<OutputOpening>>,
     /// The playback state, with `WAITING` set while the player waits for a
@@ -981,6 +1002,7 @@ impl SharedPlayerState {
             output_sample_rate: AtomicU64::new(0),
             output_mixed: std::sync::atomic::AtomicU8::new(0),
             start_failure: parking_lot::RwLock::new(None),
+            here_only: AtomicBool::new(false),
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
             output_opening: parking_lot::Mutex::new(None),
@@ -1375,6 +1397,22 @@ impl SharedPlayerState {
     }
 
     /// Why the last track asked for did not start, while none has since.
+    /// Whether only what is on this device can play: the server is out of
+    /// reach (`remote::offline::out_of_reach`).
+    pub fn here_only(&self) -> bool {
+        self.here_only.load(Ordering::Acquire)
+    }
+
+    /// Whether the server is out of reach, as the download queue last found.
+    /// Whether that changed.
+    pub fn set_here_only(&self, here_only: bool) -> bool {
+        let changed = self.here_only.swap(here_only, Ordering::AcqRel) != here_only;
+        if changed {
+            self.changed();
+        }
+        changed
+    }
+
     pub fn start_failure(&self) -> Option<String> {
         self.start_failure.read().clone()
     }
@@ -1786,7 +1824,7 @@ impl SharedPlayerState {
         };
         let mut pl = self.playlist.write();
         let cursor = pl.cursor;
-        let (next, wrapped) = pl.follows(cursor, false, repeat)?;
+        let (next, wrapped) = pl.follows(cursor, false, repeat, self.here_only())?;
         let pass = pl.pass + u64::from(wrapped);
         pl.move_on(next?, Some(pass));
         drop(pl);
@@ -1826,7 +1864,7 @@ impl SharedPlayerState {
         let mut pl = self.playlist.write();
         let after_pass = after_pass.unwrap_or(pl.pass);
         let ahead = after_pass > pl.pass;
-        let (next, wrapped) = pl.follows(Some(after_id), ahead, repeat)?;
+        let (next, wrapped) = pl.follows(Some(after_id), ahead, repeat, self.here_only())?;
         let pass = pl.pass + u64::from(ahead || wrapped);
         let next = next.and_then(|id| pl.find(id));
         Some(Lookahead {
@@ -1852,7 +1890,7 @@ impl SharedPlayerState {
         let repeat = self.play_mode().repeat;
         let mut pl = self.playlist.write();
         let ahead = step.after_pass > pl.pass;
-        pl.follows(Some(step.after), ahead, repeat)
+        pl.follows(Some(step.after), ahead, repeat, self.here_only())
             .is_some_and(|(next, _)| next == step.next)
     }
 

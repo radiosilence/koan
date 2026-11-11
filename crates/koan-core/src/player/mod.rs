@@ -338,6 +338,11 @@ const PREPARED_FOR: std::time::Duration = std::time::Duration::from_secs(10);
 /// thread for as long as the system takes; more are not started meanwhile.
 const MAX_ABANDONED_OPENS: usize = 1;
 
+/// Why nothing plays: every track left in the queue is still to be fetched,
+/// and the server cannot be reached to fetch it.
+pub const NOTHING_HERE: &str =
+    "Nothing in the queue is on this device, and the server can't be reached";
+
 /// Drop an output off the player thread: disposing of an audio unit goes
 /// through the same audio system whose stalls the open thread exists for.
 fn discard(output: Box<PreparedOutput>) {
@@ -1222,7 +1227,27 @@ impl Player {
     /// Stop what is playing and wait for `id` to become playable. A wait that
     /// is to open paused already reads as paused, so a client offers to play
     /// rather than showing a track on its way.
+    ///
+    /// With the server out of reach, a wait to play a track whose file is
+    /// not here moves on to the next track that is, as a failed download
+    /// does: nothing can fetch it, and waiting on it would play nothing
+    /// while the tracks on this device wait behind it. With none, it waits
+    /// on `id`, saying why, and plays it when the server is back.
     fn park(&mut self, id: QueueItemId, position_ms: u64, start: Run) {
+        if start == Run::Playing && self.unreachable(id) && self.shared_state.is_cursor(id) {
+            match self.shared_state.advance_cursor_loadable() {
+                Some(next) if next != id => {
+                    log::info!(
+                        "{id:?} is not on this device and the server is out of reach; playing {next:?}"
+                    );
+                    self.cue(next, 0, start);
+                    return;
+                }
+                _ => self.shared_state.set_cursor(Some(id)),
+            }
+            self.shared_state
+                .set_start_failure(Some(NOTHING_HERE.into()));
+        }
         self.report(PlaybackReportState::Stopped);
         self.finish_play();
         self.stop_engine();
@@ -2830,6 +2855,38 @@ impl Player {
     /// there is none. Only a waiting track is affected: one already streaming
     /// sees the failure in its reads and ends the decode, which advances the
     /// queue.
+    /// Whether `id` cannot play until the server is back: its file is not
+    /// here and the server is out of reach.
+    fn unreachable(&self, id: QueueItemId) -> bool {
+        self.shared_state.here_only()
+            && self.shared_state.item_state(id) == Some(ItemState::Pending)
+    }
+
+    /// The server came into reach or went out of it. A wait to play a track
+    /// that cannot be fetched now goes on to one on this device, and what
+    /// the decoder queued past the playing track is taken again, so a track
+    /// it stopped at for want of its file is passed over gaplessly.
+    fn reach_changed(&mut self) {
+        if !self.shared_state.here_only()
+            && self.shared_state.start_failure().as_deref() == Some(NOTHING_HERE)
+        {
+            self.shared_state.set_start_failure(None);
+        }
+        if let Some(waiting) = self.waiting()
+            && waiting.start == Run::Playing
+            && self.unreachable(waiting.id)
+        {
+            self.park(waiting.id, waiting.position_ms, waiting.start);
+            return;
+        }
+        // Only going out of reach: back in reach, what the decoder queued
+        // plays on, and the tracks it passed over wait for the next pass
+        // rather than cutting into the one playing.
+        if self.shared_state.here_only() {
+            self.revoke_stale_lookahead();
+        }
+    }
+
     pub fn track_failed(&mut self, id: QueueItemId) {
         let Some(waiting) = self.waiting().filter(|w| w.id == id) else {
             return;
@@ -3255,6 +3312,7 @@ impl Player {
             PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),
             PlayerCommand::StreamProbed { id, info, mode } => self.stream_probed(id, *info, mode),
             PlayerCommand::TrackFailed(id) => self.track_failed(id),
+            PlayerCommand::ReachChanged => self.reach_changed(),
             PlayerCommand::CacheTracks(ids) => {
                 if let Some(downloads) = &self.downloads {
                     downloads.cache(ids);
@@ -4307,6 +4365,246 @@ mod tests {
             assert!(!player.session_release_due(playing, true, later));
         }
         assert_eq!(player.session_release_at, None);
+    }
+
+    /// A player whose output opens and plays nothing, for following the
+    /// cursor through a queue of real files.
+    fn silent_player() -> Player {
+        let mut player = Player::new();
+        player.backend = Arc::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+            starts: Default::default(),
+        });
+        player
+    }
+
+    /// An album as the phone in the field had it: tracks 1–5 still to be
+    /// fetched, 6 and 7 downloaded.
+    fn half_downloaded_album(dir: &std::path::Path) -> Vec<PlaylistItem> {
+        (1..=7)
+            .map(|n| {
+                let title = format!("t{n}");
+                if n >= 6 {
+                    let path = dir.join(format!("{title}.wav"));
+                    crate::test_utils::generate_wav(&path, 8_000, 1, 1.0, 16);
+                    PlaylistItem {
+                        path,
+                        ..make_item(&title)
+                    }
+                } else {
+                    PlaylistItem {
+                        path: dir.join(format!("{title}.flac")),
+                        ..pending_item(&title)
+                    }
+                }
+            })
+            .collect()
+    }
+
+    fn playing(player: &Player) -> Option<QueueItemId> {
+        (player.shared_state.playback_state() == PlaybackState::Playing)
+            .then(|| player.shared_state.track_info().map(|t| t.id))
+            .flatten()
+    }
+
+    /// The phone with no network: play from the top of an album whose first
+    /// tracks are not here. The player plays what is, rather than waiting
+    /// on a track nothing can fetch.
+    #[test]
+    fn offline_play_passes_over_tracks_not_on_this_device() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut player = silent_player();
+        let items = half_downloaded_album(dir.path());
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.shared_state.set_here_only(true);
+
+        player.process_command(PlayerCommand::Play(ids[0]));
+        assert_eq!(playing(&player), Some(ids[5]), "the first track here plays");
+        assert!(!player.shared_state.is_waiting());
+
+        player.process_command(PlayerCommand::DecodeFinished(player.session));
+        assert_eq!(playing(&player), Some(ids[6]), "and then the next");
+
+        player.process_command(PlayerCommand::DecodeFinished(player.session));
+        assert_eq!(
+            player.shared_state.playback_state(),
+            PlaybackState::Stopped,
+            "the end of the queue, not back round to a track not here"
+        );
+        assert!(!player.shared_state.is_waiting());
+    }
+
+    /// What the phone was found doing: waiting on track 1 when the network
+    /// went. Losing the server moves the wait on to what is here.
+    #[test]
+    fn a_wait_moves_on_when_the_server_goes_out_of_reach() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut player = silent_player();
+        let items = half_downloaded_album(dir.path());
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+
+        player.process_command(PlayerCommand::Play(ids[0]));
+        assert!(
+            player.shared_state.is_waiting(),
+            "in reach, it waits for its download"
+        );
+
+        player.shared_state.set_here_only(true);
+        player.process_command(PlayerCommand::ReachChanged);
+        assert_eq!(playing(&player), Some(ids[5]));
+    }
+
+    /// With nothing in the queue here, the wait stays, says why, and plays
+    /// the track once the server is back and its file lands.
+    #[test]
+    fn with_nothing_here_the_wait_says_why_and_plays_when_the_server_is_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut player = silent_player();
+        let items: Vec<_> = half_downloaded_album(dir.path())
+            .into_iter()
+            .take(5)
+            .collect();
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.shared_state.set_here_only(true);
+
+        player.process_command(PlayerCommand::Play(ids[0]));
+        assert!(player.shared_state.is_waiting());
+        assert_eq!(
+            player.shared_state.cursor(),
+            Some(ids[0]),
+            "the cursor stays"
+        );
+        assert_eq!(
+            player.shared_state.start_failure().as_deref(),
+            Some(NOTHING_HERE)
+        );
+
+        player.shared_state.set_here_only(false);
+        player.process_command(PlayerCommand::ReachChanged);
+        assert_eq!(player.shared_state.start_failure(), None);
+        assert!(player.shared_state.is_waiting(), "waiting for its download");
+
+        let path = dir.path().join("t1.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 1.0, 16);
+        player.shared_state.update_paths(&[(ids[0], path)]);
+        player
+            .shared_state
+            .update_item_state(ids[0], ItemState::Ready);
+        player.process_command(PlayerCommand::TrackReady(ids[0]));
+        assert_eq!(playing(&player), Some(ids[0]));
+    }
+
+    /// While a track plays, the decoder stopped at the next for want of its
+    /// file. The server going out of reach takes that again, so what plays
+    /// next is the track after it that is here.
+    #[test]
+    fn the_lookahead_passes_over_a_track_not_here_once_the_server_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut player = silent_player();
+        let wav = |name: &str| {
+            let path = dir.path().join(format!("{name}.wav"));
+            crate::test_utils::generate_wav(&path, 8_000, 1, 1.0, 16);
+            PlaylistItem {
+                path,
+                ..make_item(name)
+            }
+        };
+        let items = vec![wav("a"), pending_item("b"), wav("c")];
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::Play(ids[0]));
+        assert_eq!(
+            player
+                .shared_state
+                .lookahead_after(ids[0])
+                .and_then(|s| s.next),
+            Some(ids[1])
+        );
+
+        player.shared_state.set_here_only(true);
+        player.process_command(PlayerCommand::ReachChanged);
+        assert_eq!(
+            player
+                .shared_state
+                .lookahead_after(ids[0])
+                .and_then(|s| s.next),
+            Some(ids[2]),
+            "b is passed over"
+        );
+        player.process_command(PlayerCommand::DecodeFinished(player.session));
+        assert_eq!(playing(&player), Some(ids[2]));
+    }
+
+    /// The acceptance test for listening offline: a cold launch with the
+    /// server out of reach from the start, the queue built from the library
+    /// as a restore builds it, and a downloaded album played through. Every
+    /// downloaded track plays; the ones never fetched are passed over.
+    #[test]
+    fn a_downloaded_album_plays_from_a_cold_launch_with_no_network() {
+        use crate::db::connection::Database;
+        use crate::db::queries;
+
+        crate::config::isolate_config_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let db = Database { conn };
+
+        // Six tracks on the server; all but the second downloaded.
+        let tracks: Vec<i64> = (1..=6)
+            .map(|n| {
+                let mut meta = queries::sample_meta(&format!("Track {n}"), "Polar Bear", "Peepers");
+                meta.source = "remote".into();
+                meta.path = None;
+                meta.track_number = Some(n);
+                meta.remote_id = Some(format!("peepers-{n}"));
+                let id = queries::upsert_track(&db.conn, &meta).unwrap();
+                db.conn
+                    .execute(
+                        "UPDATE tracks SET remote_url = 'https://music.invalid/stream' WHERE id = ?1",
+                        [id],
+                    )
+                    .unwrap();
+                if n != 2 {
+                    let file = dir.path().join(format!("{n:02}.wav"));
+                    crate::test_utils::generate_wav(&file, 8_000, 1, 1.0, 16);
+                    queries::set_cached_path(&db.conn, id, &file.to_string_lossy()).unwrap();
+                }
+                id
+            })
+            .collect();
+        let mut rows = queries::tracks_by_ids(&db.conn, &tracks).unwrap();
+        rows.sort_by_key(|row| tracks.iter().position(|t| *t == row.id));
+        let items = crate::helpers::playlist_items_for_tracks(&db, &rows);
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        assert_eq!(
+            items.iter().filter(|i| i.state == ItemState::Ready).count(),
+            5,
+            "the downloads are found on disk with no network"
+        );
+
+        // Launched cold: the download queue has found the server out of reach.
+        let mut player = silent_player();
+        player.shared_state.set_here_only(true);
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::Play(ids[0]));
+
+        let mut heard = Vec::new();
+        while let Some(id) = playing(&player) {
+            heard.push(id);
+            player.process_command(PlayerCommand::DecodeFinished(player.session));
+        }
+        assert_eq!(
+            heard,
+            [0, 2, 3, 4, 5].map(|i| ids[i]),
+            "every downloaded track, in order"
+        );
+        assert!(!player.shared_state.is_waiting(), "nothing left waiting");
     }
 
     #[test]

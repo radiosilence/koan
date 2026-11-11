@@ -27,6 +27,13 @@ down for more than a few seconds. Until then the server reports the device as
 unreachable and refuses commands sent to it. Offline mode turned on by hand
 shows no banner.
 
+While the server cannot be reached, by any app or the terminal UI, playback
+passes over tracks whose files are not on the device, as a failed download
+is passed over, and plays the next one that is. A downloaded album plays
+from a cold launch with no network at all. When nothing left in the queue is
+on the device, playback waits on the track it was asked for and says why,
+and that track plays once the server is back and its download lands.
+
 ## Staying in sync
 
 Every sync walks the whole library, which is what lets it notice a track the server deleted or gave a new id. The apps sync on their own, and only when the server's library has changed:
