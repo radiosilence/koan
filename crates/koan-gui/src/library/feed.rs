@@ -92,11 +92,11 @@ impl Feed {
             cx.observe(&mirror.connection, |feed, connection, cx| {
                 let connection = &connection.read(cx).0;
                 let out = connection.as_ref().is_some_and(|c| c.out_of_reach);
+                let reach = Self::reach(connection);
                 if out != feed.out_of_reach {
                     feed.out_of_reach = out;
                     cx.notify();
                 }
-                let reach = Self::reach(connection);
                 feed.connection(reach, cx);
             }),
             // A favourite toggled anywhere in the app: the Dock's menu, or
