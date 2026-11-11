@@ -659,6 +659,7 @@ fn follow_playlist(inner: Arc<Inner>) {
     let mut last_cursor: Option<QueueItemId> = None;
     let mut last_limit = LIMIT_CHANGES.load(std::sync::atomic::Ordering::Acquire);
     loop {
+        follow_reach(&inner);
         // The queue runs from the cursor, so a cursor move reorders it as
         // well. Synced before promoting, so the cursor's track is queued by
         // the time it is looked for.
@@ -679,6 +680,11 @@ fn follow_playlist(inner: Arc<Inner>) {
                 current.is_some_and(|id| inner.state.item_state(id) == Some(ItemState::Pending));
             inner.has_work.notify_all();
             if let Some(cursor_id) = current {
+                // A track chosen while the server was thought out of reach
+                // tries it now: the try is how its reach is found again.
+                if jumped_to_unfetched && inner.state.here_only() {
+                    retry_server_now();
+                }
                 promote_cursor(&inner, cursor_id);
             }
             // What the window has just left is to go now, not at the next
@@ -694,6 +700,29 @@ fn follow_playlist(inner: Arc<Inner>) {
             }
         }
         seen = changed.wait(seen);
+    }
+}
+
+/// Tell the player when the server comes into reach or goes out of it, so
+/// it plays only what is on this device while nothing can be fetched. Read
+/// on every wake of the engine's signal, which each way in and out of reach
+/// rings: a download meeting no connection, the server answering, the link
+/// coming up, offline mode switched. Two atomic-cheap reads.
+fn follow_reach(inner: &Inner) {
+    reach_is(inner, crate::remote::offline::out_of_reach());
+}
+
+fn reach_is(inner: &Inner, out_of_reach: bool) {
+    if inner.state.set_here_only(out_of_reach) {
+        log::info!(
+            "server {}",
+            if out_of_reach {
+                "out of reach: playing only what is on this device"
+            } else {
+                "back in reach"
+            }
+        );
+        inner.cmd_tx.send(PlayerCommand::ReachChanged).ok();
     }
 }
 
@@ -1143,6 +1172,29 @@ mod tests {
         let (inner, ids, _) = queue_over(&[1, 2, 3]);
         inner.queue.lock().pending.extend(ids.iter().copied());
         (inner, ids)
+    }
+
+    /// The player hears each edge of the server's reach once, with the
+    /// state already saying which way it went.
+    #[test]
+    fn the_player_is_told_when_the_server_goes_out_of_reach_and_comes_back() {
+        let (inner, _, cmd_rx) = queue_over(&[1]);
+        let told = || {
+            cmd_rx
+                .try_iter()
+                .filter(|c| matches!(c, PlayerCommand::ReachChanged))
+                .count()
+        };
+        reach_is(&inner, false);
+        assert_eq!(told(), 0, "in reach from the start is no news");
+        reach_is(&inner, true);
+        assert!(inner.state.here_only());
+        assert_eq!(told(), 1);
+        reach_is(&inner, true);
+        assert_eq!(told(), 0, "still out of reach is no news");
+        reach_is(&inner, false);
+        assert!(!inner.state.here_only());
+        assert_eq!(told(), 1);
     }
 
     #[test]

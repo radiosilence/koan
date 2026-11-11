@@ -217,6 +217,21 @@ impl PlaylistItem {
     pub(crate) fn playable(&self) -> bool {
         !matches!(self.state, ItemState::Failed(_))
     }
+
+    /// Whether the advance may land here. With the server out of reach
+    /// (`here` is the tracks whose bytes are arriving all the same), an item
+    /// still waiting for its file is passed over as a failed one is: nothing
+    /// can fetch it, and parking on it would play nothing at all while
+    /// tracks on this device wait behind it.
+    fn plays(&self, here: Here) -> bool {
+        match self.state {
+            ItemState::Ready => true,
+            ItemState::Pending => {
+                here.is_none_or(|arriving| self.db_id.is_some_and(|t| arriving.contains(&t)))
+            }
+            ItemState::Failed(_) => false,
+        }
+    }
 }
 
 /// The order shuffle plays the queue in, held beside it and never shown as
@@ -279,21 +294,28 @@ fn upcoming_start(pl: &Playlist) -> Option<usize> {
     }
 }
 
+/// `None` while the server is in reach. Out of it, the tracks whose bytes are
+/// arriving anyway (offline mode leaves downloads running): those and the
+/// items whose files are here are all that can play.
+type Here<'a> = Option<&'a std::collections::HashSet<i64>>;
+
 /// What follows `after` under `repeat`: `Some(None)` at the end of the queue,
 /// `None` when `after` is not in it — a removed item has nothing following it,
 /// whatever the mode, since wrapping from it would replay the queue from a
 /// place nobody is at. The flag says the step went back to the top.
 ///
-/// Failed items are passed over. Repeating one item plays it again unless it
-/// has failed, in which case the queue carries on as it would when repeating
-/// the queue.
-fn follows(
-    items: &[PlaylistItem],
+/// Failed items are passed over, and out of reach (`here`) so is every item
+/// whose file is not on this device. Repeating one item plays it again unless it
+/// is passed over, in which case the queue carries on as it would when
+/// repeating the queue.
+fn follows<'a>(
+    items: &'a [PlaylistItem],
     after: QueueItemId,
     repeat: Repeat,
-) -> Option<(Option<&PlaylistItem>, bool)> {
+    here: Here,
+) -> Option<(Option<&'a PlaylistItem>, bool)> {
     let at = items.iter().position(|item| item.id == after)?;
-    let playable = |item: &&PlaylistItem| !matches!(item.state, ItemState::Failed(_));
+    let playable = |item: &&PlaylistItem| item.plays(here);
     if repeat == Repeat::One && playable(&&items[at]) {
         return Some((Some(&items[at]), false));
     }
@@ -596,15 +618,16 @@ impl Playlist {
         after: Option<QueueItemId>,
         ahead: bool,
         repeat: Repeat,
+        here: Here,
     ) -> Option<(Option<QueueItemId>, bool)> {
         let Some(order) = self.order.as_ref() else {
             return match after {
-                Some(after) => follows(&self.items, after, repeat)
+                Some(after) => follows(&self.items, after, repeat, here)
                     .map(|(next, wrapped)| (next.map(|item| item.id), wrapped)),
                 None => Some((
                     self.items
                         .iter()
-                        .find(|item| item.playable())
+                        .find(|item| item.plays(here))
                         .map(|item| item.id),
                     false,
                 )),
@@ -612,11 +635,11 @@ impl Playlist {
         };
         if let Some(after) = after {
             let item = self.find(after)?;
-            if repeat == Repeat::One && item.playable() {
+            if repeat == Repeat::One && item.plays(here) {
                 return Some((Some(after), false));
             }
         }
-        let playable = |id: &&QueueItemId| self.find(**id).is_some_and(PlaylistItem::playable);
+        let playable = |id: &&QueueItemId| self.find(**id).is_some_and(|item| item.plays(here));
         let from = |order: &[QueueItemId]| {
             after
                 .and_then(|after| order.iter().position(|id| *id == after))
@@ -642,7 +665,7 @@ impl Playlist {
             self.order.as_mut().expect("checked above").next_pass = Some(pass);
         }
         let next = self.order.as_ref()?.next_pass.as_ref()?;
-        let playable = |id: &&QueueItemId| self.find(**id).is_some_and(PlaylistItem::playable);
+        let playable = |id: &&QueueItemId| self.find(**id).is_some_and(|item| item.plays(here));
         Some((next.iter().find(playable).copied(), true))
     }
 
@@ -831,6 +854,10 @@ pub const OUTPUT_WAIT_NOTE: std::time::Duration = std::time::Duration::from_secs
 /// The engine writes these, the UI reads them. No mutexes in the hot path.
 #[derive(Debug)]
 pub struct SharedPlayerState {
+    /// The server is out of reach: only what is on this device plays, and
+    /// the advance passes over items still waiting for their files
+    /// (`PlaylistItem::plays`).
+    here_only: AtomicBool,
     /// The output opening, while one is (`OutputOpening`).
     output_opening: parking_lot::Mutex<Option<OutputOpening>>,
     /// The playback state, with `WAITING` set while the player waits for a
@@ -981,6 +1008,7 @@ impl SharedPlayerState {
             output_sample_rate: AtomicU64::new(0),
             output_mixed: std::sync::atomic::AtomicU8::new(0),
             start_failure: parking_lot::RwLock::new(None),
+            here_only: AtomicBool::new(false),
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
             output_opening: parking_lot::Mutex::new(None),
@@ -1372,6 +1400,29 @@ impl SharedPlayerState {
             2 => Some(false),
             _ => None,
         }
+    }
+
+    /// Whether only what is on this device can play: the server is out of
+    /// reach (`remote::offline::out_of_reach`).
+    pub fn here_only(&self) -> bool {
+        self.here_only.load(Ordering::Acquire)
+    }
+
+    /// Whether the server is out of reach, as the download queue last found.
+    /// Whether that changed.
+    pub fn set_here_only(&self, here_only: bool) -> bool {
+        let changed = self.here_only.swap(here_only, Ordering::AcqRel) != here_only;
+        if changed {
+            self.changed();
+        }
+        changed
+    }
+
+    /// What the play order may land on beyond the files here: everything
+    /// while the server is in reach, and out of it the tracks arriving all
+    /// the same. Read before the playlist's lock is taken.
+    fn here(&self) -> Option<std::collections::HashSet<i64>> {
+        self.here_only().then(|| self.downloads.running_tracks())
     }
 
     /// Why the last track asked for did not start, while none has since.
@@ -1774,19 +1825,35 @@ impl SharedPlayerState {
     ///
     /// An item that is still downloading parks the cursor rather than being
     /// skipped, so playback resumes from it when its data lands. Skipping it
-    /// would drop it from the queue for good.
+    /// would drop it from the queue for good. With the server out of reach
+    /// its data cannot land, and it is passed over as a failed item is
+    /// (`PlaylistItem::plays`), unless its bytes are arriving all the same.
     ///
     /// With no cursor set, starts from the top. A cursor pointing at an item
     /// that is no longer in the playlist yields `None` — restarting from the
     /// top would silently replay the queue.
     pub fn advance_cursor_loadable(&self) -> Option<QueueItemId> {
+        self.advance_cursor_with(self.here())
+    }
+
+    /// `advance_cursor_loadable` as if the server were in reach: the next
+    /// item that will play once it is, for a wait with nothing on this
+    /// device to play meanwhile.
+    pub fn advance_cursor_awaiting(&self) -> Option<QueueItemId> {
+        self.advance_cursor_with(None)
+    }
+
+    fn advance_cursor_with(
+        &self,
+        here: Option<std::collections::HashSet<i64>>,
+    ) -> Option<QueueItemId> {
         let repeat = match self.play_mode().repeat {
             Repeat::Off => Repeat::Off,
             Repeat::Queue | Repeat::One => Repeat::Queue,
         };
         let mut pl = self.playlist.write();
         let cursor = pl.cursor;
-        let (next, wrapped) = pl.follows(cursor, false, repeat)?;
+        let (next, wrapped) = pl.follows(cursor, false, repeat, here.as_ref())?;
         let pass = pl.pass + u64::from(wrapped);
         pl.move_on(next?, Some(pass));
         drop(pl);
@@ -1803,7 +1870,9 @@ impl SharedPlayerState {
     /// them. A track still arriving is not: the decoder stops at it, the
     /// session drains, and the advance that follows waits for it. Passing over
     /// it would play the track after it and move the cursor beyond it, so it
-    /// would never be heard.
+    /// would never be heard. With the server out of reach a track not here
+    /// cannot arrive, and is passed over as `advance_cursor_loadable` passes
+    /// over it.
     ///
     /// The play mode decides what follows: the queue's next item, the first
     /// again at its end when the queue repeats, or the same item when one
@@ -1823,10 +1892,11 @@ impl SharedPlayerState {
 
     fn lookahead(&self, after_id: QueueItemId, after_pass: Option<u64>) -> Option<Lookahead> {
         let repeat = self.play_mode().repeat;
+        let here = self.here();
         let mut pl = self.playlist.write();
         let after_pass = after_pass.unwrap_or(pl.pass);
         let ahead = after_pass > pl.pass;
-        let (next, wrapped) = pl.follows(Some(after_id), ahead, repeat)?;
+        let (next, wrapped) = pl.follows(Some(after_id), ahead, repeat, here.as_ref())?;
         let pass = pl.pass + u64::from(ahead || wrapped);
         let next = next.and_then(|id| pl.find(id));
         Some(Lookahead {
@@ -1850,9 +1920,10 @@ impl SharedPlayerState {
     /// track appended after the one a wrap left from.
     pub fn still_follows(&self, step: &Lookahead) -> bool {
         let repeat = self.play_mode().repeat;
+        let here = self.here();
         let mut pl = self.playlist.write();
         let ahead = step.after_pass > pl.pass;
-        pl.follows(Some(step.after), ahead, repeat)
+        pl.follows(Some(step.after), ahead, repeat, here.as_ref())
             .is_some_and(|(next, _)| next == step.next)
     }
 

@@ -56,14 +56,21 @@ pub fn manual() -> bool {
 
 /// The link to the server came up or went down.
 pub fn link_changed(up: bool) {
-    let mut down = down_since().lock().unwrap_or_else(|e| e.into_inner());
-    match (up, down.is_some()) {
-        (true, true) => *down = None,
-        (false, false) => {
-            *down = Some(Instant::now());
-            arm();
+    {
+        let mut down = down_since().lock().unwrap_or_else(|e| e.into_inner());
+        match (up, down.is_some()) {
+            (true, true) => *down = None,
+            (false, false) => {
+                *down = Some(Instant::now());
+                arm();
+            }
+            _ => {}
         }
-        _ => {}
+    }
+    // A link up is the server answering: in reach again, and downloads
+    // waiting out an outage try at once.
+    if up {
+        crate::helpers::server_answered();
     }
 }
 
@@ -80,6 +87,17 @@ pub fn woke() {
 /// Whether the library is narrowed to what can play here.
 pub fn active() -> bool {
     manual() || cut_off()
+}
+
+/// Whether a track not on this device cannot be fetched now: offline mode
+/// is on, or the last try at the server met no route, no address or no
+/// connection (`Outage::is_cut_off`). A server answering with an error is
+/// not out of reach, and nor is a link merely hung up by iOS suspending the
+/// app. Cleared by the server answering again: a download that gets through
+/// (every track the player still wants is one, retried on the outage's
+/// backoff), or the link coming back up (`link_changed`).
+pub fn out_of_reach() -> bool {
+    manual() || crate::helpers::server_cut_off()
 }
 
 /// Whether this device has lost its server: iOS and tvOS only, for now, with the app

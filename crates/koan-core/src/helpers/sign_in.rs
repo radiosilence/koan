@@ -479,6 +479,24 @@ pub fn subsonic_client(cfg: &Config) -> Option<Arc<SubsonicClient>> {
     Some(client)
 }
 
+/// Whether this device cannot reach its server at all (`Outage::is_cut_off`).
+/// Reads only the client already made, and copies nothing: asked on every
+/// wake of the engine's signal.
+pub fn server_cut_off() -> bool {
+    let client = SUBSONIC_CLIENT.lock().as_ref().map(|(_, c)| c.clone());
+    client.is_some_and(|c| c.outage().is_cut_off())
+}
+
+/// The server was heard from by some other way than a download: the link
+/// came up. Downloads waiting out an outage try at once, and the server is
+/// in reach again.
+pub fn server_answered() {
+    let client = SUBSONIC_CLIENT.lock().as_ref().map(|(_, c)| c.clone());
+    if let Some(client) = client {
+        client.outage().answered();
+    }
+}
+
 /// Why the signed-in server is not answering downloads, while it is not. Reads
 /// only the client already made.
 pub fn server_unreachable() -> Option<String> {
