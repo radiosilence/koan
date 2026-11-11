@@ -1,0 +1,1 @@
+- **Offline playback no longer stalls.** With the server out of reach, playback passes over tracks that are not on the device and plays the next one that is, so a downloaded album plays from a cold launch with no network. With nothing left on the device, it waits on the track asked for, says why, and plays it once the server is back.
