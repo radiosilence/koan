@@ -1474,6 +1474,16 @@ mod tests {
         unwant(&db.conn, &[two, one]).unwrap();
         assert_eq!(owed_downloads(&db.conn).unwrap(), vec![three]);
 
+        let pinned: bool = db
+            .conn
+            .query_row(
+                "SELECT cache_pinned != 0 FROM tracks WHERE id = ?1",
+                [one],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(pinned, "a file already here keeps its pin");
+
         // A track with a file in the library folders is here already: never
         // owed, whatever copy the server also has.
         let mut meta = sample_meta("d", "Polar Bear", "Peepers");
@@ -1487,15 +1497,6 @@ mod tests {
         want_kept(&db.conn, &[two]).unwrap();
         clear_cached_paths(&db.conn).unwrap();
         assert!(owed_downloads(&db.conn).unwrap().is_empty());
-        let pinned: bool = db
-            .conn
-            .query_row(
-                "SELECT cache_pinned != 0 FROM tracks WHERE id = ?1",
-                [one],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert!(pinned, "a file already here keeps its pin");
     }
 
     /// A record's cover is asked of the server only where none of its
