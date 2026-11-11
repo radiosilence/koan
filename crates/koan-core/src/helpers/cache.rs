@@ -289,7 +289,7 @@ pub fn clear_download_cache(db: &Database, cfg: &Config) -> CacheCleared {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
     let _ = queries::clear_cached_paths(&db.conn);
-    crate::remote::keep::cleared();
+    crate::remote::keep::cleared(&db.conn);
     measure_cache(cfg);
     cleared
 }
@@ -324,7 +324,7 @@ pub fn clear_downloads_for(db: &Database, track_ids: &[i64]) -> CacheCleared {
     if let Err(e) = queries::clear_cached_paths_for(&db.conn, track_ids) {
         log::warn!("removed downloads but failed to forget them ({e})");
     }
-    crate::remote::keep::cleared();
+    crate::remote::keep::cleared(&db.conn);
     cache_shrank(cleared.bytes);
     cleared
 }

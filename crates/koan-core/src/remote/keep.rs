@@ -16,7 +16,7 @@ enum Change {
     Unwant(Vec<i64>),
     /// Downloads were cleared: what is still owed goes to the queue, in
     /// order behind every ask made before the clear.
-    Cleared,
+    Cleared(std::collections::HashSet<i64>),
 }
 
 fn lane() -> Option<&'static crossbeam_channel::Sender<Change>> {
@@ -38,8 +38,8 @@ fn lane() -> Option<&'static crossbeam_channel::Sender<Change>> {
 }
 
 fn write(change: &Change) {
-    if let Change::Cleared = change {
-        crate::remote::queue::still_owed(owed().into_iter().collect());
+    if let Change::Cleared(owed) = change {
+        crate::remote::queue::still_owed(owed.clone());
         return;
     }
     let result = crate::db::pool::shared()
@@ -49,7 +49,7 @@ fn write(change: &Change) {
             match change {
                 Change::Want(ids) => queries::want_kept(&db.conn, ids),
                 Change::Unwant(ids) => queries::unwant(&db.conn, ids),
-                Change::Cleared => Ok(()),
+                Change::Cleared(_) => Ok(()),
             }
             .map_err(|e| e.to_string())
         });
@@ -84,9 +84,13 @@ pub fn unwant(track_ids: &[i64]) {
 }
 
 /// Downloads were cleared, all or some, and with them the asks for those
-/// tracks: the queue drops what is no longer owed.
-pub fn cleared() {
-    send(Change::Cleared);
+/// tracks: the queue drops what is no longer owed. Read from `conn`, the
+/// connection that cleared them, so no other is opened for it.
+pub fn cleared(conn: &rusqlite::Connection) {
+    match queries::owed_downloads(conn) {
+        Ok(owed) => send(Change::Cleared(owed.into_iter().collect())),
+        Err(e) => log::warn!("could not read which downloads are still owed: {e}"),
+    }
 }
 
 /// Downloads asked for that have not arrived, to fetch again. Read on the
