@@ -434,6 +434,16 @@ impl DownloadStore {
             .any(|e| e.download.track_id == track_id && e.is_live())
     }
 
+    /// The tracks whose bytes are arriving now.
+    pub fn running_tracks(&self) -> HashSet<i64> {
+        self.entries
+            .read()
+            .iter()
+            .filter(|e| e.download.state == DownloadState::Running)
+            .map(|e| e.download.track_id)
+            .collect()
+    }
+
     /// The queue entries waiting on the live transfer for `track_id`.
     pub fn waiters(&self, track_id: i64) -> Vec<QueueItemId> {
         self.entries
@@ -773,9 +783,12 @@ pub fn settle(
         Err(reason) => Outcome::Failed(reason.clone()),
     };
     let feed = store.end(track_id, outcome).map(|(_, feed)| feed);
+    // Out of reach, a file landing anywhere in the queue may be what a
+    // player waiting with nothing here can play: it hears of every one.
+    let everyone = result.is_ok() && state.here_only();
     let tell = waiters
         .into_iter()
-        .filter(|id| state.is_cursor(*id))
+        .filter(|id| everyone || state.is_cursor(*id))
         .map(|id| match result {
             Ok(_) => PlayerCommand::TrackReady(id),
             Err(_) => PlayerCommand::TrackFailed(id),

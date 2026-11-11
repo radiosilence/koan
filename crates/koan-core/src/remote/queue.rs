@@ -680,6 +680,11 @@ fn follow_playlist(inner: Arc<Inner>) {
                 current.is_some_and(|id| inner.state.item_state(id) == Some(ItemState::Pending));
             inner.has_work.notify_all();
             if let Some(cursor_id) = current {
+                // A track chosen while the server was thought out of reach
+                // tries it now: the try is how its reach is found again.
+                if jumped_to_unfetched && inner.state.here_only() {
+                    retry_server_now();
+                }
                 promote_cursor(&inner, cursor_id);
             }
             // What the window has just left is to go now, not at the next
@@ -700,9 +705,9 @@ fn follow_playlist(inner: Arc<Inner>) {
 
 /// Tell the player when the server comes into reach or goes out of it, so
 /// it plays only what is on this device while nothing can be fetched. Read
-/// on every wake of the engine's signal, which every way of going out of
-/// reach rings: a download meeting no server, the link lost for its grace,
-/// offline mode switched.
+/// on every wake of the engine's signal, which each way in and out of reach
+/// rings: a download meeting no connection, the server answering, the link
+/// coming up, offline mode switched. Two atomic-cheap reads.
 fn follow_reach(inner: &Inner) {
     reach_is(inner, crate::remote::offline::out_of_reach());
 }

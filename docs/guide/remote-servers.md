@@ -27,12 +27,14 @@ down for more than a few seconds. Until then the server reports the device as
 unreachable and refuses commands sent to it. Offline mode turned on by hand
 shows no banner.
 
-While the server cannot be reached, by any app or the terminal UI, playback
-passes over tracks whose files are not on the device, as a failed download
-is passed over, and plays the next one that is. A downloaded album plays
-from a cold launch with no network at all. When nothing left in the queue is
-on the device, playback waits on the track it was asked for and says why,
-and that track plays once the server is back and its download lands.
+While the device cannot reach its server at all (no network, no route, the
+connection refused) or offline mode is on, playback moving on by itself
+passes over tracks whose files are not on the device and plays the next one
+that is, in every app and the terminal UI. A downloaded album plays from a
+cold launch with no network. A track you choose that is not on the device
+is not swapped for another: playback waits on it, says why, and plays it
+once the server answers. A server that answers with an error, such as a
+proxy's 503, is still reachable, and tracks still wait for their downloads.
 
 ## Staying in sync
 

@@ -134,6 +134,15 @@ impl DownloadError {
         }
     }
 
+    /// Whether this says the device cannot reach the server at all — no
+    /// route, no address, a connection refused or timed out — rather than
+    /// that a server it reached is busy or failing. Only this puts the
+    /// server out of reach (`Outage::is_cut_off`): a 503 from a proxy says
+    /// the server is there.
+    pub fn is_cut_off(&self) -> bool {
+        matches!(self, DownloadError::Http(e) if e.is_connect())
+    }
+
     fn retry_after(&self) -> Option<Duration> {
         match self {
             DownloadError::Status { retry_after, .. } => *retry_after,
@@ -184,11 +193,22 @@ struct OutageState {
     retry_at: Option<Instant>,
     /// What the last unanswered try met. `None` while the server is up.
     reason: Option<String>,
+    /// The last unanswered try could not reach the server at all, rather
+    /// than being answered with a status saying it is unavailable.
+    cut_off: bool,
 }
 
 impl Outage {
     pub fn is_down(&self) -> bool {
         self.state.lock().retry_at.is_some()
+    }
+
+    /// Whether the device cannot reach the server: down, and the last try
+    /// met no route, no address or no connection. Cleared by the server
+    /// answering anything (`answered`).
+    pub fn is_cut_off(&self) -> bool {
+        let s = self.state.lock();
+        s.retry_at.is_some() && s.cut_off
     }
 
     /// Why the server is not answering, while it is not.
@@ -261,11 +281,24 @@ impl Outage {
     /// The server did not answer, meeting `reason`. Returns how long until it
     /// is tried again.
     pub(crate) fn down(&self, retry_after: Option<Duration>, reason: String) -> Duration {
+        self.unanswered(retry_after, reason, false)
+    }
+
+    /// No try reaches the server at all: no route, no address, no
+    /// connection. As `down`, and the server is out of reach until it
+    /// answers again.
+    pub(crate) fn cut(&self, reason: String) -> Duration {
+        self.unanswered(None, reason, true)
+    }
+
+    fn unanswered(&self, retry_after: Option<Duration>, reason: String, cut_off: bool) -> Duration {
         let mut s = self.state.lock();
         s.failures += 1;
+        let cut_news = s.cut_off != cut_off;
+        s.cut_off = cut_off;
         let wait = outage_backoff(s.failures, retry_after);
         s.retry_at = Some(Instant::now() + wait);
-        let news = s.reason.as_ref() != Some(&reason);
+        let news = cut_news || s.reason.as_ref() != Some(&reason);
         s.reason = Some(reason);
         drop(s);
         // Those waiting for this answer take the new time from here.
@@ -276,7 +309,12 @@ impl Outage {
         wait
     }
 
-    /// The server answered, whatever it said.
+    /// The server answered, whatever it said: a download, or the link
+    /// coming back up, which proves it reachable as well.
+    pub fn answered(&self) {
+        self.up();
+    }
+
     fn up(&self) {
         let mut s = self.state.lock();
         if s.retry_at.is_none() {
@@ -382,7 +420,11 @@ pub fn download_with_retries(
 
         if let Some(p) = &patience {
             if e.is_unavailable() {
-                let wait = p.outage.down(e.retry_after(), e.unavailable_reason());
+                let wait = if e.is_cut_off() {
+                    p.outage.cut(e.unavailable_reason())
+                } else {
+                    p.outage.down(e.retry_after(), e.unavailable_reason())
+                };
                 log::warn!(
                     "download of {}: server unavailable ({}), trying again in {:?}",
                     dest.display(),
@@ -892,6 +934,34 @@ mod tests {
             .map_err(DownloadError::from)
             .expect_err("nothing is listening");
         assert!(err.is_unavailable(), "unexpected: {err}");
+        assert!(err.is_cut_off(), "no connection is out of reach: {err}");
+    }
+
+    /// A server that answers, however unhelpfully, is in reach: only no
+    /// connection at all puts it out of reach, and any answer brings it back.
+    #[test]
+    fn only_no_connection_puts_the_server_out_of_reach() {
+        for code in [503, 429, 502, 504] {
+            assert!(
+                !status(code).is_cut_off(),
+                "{code} came from something there"
+            );
+        }
+        let outage = Outage::default();
+        outage.down(None, "The server answered 503".into());
+        assert!(outage.is_down() && !outage.is_cut_off());
+
+        outage.cut("Can't reach the server".into());
+        assert!(outage.is_cut_off());
+        outage.down(None, "The server answered 429".into());
+        assert!(!outage.is_cut_off(), "answered, so reached again");
+
+        outage.cut("Can't reach the server".into());
+        outage.answered();
+        assert!(
+            !outage.is_down() && !outage.is_cut_off(),
+            "the link came back"
+        );
     }
 
     /// A download waiting out an outage stops as soon as it is unwanted and
