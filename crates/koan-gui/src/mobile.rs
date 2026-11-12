@@ -931,11 +931,7 @@ impl TouchShell {
         cx: &mut Context<Self>,
     ) {
         if let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) {
-            let items: std::sync::Arc<[_]> = tracks
-                .into_iter()
-                .map(crate::library::drag::Playable::Track)
-                .collect();
-            crate::library::pick_playlist::open(&lib, items, None, window, cx);
+            crate::library::pick_playlist::open_tracks(&lib, tracks, window, cx);
         }
     }
 
