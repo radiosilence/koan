@@ -1,0 +1,1 @@
+- **A Mac app installed from the DMG updates itself even when opened where it was unpacked.** Gatekeeper runs such a quarantined copy from a read-only translocated location, so kōan took the folder to be unwritable and only announced new versions; it now replaces the bundle it was opened from.
