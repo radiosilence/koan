@@ -1,0 +1,1 @@
+- **A Mac app opened from the disk image or from where it was downloaded says to move it to Applications.** macOS runs such a copy read-only, so it cannot update itself; kōan said only that it could not write to its folder.
