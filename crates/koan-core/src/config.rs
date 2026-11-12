@@ -45,9 +45,9 @@ pub struct Config {
     pub updates: UpdatesConfig,
 }
 
-/// Keeping the desktop app up to date where it was installed by hand: the
-/// DMG on macOS, the AppImage on Linux. Installs a package manager keeps (the
-/// Homebrew cask, the `.deb`) are only told of a new version.
+/// Keeping the desktop app up to date where it can replace itself: the DMG's
+/// app on macOS, the Homebrew cask's included, and the AppImage on Linux. The
+/// `.deb`, which its package manager keeps, is only told of a new version.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpdatesConfig {
