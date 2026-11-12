@@ -1,0 +1,1 @@
+- **The Homebrew cask's app updates itself.** A copy installed with `brew install --cask koan-app` was only told that a new version was out, with a link to the release notes. It now downloads, checks and installs each release as the DMG's app does, and the cask declares `auto_updates` so `brew upgrade` leaves it alone.
