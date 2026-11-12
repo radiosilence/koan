@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.72.3
+
+### Fixed
+
+- **Offline playback no longer stalls.** When the device cannot reach its server at all, or offline mode is on, playback moving on by itself passes over tracks that are not on the device and plays the next one that is, so a downloaded album plays from a cold launch with no network. A track you choose that is not on the device is waited for, with the reason shown, rather than swapped for another. A server answering with an error still counts as reachable.
+- **Downloads finish, and never pass for kept.** A download you ask for is remembered until it arrives, across the app being suspended or closed, and what failed while the server was away is fetched again when it comes back. A waiting download is an empty ring, and while the server cannot be reached a track not on the device says so; the Downloads page counts what is not downloaded yet, and the banner says why nothing plays.
+- **A new playlist from "add to playlist" asks for its name at once.** The question used to wait until the picked tracks were read, so a slow read looked like nothing happening. It now comes up as the sheet closes, counts the tracks as they are read, and holds "create" until they are. A failure reading the tracks, making the playlist or adding tracks to one is said over the window instead of only being logged.
+
 ## 0.72.2
 
 ### Changed

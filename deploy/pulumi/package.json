@@ -1,6 +1,6 @@
 {
   "name": "@radiosilence/koan-pulumi",
-  "version": "0.72.2",
+  "version": "0.72.3",
   "description": "Pulumi component that deploys koan, a bit-perfect music server, into Kubernetes",
   "license": "AGPL-3.0-or-later",
   "author": "James Cleveland <jc@blit.cc>",
