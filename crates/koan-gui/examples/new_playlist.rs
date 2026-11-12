@@ -117,7 +117,7 @@ fn main() -> Result {
     ui.settle()?;
     ui.press("new playlist…")?;
     let field = ui
-        .find("new playlist", |n| is_field(n))
+        .find("new playlist", is_field)
         .or_else(|_| ui.find("", is_field))?;
     ui.send(field, Action::Focus, None)?;
     ui.send(
