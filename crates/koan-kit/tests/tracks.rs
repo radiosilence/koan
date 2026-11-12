@@ -266,10 +266,14 @@ fn time_is_reckoned_at_the_present() {
     koan_kit::components::install_color_slots();
     let ahead = Instant::now() + Duration::from_millis(8);
     gpui::refresh_dynamic_colors(ahead);
-    let lead = present_now().saturating_duration_since(Instant::now());
+    // However long the runner took to get here: the refresh's time while it
+    // is ahead, now once it has passed.
+    let shown = present_now();
+    let after = Instant::now();
     assert!(
-        lead > Duration::from_millis(6) && lead <= Duration::from_millis(8),
-        "a frame made now shows a refresh on: {lead:?}"
+        shown >= ahead && shown <= ahead.max(after),
+        "a frame made now shows {:?} after the refresh",
+        shown.saturating_duration_since(ahead)
     );
 }
 
