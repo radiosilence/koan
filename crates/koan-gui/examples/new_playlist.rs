@@ -115,7 +115,22 @@ fn main() -> Result {
     };
     opened(&mut ui, &touch, &desk)?;
     ui.settle()?;
-    ui.press("new playlist…")?;
+    // As on a display: the frame after the click draws before what the click
+    // started in the background lands.
+    let target = ui.find("new playlist…", |n| n["aria"]["disabled"] != true)?;
+    ui.cx.update_window(ui.window, |_, window, cx| {
+        window.dispatch_a11y_action(
+            ActionRequest {
+                action: Action::Click,
+                target_tree: TreeId::ROOT,
+                target_node: target,
+                data: None,
+            },
+            cx,
+        );
+        window.draw(cx).clear(cx);
+    })?;
+    ui.frame()?;
     let field = ui
         .find("new playlist", is_field)
         .or_else(|_| ui.find("", is_field))?;
