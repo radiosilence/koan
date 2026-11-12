@@ -328,6 +328,9 @@ struct Ask {
     title: SharedString,
     verb: SharedString,
     destructive: bool,
+    /// Whether it can be put away without its verb: a question can, news
+    /// (`tell`) has only the one answer.
+    cancel: bool,
     /// What the write will change, a line each.
     preview: Preview,
     /// Said under the preview: what the write leaves alone, or how to undo
@@ -574,10 +577,40 @@ pub fn confirm(c: Confirm, window: &mut Window, cx: &mut App, run: impl Fn(&mut 
             title: c.title,
             verb: c.verb,
             destructive: c.destructive,
+            cancel: true,
             preview: Rc::new(move |_| lines.clone()),
             note: c.note,
             name: None,
             run: Rc::new(move |_, cx| run(cx)),
+            focus: Some(focus),
+            before,
+            _enter: None,
+        },
+        cx,
+    );
+}
+
+/// Says why something asked for could not be done, over the window, until
+/// it is put away: what failed is news to answer, not a line to miss.
+pub fn tell(
+    title: impl Into<SharedString>,
+    lines: Vec<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let before = window.focused(cx);
+    let focus = cx.focus_handle();
+    window.focus(&focus, cx);
+    show(
+        Ask {
+            title: title.into(),
+            verb: "ok".into(),
+            destructive: false,
+            cancel: false,
+            preview: Rc::new(move |_| lines.clone()),
+            note: None,
+            name: None,
+            run: Rc::new(|_, _| {}),
             focus: Some(focus),
             before,
             _enter: None,
@@ -621,6 +654,7 @@ pub fn name(
             title: title.into(),
             verb: verb.into(),
             destructive: false,
+            cancel: true,
             preview: Rc::new(preview),
             note: None,
             name: Some(input.clone()),
@@ -743,7 +777,11 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                 panel(ask.title.as_ref(), &look)
                     .child(head(
                         ask.title.as_ref(),
-                        vec![cancel.into_any_element(), verb.into_any_element()],
+                        if ask.cancel {
+                            vec![cancel.into_any_element(), verb.into_any_element()]
+                        } else {
+                            vec![verb.into_any_element()]
+                        },
                         &look,
                     ))
                     .child(
@@ -1004,6 +1042,40 @@ mod tests {
                 "tab entered the fading question"
             );
         }
+    }
+
+    /// News told over the window has only its one answer, and goes with it.
+    #[gpui::test]
+    fn told_news_goes_with_its_one_answer(cx: &mut TestAppContext) {
+        use gpui::accesskit::Action;
+
+        use crate::components::testing::{act, redraw, stage, tree};
+
+        let (_, cx) = stage(cx, |window, cx| {
+            overlay(window, cx)
+                .map(|element| vec![("ask", element)])
+                .unwrap_or_default()
+        });
+        cx.update(|window, cx| {
+            tell(
+                "playlist not made",
+                vec!["the library is busy".into()],
+                window,
+                cx,
+            )
+        });
+        redraw(cx);
+        let labels: Vec<String> = tree(cx)["nodes"]
+            .as_object()
+            .expect("nodes")
+            .values()
+            .filter_map(|n| n["aria"]["label"].as_str().map(str::to_owned))
+            .collect();
+        assert!(labels.iter().any(|l| l == "ok"), "{labels:?}");
+        assert!(!labels.iter().any(|l| l == "cancel"), "{labels:?}");
+        act(cx, "ok", Action::Click);
+        let host = cx.update(|_, cx| asking(cx));
+        assert!(cx.update(|_, cx| host.read(cx).ask.is_none()));
     }
 
     struct Presenter {

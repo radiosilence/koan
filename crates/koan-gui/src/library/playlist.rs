@@ -719,8 +719,9 @@ fn described(items: &[&QueueItem]) -> Vec<(i64, String)> {
 }
 
 /// Asks for a name for a new playlist holding what `sets` name (nothing, for
-/// an empty one), then makes it and opens it. The tracks are resolved first,
-/// so the question can say how many it will hold.
+/// an empty one), then makes it and opens it. The question comes up at once;
+/// the tracks are resolved meanwhile and counted in it as they land. What
+/// stops the playlist being made is said over the window, never only logged.
 pub fn new_playlist(
     engine: std::sync::Arc<koan_runtime::KoanEngine>,
     nav: Entity<crate::navigator::Navigator>,
@@ -728,57 +729,87 @@ pub fn new_playlist(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let handle = window.window_handle();
-    cx.spawn(async move |cx| {
-        let tracks = if sets.is_empty() {
-            Vec::new()
-        } else {
-            match engine.clone().track_ids_of(sets).await {
-                Ok(tracks) => tracks,
-                Err(e) => return log::warn!("new playlist: {e}"),
-            }
-        };
-        let held = tracks.len() as u64;
-        cx.update_window(handle, |_, window, cx| {
-            name(
-                "new playlist",
-                "create",
-                "",
-                move |typed| {
-                    let holding = if held == 0 {
-                        "nothing yet".to_owned()
-                    } else {
-                        count(held, "track", "tracks")
-                    };
-                    if typed.is_empty() {
-                        vec![format!("Name it. It will hold {holding}.").into()]
-                    } else {
-                        vec![format!("“{typed}”, holding {holding}.").into()]
-                    }
-                },
-                window,
-                cx,
-                move |name, cx| {
-                    let (engine, nav, tracks) = (engine.clone(), nav.clone(), tracks.clone());
-                    cx.spawn(
-                        async move |cx| match engine.create_playlist(name, tracks).await {
-                            Ok(playlist) => cx.update(|cx| {
-                                nav.update(cx, |nav, cx| {
-                                    if nav.go(Route::Playlist(playlist.id)) {
-                                        cx.notify();
-                                    }
-                                })
-                            }),
-                            Err(e) => log::warn!("new playlist: {e}"),
-                        },
-                    )
-                    .detach();
-                },
-            )
+    use futures::FutureExt as _;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    type Resolved = Result<Vec<i64>, String>;
+    let tracks = if sets.is_empty() {
+        futures::future::ready(Ok(Vec::new())).boxed_local()
+    } else {
+        let engine = engine.clone();
+        cx.spawn(async move |_| engine.track_ids_of(sets).await.map_err(|e| e.to_string()))
+            .boxed_local()
+    }
+    .shared();
+    // What the question says it will hold: unknown until the tracks land.
+    let held: Rc<RefCell<Option<Resolved>>> = Rc::default();
+    {
+        let (tracks, held) = (tracks.clone(), held.clone());
+        let host = crate::components::sheet::asking(cx);
+        cx.spawn(async move |cx| {
+            let resolved: Resolved = tracks.await;
+            *held.borrow_mut() = Some(resolved);
+            cx.update(|cx| host.update(cx, |_, cx| cx.notify()));
         })
-        .ok();
-    })
-    .detach();
+        .detach();
+    }
+    let handle = window.window_handle();
+    name(
+        "new playlist",
+        "create",
+        "",
+        move |typed| {
+            let holding = match &*held.borrow() {
+                None => None,
+                Some(Ok(t)) if t.is_empty() => Some("nothing yet".to_owned()),
+                Some(Ok(t)) => Some(count(t.len() as u64, "track", "tracks")),
+                Some(Err(e)) => return vec![format!("Could not read the tracks: {e}").into()],
+            };
+            match (typed.is_empty(), holding) {
+                (true, Some(holding)) => vec![format!("Name it. It will hold {holding}.").into()],
+                (true, None) => vec!["Name it.".into()],
+                (false, Some(holding)) => vec![format!("“{typed}”, holding {holding}.").into()],
+                (false, None) => vec![format!("“{typed}”.").into()],
+            }
+        },
+        window,
+        cx,
+        move |name, cx| {
+            let (engine, nav, tracks) = (engine.clone(), nav.clone(), tracks.clone());
+            cx.spawn(async move |cx| {
+                let made = match tracks.await {
+                    Ok(tracks) => engine
+                        .create_playlist(name, tracks)
+                        .await
+                        .map_err(|e| e.to_string()),
+                    Err(e) => Err(format!("Could not read the tracks: {e}")),
+                };
+                match made {
+                    Ok(playlist) => cx.update(|cx| {
+                        nav.update(cx, |nav, cx| {
+                            if nav.go(Route::Playlist(playlist.id)) {
+                                cx.notify();
+                            }
+                        })
+                    }),
+                    Err(e) => {
+                        log::warn!("new playlist: {e}");
+                        cx.update_window(handle, |_, window, cx| {
+                            crate::components::sheet::tell(
+                                "playlist not made",
+                                vec![e.into()],
+                                window,
+                                cx,
+                            )
+                        })
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+        },
+    );
 }
 
 impl PlaylistPage {

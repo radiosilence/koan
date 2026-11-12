@@ -88,7 +88,23 @@ pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut Ap
     cx.spawn(async move |cx| {
         match added.await {
             Ok(_) => cx.update(|cx| arrived(Some(playlist), cx)),
-            Err(e) => log::warn!("add to playlist {playlist}: {e}"),
+            Err(e) => {
+                log::warn!("add to playlist {playlist}: {e}");
+                cx.update(|cx| {
+                    if let Some(window) = cx.active_window() {
+                        window
+                            .update(cx, |_, window, cx| {
+                                crate::components::sheet::tell(
+                                    "not added",
+                                    vec![e.to_string().into()],
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .ok();
+                    }
+                });
+            }
         }
         feed.update(cx, |feed, cx| feed.reload_playlists(cx));
     })
