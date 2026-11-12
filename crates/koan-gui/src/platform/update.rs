@@ -6,11 +6,11 @@
 //! macOS the app inside it against the Developer ID this one is signed with.
 //! The AppImage is renamed into place at once, since a running AppImage
 //! keeps its own mounted image; the Mac's bundle is swapped by a script that
-//! waits for this process to exit, over the bundle the person has even when
-//! Gatekeeper runs a translocated copy of it. The Homebrew cask and the `.deb` belong
-//! to their package managers, and an app bundle kōan cannot write to belongs
-//! to an administrator: those are only told a version is out. A build from
-//! source never checks.
+//! waits for this process to exit. The Homebrew cask and the `.deb` belong
+//! to their package managers, an app bundle kōan cannot write to belongs to
+//! an administrator, and a Mac app run from the disk image or from where it
+//! was downloaded is asked to be moved to Applications first: those are only
+//! told a version is out. A build from source never checks.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -584,67 +584,43 @@ fn writable(dir: &Path) -> bool {
     made
 }
 
-/// The bundle the person has, for one Gatekeeper translocated: a quarantined
-/// app opened where it was unpacked (Downloads, a folder of the person's)
-/// runs from a read-only copy at a random path, which cannot be written over,
-/// while the bundle it was opened from can be. The new version replaces that
-/// one, and carries no quarantine, so it is not translocated again.
+/// Whether Gatekeeper translocated this bundle: a quarantined app opened
+/// where it was unpacked runs from a read-only copy at a random path until
+/// the person moves it in Finder. Asked of Security alone, so nothing outside
+/// the bundle is touched: the folder it came from is usually Downloads or the
+/// Desktop, which the system would ask the person to let kōan into.
 #[cfg(target_os = "macos")]
-fn untranslocated(app: PathBuf) -> PathBuf {
-    use objc2::rc::Retained;
+fn translocated(app: &Path) -> bool {
     use objc2_foundation::{NSString, NSURL};
     use std::ffi::c_void;
     #[link(name = "Security", kind = "framework")]
     unsafe extern "C" {
         fn SecTranslocateIsTranslocatedURL(
             path: &NSURL,
-            translocated: *mut bool,
+            translocated: *mut u8,
             error: *mut *mut c_void,
-        ) -> bool;
-        fn SecTranslocateCreateOriginalPathForURL(
-            path: &NSURL,
-            error: *mut *mut c_void,
-        ) -> *mut NSURL;
+        ) -> u8;
     }
     let Some(path) = app.to_str() else {
-        return app;
+        return false;
     };
-    let url = NSURL::fileURLWithPath(&NSString::from_str(path));
-    let mut translocated = false;
-    // SAFETY: a valid URL, an out-pointer to a bool, and no error wanted.
-    let asked =
-        unsafe { SecTranslocateIsTranslocatedURL(&url, &mut translocated, std::ptr::null_mut()) };
-    if !asked || !translocated {
-        return app;
-    }
-    // SAFETY: as above; the URL returned is owned (the create rule).
-    let original = unsafe {
-        Retained::from_raw(SecTranslocateCreateOriginalPathForURL(
-            &url,
-            std::ptr::null_mut(),
-        ))
-    };
-    match original.and_then(|url| url.path()) {
-        Some(original) => {
-            let original = PathBuf::from(original.to_string());
-            log::info!(
-                "updates: translocated from {}, running at {}",
-                original.display(),
-                app.display()
-            );
-            original
+    objc2::rc::autoreleasepool(|_| {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+        let mut translocated = 0u8;
+        // SAFETY: a valid URL, an out-pointer to a Boolean, no error wanted.
+        let asked = unsafe {
+            SecTranslocateIsTranslocatedURL(&url, &mut translocated, std::ptr::null_mut())
+        };
+        if asked == 0 {
+            log::warn!("updates: could not ask whether {path} is translocated");
         }
-        None => app,
-    }
+        translocated != 0
+    })
 }
 
 #[cfg(target_os = "macos")]
 fn install() -> Install {
-    let Some(app) = std::env::current_exe()
-        .ok()
-        .and_then(|e| bundle_of(&e))
-        .map(untranslocated)
-    else {
+    let Some(app) = std::env::current_exe().ok().and_then(|e| bundle_of(&e)) else {
         return Install::Source;
     };
     let Some((id, team)) = signature(&app) else {
@@ -657,7 +633,16 @@ fn install() -> Install {
     if cask && app.starts_with("/Applications") {
         return Install::Told("Homebrew keeps this copy up to date: brew upgrade --cask koan-app.");
     }
+    const MOVE: &str = "Move kōan to Applications to keep it up to date: where it runs now, macOS keeps it read-only.";
+    if translocated(&app) {
+        return Install::Told(MOVE);
+    }
     if !app.parent().is_some_and(writable) {
+        // A disk image, mounted read-only, rather than a folder of an
+        // administrator's.
+        if app.starts_with("/Volumes") {
+            return Install::Told(MOVE);
+        }
         return Install::Told(
             "kōan cannot write to the folder it is in, so it cannot replace itself.",
         );
