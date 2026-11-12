@@ -873,18 +873,35 @@ impl QueueView {
             let (status, track, on_server, on_disk) =
                 (item.status, item.track_id, item.on_server, item.on_disk);
             let mut transfer = None;
+            let mut out_of_reach = false;
             if let (Some(track), Some(feed)) = (track, self.feed()) {
                 let feed = feed.read(cx);
                 favourite = Some(feed.is_favourite(Playable::Track(track)));
                 transfer = feed.transfers.get(&track).copied();
+                // This device's reach: another device's queue, shown while
+                // it is controlled, is fetched by that device.
+                out_of_reach = feed.out_of_reach
+                    && cx
+                        .global::<crate::mirror::Mirror>()
+                        .devices
+                        .read(cx)
+                        .0
+                        .target
+                        .is_none();
             }
             // Without the library's feed (an offscreen render), the row's own
             // status is all there is to go on.
             if self.lib.is_none() && status == EntryStatus::Downloading {
                 transfer = Some(koan_runtime::TransferState::Running);
             }
-            availability =
-                crate::transfers::of_queue_row(status, track, on_server, on_disk, transfer);
+            availability = crate::transfers::of_queue_row(
+                status,
+                track,
+                on_server,
+                on_disk,
+                transfer,
+                out_of_reach,
+            );
         }
         let feed = self.feed().cloned();
         let queue = self.queue.read(cx);

@@ -2615,6 +2615,11 @@ impl KoanEngine {
         self.0.clone().cache_limit_bytes().await
     }
 
+    /// How many downloads the person asked for have not arrived.
+    pub async fn owed_downloads(self: Arc<Self>) -> Result<u32, KoanError> {
+        self.0.clone().owed_downloads().await
+    }
+
     /// Delete every downloaded remote track. The library rows stay.
     pub async fn clear_download_cache(self: Arc<Self>) -> Result<CacheCleared, KoanError> {
         self.0.clone().clear_download_cache().await
@@ -5122,6 +5127,7 @@ mod types {
         pub offline: bool,
         /// Turned on by hand, rather than by the server being out of reach.
         pub offline_manual: bool,
+        pub out_of_reach: bool,
         /// The server can sign a device without a keyboard in, once someone here
         /// approves it.
         pub pairing: bool,

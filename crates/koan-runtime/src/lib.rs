@@ -54,6 +54,7 @@ pub use serve::{InviteTo, ShareStatus, Sharing, TailscaleStatus};
 mod server_queue;
 mod state;
 mod types;
+pub use koan_core::player::{NOT_HERE, NOTHING_HERE};
 pub use state::*;
 pub use types::*;
 
@@ -5324,6 +5325,19 @@ impl KoanEngine {
         offload::offload(|| Config::cached().cache_limit_bytes()).await
     }
 
+    /// How many downloads the person asked for have not arrived: every one
+    /// owed, listed as a transfer or still waiting its turn.
+    pub async fn owed_downloads(self: Arc<Self>) -> Result<u32, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(
+                koan_core::db::queries::owed_downloads(&db.conn)
+                    .map_or(0, |owed| owed.len() as u32),
+            )
+        })
+        .await
+    }
+
     /// Delete every downloaded remote track. The library rows stay.
     pub async fn clear_download_cache(self: Arc<Self>) -> Result<CacheCleared, KoanError> {
         offload::offload(move || {
@@ -7807,6 +7821,7 @@ fn connection_info() -> ConnectionInfo {
         share_accounts: devices::accounts(),
         offline: koan_core::remote::offline::active(),
         offline_manual: koan_core::remote::offline::manual(),
+        out_of_reach: koan_core::remote::offline::out_of_reach(),
         sign_in_refused: koan_core::helpers::sign_in_refused(&Config::cached()),
         standing: koan_core::helpers::server_standing(&Config::cached()).into(),
         share_links_unavailable: share_links_unavailable(&Config::cached()),

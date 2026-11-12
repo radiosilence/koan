@@ -1082,6 +1082,7 @@ impl PlaylistPage {
                             item.on_disk,
                             item.track_id
                                 .and_then(|t| feed.read(cx).transfers.get(&t).copied()),
+                            feed.read(cx).out_of_reach,
                         ),
                     },
                     &look,

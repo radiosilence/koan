@@ -118,9 +118,17 @@ fn next_item(
             .or_else(|| q.pending.pop_front()),
         None => q.pending.pop_front(),
     };
-    entry
-        .map(|(db_id, id)| (db_id, Some(id)))
-        .or_else(|| q.cache.pop_front().map(|db_id| (db_id, None)))
+    if let Some((db_id, id)) = entry {
+        return Some((db_id, Some(id)));
+    }
+    // A track asked into the cache that a queue entry has fetched since is
+    // here already: claiming it would replace its finished row with nothing.
+    while let Some(db_id) = q.cache.pop_front() {
+        if !store.arrived(db_id) {
+            return Some((db_id, None));
+        }
+    }
+    None
 }
 
 /// Someone asked for music: try the server now rather than when the outage
@@ -240,7 +248,22 @@ impl DownloadQueue {
         if track_ids.is_empty() {
             return;
         }
-        self.inner.queue.lock().cache.extend(track_ids);
+        crate::remote::keep::want(&track_ids);
+        self.owe(track_ids);
+    }
+
+    /// Fetch these tracks into the cache, as asked before: by the person
+    /// in an earlier run, or before a failure. Ones already waiting or
+    /// being fetched are left where they are.
+    fn owe(&self, track_ids: Vec<i64>) {
+        if track_ids.is_empty() {
+            return;
+        }
+        owe_into(
+            &mut self.inner.queue.lock(),
+            self.inner.state.downloads(),
+            track_ids,
+        );
         wake_workers(&self.inner);
     }
 
@@ -259,6 +282,7 @@ impl DownloadQueue {
         let mut q = self.inner.queue.lock();
         q.pending.retain(|(track, _)| !track_ids.contains(track));
         q.cache.retain(|track| !track_ids.contains(track));
+        crate::remote::keep::unwant(track_ids);
         for &track in track_ids {
             store.let_go(track);
         }
@@ -307,6 +331,17 @@ impl DownloadQueue {
         q.pending.clear();
         q.cache.clear();
         self.inner.state.downloads().forget_all();
+    }
+}
+
+/// Queue `track_ids` for the cache behind what is there, leaving out any
+/// already waiting or being fetched.
+fn owe_into(q: &mut Queue, store: &DownloadStore, track_ids: Vec<i64>) {
+    for track in track_ids {
+        let queued = q.cache.contains(&track) || q.pending.iter().any(|(t, _)| *t == track);
+        if !queued && !store.in_flight(track) {
+            q.cache.push_back(track);
+        }
     }
 }
 
@@ -658,8 +693,26 @@ fn follow_playlist(inner: Arc<Inner>) {
     let mut last_version: Option<u64> = None;
     let mut last_cursor: Option<QueueItemId> = None;
     let mut last_limit = LIMIT_CHANGES.load(std::sync::atomic::Ordering::Acquire);
+    let mut last_reconnect = RECONNECTS.load(std::sync::atomic::Ordering::Acquire);
+    let mut last_clear = CLEARS.load(std::sync::atomic::Ordering::Acquire);
+    // What was asked for in an earlier run and never arrived.
+    DownloadQueue {
+        inner: inner.clone(),
+    }
+    .owe(crate::remote::keep::owed());
     loop {
+        let clear = CLEARS.load(std::sync::atomic::Ordering::Acquire);
+        if clear != last_clear {
+            last_clear = clear;
+            drop_unowed(&inner);
+        }
         follow_reach(&inner);
+        let reconnect = RECONNECTS.load(std::sync::atomic::Ordering::Acquire);
+        if reconnect != last_reconnect {
+            last_reconnect = reconnect;
+            retry_server_now();
+            fetch_what_is_owed(&inner);
+        }
         // The queue runs from the cursor, so a cursor move reorders it as
         // well. Synced before promoting, so the cursor's track is queued by
         // the time it is looked for.
@@ -708,11 +761,11 @@ fn follow_playlist(inner: Arc<Inner>) {
 /// on every wake of the engine's signal, which each way in and out of reach
 /// rings: a download meeting no connection, the server answering, the link
 /// coming up, offline mode switched. Two atomic-cheap reads.
-fn follow_reach(inner: &Inner) {
+fn follow_reach(inner: &Arc<Inner>) {
     reach_is(inner, crate::remote::offline::out_of_reach());
 }
 
-fn reach_is(inner: &Inner, out_of_reach: bool) {
+fn reach_is(inner: &Arc<Inner>, out_of_reach: bool) {
     if inner.state.set_here_only(out_of_reach) {
         log::info!(
             "server {}",
@@ -723,7 +776,72 @@ fn reach_is(inner: &Inner, out_of_reach: bool) {
             }
         );
         inner.cmd_tx.send(PlayerCommand::ReachChanged).ok();
+        // The apps' Connection slice carries it, and is sent when the
+        // device list's version moves.
+        crate::remote::devices::touch();
+        // Back in reach: one path with the other ways back (`reconnected`),
+        // which the watcher takes once however many arrive together.
+        if !out_of_reach {
+            reconnected();
+        }
     }
+}
+
+/// Moved whenever the way to the server may have opened again without the
+/// queue seeing it close: the app coming forward on iOS, whose suspension
+/// cut every transfer short, or the link coming back.
+static RECONNECTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The way to the server may be open again: fetch what is owed now, and try
+/// the server at once rather than when an outage's backoff next says to.
+pub fn reconnected() {
+    RECONNECTS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    crate::signal::engine_changed().bump();
+}
+
+/// Everything a way back to the server should fetch: what failed for want
+/// of a network while it was away (a transfer cut short, a server not
+/// answering past the attempts a track gets) and every download the person
+/// asked for that has not arrived, in this run or an earlier one. Any other
+/// failure stands until the person retries it.
+fn fetch_what_is_owed(inner: &Arc<Inner>) {
+    let store = inner.state.downloads();
+    let lost = store.take_lost();
+    if !lost.is_empty() {
+        log::info!(
+            "fetching {} download(s) lost to the network again",
+            lost.len()
+        );
+    }
+    // Their failed rows go: a new transfer lists its own.
+    store.forget_settled(&lost);
+    inner.state.retry_lost(&lost);
+    DownloadQueue {
+        inner: inner.clone(),
+    }
+    .owe(crate::remote::keep::owed());
+}
+
+/// What is owed now that some of it was cleared (`keep::cleared`), and moved
+/// each time that is worked out again.
+static STILL_OWED: Mutex<Option<HashSet<i64>>> = Mutex::new(None);
+static CLEARS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Downloads were cleared: what is still owed is `owed`, and an ask for
+/// anything else, waiting or being fetched, is dropped.
+pub(crate) fn still_owed(owed: HashSet<i64>) {
+    *STILL_OWED.lock() = Some(owed);
+    CLEARS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    crate::signal::engine_changed().bump();
+}
+
+fn drop_unowed(inner: &Inner) {
+    let Some(owed) = STILL_OWED.lock().take() else {
+        return;
+    };
+    let mut q = inner.queue.lock();
+    q.cache.retain(|track| owed.contains(track));
+    inner.state.downloads().unkeep_unless(&owed);
 }
 
 /// Send the cursor's track, and the one after it, down the priority lane, if
@@ -1195,6 +1313,102 @@ mod tests {
         reach_is(&inner, false);
         assert!(!inner.state.here_only());
         assert_eq!(told(), 1);
+    }
+
+    /// Asked into the cache again, a track already waiting or being fetched
+    /// is not queued twice.
+    #[test]
+    fn a_download_owed_twice_is_fetched_once() {
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
+        store.claim(2, None);
+        q.pending.push_back((5, qid()));
+        owe_into(&mut q, &store, vec![3, 2, 3, 5]);
+        owe_into(&mut q, &store, vec![3, 4]);
+        let cache: Vec<i64> = q.cache.iter().copied().collect();
+        assert_eq!(
+            cache,
+            vec![3, 4],
+            "2 is in flight, 3 is waiting already, 5 is a queue entry's"
+        );
+    }
+
+    /// A track asked into the cache that a queue entry fetched meanwhile is
+    /// not claimed again: its finished row stays.
+    #[test]
+    fn a_track_already_arrived_is_not_fetched_for_the_cache() {
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
+        store.claim(7, Some(qid()));
+        store.announce(
+            7,
+            "t".into(),
+            String::new(),
+            "/c/t.part".into(),
+            "/c/t".into(),
+        );
+        let _ = store.end_for_test(7);
+        q.cache.extend([7, 8]);
+        assert_eq!(next_item(&mut q, &store, None), Some((8, None)));
+        assert!(store.arrived(7), "the finished row is still listed");
+    }
+
+    /// Clearing downloads drops every ask no longer owed, waiting or being
+    /// fetched for the cache alone.
+    #[test]
+    fn clearing_downloads_drops_what_is_no_longer_owed() {
+        let (inner, _, _) = queue_over(&[1]);
+        let store = inner.state.downloads();
+        store.claim(2, None);
+        inner.queue.lock().cache.extend([3, 4]);
+        still_owed([4].into_iter().collect());
+        drop_unowed(&inner);
+        let cache: Vec<i64> = inner.queue.lock().cache.iter().copied().collect();
+        assert_eq!(cache, vec![4]);
+        assert!(
+            store.abandoned(2),
+            "the transfer kept for the cache alone stops"
+        );
+    }
+
+    /// A download lost to the network is fetched again when the server
+    /// comes back, without anyone asking; a failure of any other kind, and a
+    /// cancel, stand.
+    #[test]
+    fn what_failed_while_out_of_reach_is_fetched_again_when_the_server_is_back() {
+        let (inner, ids, _) = queue_over(&[1, 2, 3]);
+        const CUT_SHORT: &str = "connection reset";
+        const REFUSED: &str = "Fake Amp cannot play MP3";
+        for (_, id) in &ids[..2] {
+            inner
+                .state
+                .update_item_state(*id, ItemState::Failed(CUT_SHORT.into()));
+        }
+        inner
+            .state
+            .update_item_state(ids[2].1, ItemState::Failed(REFUSED.into()));
+        let cancelled = qid();
+        inner.state.add_items(vec![PlaylistItem {
+            id: cancelled,
+            state: ItemState::Failed(downloads::CANCELLED.into()),
+            ..inner.state.get_item(ids[0].1).unwrap()
+        }]);
+        inner.state.downloads().lost(1);
+        inner.state.downloads().lost(2);
+        fetch_what_is_owed(&inner);
+
+        let retried = |id: QueueItemId| !matches!(inner.state.item_state(id), Some(ItemState::Failed(r)) if r == CUT_SHORT);
+        assert!(
+            ids[..2].iter().all(|(_, id)| retried(*id)),
+            "each fetched again"
+        );
+        assert_eq!(
+            inner.state.item_state(ids[2].1),
+            Some(ItemState::Failed(REFUSED.into())),
+            "a renderer's refusal stands"
+        );
+        assert!(
+            matches!(inner.state.item_state(cancelled), Some(ItemState::Failed(r)) if r == downloads::CANCELLED),
+            "a cancel stands"
+        );
     }
 
     #[test]

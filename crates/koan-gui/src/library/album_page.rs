@@ -276,6 +276,7 @@ impl AlbumPage {
             selected,
             gathered: false,
             transfer: feed.transfers.get(&id).copied(),
+            out_of_reach: feed.out_of_reach,
             drag,
             kind,
             note: None,

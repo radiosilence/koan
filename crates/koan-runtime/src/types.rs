@@ -3019,6 +3019,10 @@ pub struct ConnectionInfo {
     pub offline: bool,
     /// Turned on by hand, rather than by the server being out of reach.
     pub offline_manual: bool,
+    /// Nothing can be fetched now: offline mode, or no connection to the
+    /// server at all (`koan_core::remote::offline::out_of_reach`). A track
+    /// not on this device does not play, and a queued download waits.
+    pub out_of_reach: bool,
     /// The server can sign a device without a keyboard in, once someone here
     /// approves it.
     pub pairing: bool,

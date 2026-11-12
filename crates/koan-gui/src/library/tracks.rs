@@ -424,6 +424,7 @@ impl TrackBrowser {
             selected,
             gathered: true,
             transfer: feed.transfers.get(&id).copied(),
+            out_of_reach: feed.out_of_reach,
             drag,
             note: None,
             cursor: (self.keyed && self.cursor.at == Some(index)).then(|| self.spot.clone()),

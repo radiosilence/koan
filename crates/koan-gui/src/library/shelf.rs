@@ -563,6 +563,7 @@ impl ShelfPage {
                 selected: self.selection.contains(item),
                 gathered: true,
                 transfer: feed.transfers.get(&track.id).copied(),
+                out_of_reach: feed.out_of_reach,
                 drag,
                 note: None,
                 cursor: (self.on(s.artists.len() + s.albums.len() + index))

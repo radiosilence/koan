@@ -157,6 +157,11 @@ pub(crate) fn download_track(
         Err(SubsonicError::Download(DownloadError::Cancelled)) => None,
         Err(e) => {
             log::warn!("x {} — {}", track.title, e);
+            // Cut short or never answered: the network's doing, not the
+            // track's, and fetched again when the server is back.
+            if matches!(&e, SubsonicError::Download(d) if d.is_retryable() || d.is_unavailable()) {
+                store.lost(db_id);
+            }
             Some(Err(e.to_string()))
         }
         Ok(()) => {

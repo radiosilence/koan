@@ -604,6 +604,7 @@ impl ArtistPage {
                     selected,
                     gathered: true,
                     transfer: feed.transfers.get(&track.id).copied(),
+                    out_of_reach: feed.out_of_reach,
                     drag,
                     kind: crate::components::RowKind::Art,
                     note: None,
