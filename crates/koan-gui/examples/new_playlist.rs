@@ -108,8 +108,12 @@ fn main() -> Result {
         ui.cx.update_window(ui.window, |_, window, cx| {
             if let Some(s) = touch {
                 s.update(cx, |s, cx| s.walk_playlist_sheet(tracks, window, cx));
-            } else if let Some(s) = desk {
-                s.update(cx, |s, cx| s.walk_playlist_sheet(tracks, window, cx));
+            } else if let Some(lib) = desk
+                .as_ref()
+                .and_then(|s| s.read(cx).library())
+                .map(|l| l.read(cx).lib())
+            {
+                koan_gui::library::pick_playlist::open_tracks(&lib, tracks, window, cx);
             }
         })
     };
@@ -131,9 +135,7 @@ fn main() -> Result {
         window.draw(cx).clear(cx);
     })?;
     ui.frame()?;
-    let field = ui
-        .find("new playlist", is_field)
-        .or_else(|_| ui.find("", is_field))?;
+    let field = ui.find("name", is_field)?;
     ui.send(field, Action::Focus, None)?;
     ui.send(
         field,
@@ -145,10 +147,11 @@ fn main() -> Result {
     loop {
         ui.frame()?;
         let route = ui.cx.update(|cx| {
-            touch
-                .as_ref()
-                .map(|s| s.read(cx).route(cx))
-                .or_else(|| desk.as_ref().map(|s| s.read(cx).route(cx)))
+            touch.as_ref().map(|s| s.read(cx).route(cx)).or_else(|| {
+                let lib = desk.as_ref()?.read(cx).library()?.read(cx).lib();
+                let navigator = lib.nav.read(cx).navigator();
+                Some(navigator.read(cx).current())
+            })
         });
         if let Some(Route::Playlist(id)) = route {
             let after = futures::executor::block_on(engine.clone().playlists())?;
@@ -214,10 +217,9 @@ impl Ui {
             self.frame()?;
             let nodes = self.nodes()?;
             let found = nodes.iter().rfind(|n| {
-                (label.is_empty()
-                    || n["aria"]["label"]
-                        .as_str()
-                        .is_some_and(|l| l.eq_ignore_ascii_case(label)))
+                n["aria"]["label"]
+                    .as_str()
+                    .is_some_and(|l| l.eq_ignore_ascii_case(label))
                     && accepts(n)
             });
             if let Some(node) = found {

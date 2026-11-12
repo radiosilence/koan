@@ -33,6 +33,13 @@ pub fn open(lib: &Lib, items: Arc<[Playable]>, after: After, window: &mut Window
     ask::present(sheet, window, cx);
 }
 
+/// Opens the sheet for `tracks`, nothing to do after: for tools that walk
+/// the pages.
+pub fn open_tracks(lib: &Lib, tracks: Vec<i64>, window: &mut Window, cx: &mut App) {
+    let items: Arc<[Playable]> = tracks.into_iter().map(Playable::Track).collect();
+    open(lib, items, None, window, cx);
+}
+
 pub struct PickPlaylist {
     lib: Lib,
     items: Arc<[Playable]>,
@@ -152,8 +159,8 @@ impl PickPlaylist {
         self.shown.first().map(|i| playlists[*i].id)
     }
 
-    fn choose(&mut self, id: i64, _: &mut Window, cx: &mut Context<Self>) {
-        add_to_playlist(&self.lib, id, &self.items, cx);
+    fn choose(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        add_to_playlist(&self.lib, id, &self.items, window.window_handle(), cx);
         self.done(cx);
     }
 

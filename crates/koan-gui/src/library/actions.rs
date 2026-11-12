@@ -80,7 +80,14 @@ pub fn play_list(lib: &Lib, track_ids: Vec<i64>, index: usize, cx: &mut App) {
     .detach();
 }
 
-pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut App) {
+/// `window` is where the add was asked for, which says so if it fails.
+pub fn add_to_playlist(
+    lib: &Lib,
+    playlist: i64,
+    items: &[Playable],
+    window: AnyWindowHandle,
+    cx: &mut App,
+) {
     let engine = lib.engine.clone();
     let sets = sources(items);
     let feed = lib.feed.clone();
@@ -90,20 +97,15 @@ pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut Ap
             Ok(_) => cx.update(|cx| arrived(Some(playlist), cx)),
             Err(e) => {
                 log::warn!("add to playlist {playlist}: {e}");
-                cx.update(|cx| {
-                    if let Some(window) = cx.active_window() {
-                        window
-                            .update(cx, |_, window, cx| {
-                                crate::components::sheet::tell(
-                                    "not added",
-                                    vec![e.to_string().into()],
-                                    window,
-                                    cx,
-                                )
-                            })
-                            .ok();
-                    }
-                });
+                cx.update_window(window, |_, window, cx| {
+                    crate::components::sheet::tell(
+                        "not added",
+                        vec![e.to_string().into()],
+                        window,
+                        cx,
+                    )
+                })
+                .ok();
             }
         }
         feed.update(cx, |feed, cx| feed.reload_playlists(cx));

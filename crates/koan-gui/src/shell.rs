@@ -261,27 +261,6 @@ impl Shell {
         });
     }
 
-    /// The page in front; for tools that walk the pages headlessly.
-    pub fn route(&self, cx: &App) -> Route {
-        self.nav.read(cx).current()
-    }
-
-    /// Opens "add to playlist" on `tracks`; for tools that walk the pages.
-    pub fn walk_playlist_sheet(
-        &mut self,
-        tracks: Vec<i64>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) {
-            let items: std::sync::Arc<[_]> = tracks
-                .into_iter()
-                .map(crate::library::drag::Playable::Track)
-                .collect();
-            crate::library::pick_playlist::open(&lib, items, None, window, cx);
-        }
-    }
-
     /// The text size in the theme's steps, within its range.
     fn step_text_size(by: i32, cx: &mut App) {
         let now = cx.global::<theme::KoanTheme>().text_size as i32;
