@@ -49,8 +49,6 @@ pub struct Dismissed;
 struct Item {
     kind: Kind,
     id: i64,
-    /// A track's record, the page Return takes it to.
-    album: Option<i64>,
     /// The sleeve the row shows: its record's, or the artist's photo.
     art: Option<Art>,
     title: SharedString,
@@ -64,6 +62,17 @@ impl Item {
             Kind::Track => Playable::Track(self.id),
             Kind::Album => Playable::Album(self.id),
             Kind::Artist => Playable::Artist(self.id),
+        }
+    }
+
+    /// Where Return takes the row: a record's or an artist's page, and a
+    /// track's record's. A track on no record has nowhere to go.
+    fn page(&self) -> Option<Page> {
+        match (self.kind, self.art) {
+            (Kind::Album, _) => Some(Page::Album(self.id)),
+            (Kind::Artist, _) => Some(Page::Artist(self.id)),
+            (Kind::Track, Some(Art::Album(album))) => Some(Page::Album(album)),
+            (Kind::Track, _) => None,
         }
     }
 
@@ -89,7 +98,6 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
     let tracks = s.tracks.iter().take(TRACKS).map(|t| Item {
         kind: Kind::Track,
         id: t.id,
-        album: t.album_id,
         art: t.album_id.map(Art::Album),
         title: t.title.clone().into(),
         detail: Some(format!("{} · {}", credit(&t.artist_credit), t.album_title).into()),
@@ -98,7 +106,6 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
     let albums = s.albums.iter().take(ALBUMS).map(|a| Item {
         kind: Kind::Album,
         id: a.id,
-        album: None,
         art: Some(Art::Album(a.id)),
         title: a.title.clone().into(),
         detail: Some(credit(&a.artist_credit).into()),
@@ -107,7 +114,6 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
     let artists = s.artists.iter().take(ARTISTS).map(|a| Item {
         kind: Kind::Artist,
         id: a.id,
-        album: None,
         art: Some(Art::Artist(a.id)),
         title: a.name.clone().into(),
         detail: None,
@@ -417,13 +423,8 @@ impl Found {
             // Return navigates and never touches playback: the verbs that
             // play say so.
             Verb::Take if !picking => {
-                let page = match first.kind {
-                    Kind::Album => Page::Album(first.id),
-                    Kind::Artist => Page::Artist(first.id),
-                    Kind::Track => match first.album {
-                        Some(album) => Page::Album(album),
-                        None => return,
-                    },
+                let Some(page) = first.page() else {
+                    return;
                 };
                 self.lib.nav.update(cx, |nav, cx| {
                     nav.open(page, cx);
@@ -630,12 +631,11 @@ impl Render for Found {
         } else if !chosen {
             bar.key("↩", "all results").key("↑↓", "choose")
         } else {
-            let bar = if picking {
-                bar
-            } else if self.lit.and_then(|i| rows.get(i)).map(|r| r.kind) == Some(Kind::Track) {
-                bar.key("↩", "play")
-            } else {
+            let lit = self.lit.and_then(|i| rows.get(i));
+            let bar = if !picking && lit.and_then(Item::page).is_some() {
                 bar.key("↩", "go to")
+            } else {
+                bar
             };
             bar.key("⌘↩", "play next")
                 .key("⌥↩", "add to queue")
@@ -718,12 +718,23 @@ mod tests {
         Item {
             kind,
             id,
-            album: None,
             art: None,
             title: SharedString::default(),
             detail: None,
             length: None,
         }
+    }
+
+    #[test]
+    fn return_goes_to_a_page_and_a_track_to_its_record() {
+        assert_eq!(item(Kind::Album, 3).page(), Some(Page::Album(3)));
+        assert_eq!(item(Kind::Artist, 4).page(), Some(Page::Artist(4)));
+        let track = Item {
+            art: Some(Art::Album(9)),
+            ..item(Kind::Track, 5)
+        };
+        assert_eq!(track.page(), Some(Page::Album(9)));
+        assert_eq!(item(Kind::Track, 5).page(), None);
     }
 
     #[test]

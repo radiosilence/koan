@@ -107,7 +107,7 @@ History lists every play, most recent first, under a heading per day, with the t
 
 ## Search
 
-⌘K, `/`, ⇧⌘K (File → Find and Play…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches as you type and lists up to five tracks, five records and five artists, then "All results…"; in a small window the list scrolls between the query and the keys. Everything in it is done from the keyboard:
+⌘K, `/`, ⇧⌘K (File → Find…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches as you type and lists up to five tracks, five records and five artists, then "All results…"; in a small window the list scrolls between the query and the keys. Everything in it is done from the keyboard:
 
 | Key | Does |
 |---|---|
