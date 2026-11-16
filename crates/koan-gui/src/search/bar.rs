@@ -6,7 +6,7 @@
 //! | Key | Does |
 //! |---|---|
 //! | ↑ ↓ | light a row, or "All results…" after the last |
-//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, go to it: a record or an artist to its page; a track plays, the other tracks listed after it |
+//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, go to it: a record or an artist to its page, a track to its record's |
 //! | ⌘Return | play next |
 //! | ⌥Return | add to the queue |
 //! | ⇧⌘Return | replace the queue, asking first when it holds anything |
@@ -62,6 +62,17 @@ impl Item {
             Kind::Track => Playable::Track(self.id),
             Kind::Album => Playable::Album(self.id),
             Kind::Artist => Playable::Artist(self.id),
+        }
+    }
+
+    /// Where Return takes the row: a record's or an artist's page, and a
+    /// track's record's. A track on no record has nowhere to go.
+    fn page(&self) -> Option<Page> {
+        match (self.kind, self.art) {
+            (Kind::Album, _) => Some(Page::Album(self.id)),
+            (Kind::Artist, _) => Some(Page::Artist(self.id)),
+            (Kind::Track, Some(Art::Album(album))) => Some(Page::Album(album)),
+            (Kind::Track, _) => None,
         }
     }
 
@@ -135,7 +146,7 @@ fn relit(item: Option<&Item>, rows: &[Item]) -> Option<usize> {
 /// What a key asks of the lit row, or of everything ticked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verb {
-    /// Play a track, open a record or an artist.
+    /// Go to the row's page: a record's, an artist's, a track's record's.
     Take,
     Next,
     Append,
@@ -409,21 +420,11 @@ impl Found {
             crate::library::actions::queue(&lib, &items, placement, cx).detach()
         };
         match verb {
-            // A track plays, as a tap on it does on the results page; a
-            // record or an artist opens.
-            Verb::Take if !picking && first.kind == Kind::Track => {
-                let tracks: Vec<i64> = rows
-                    .iter()
-                    .filter(|row| row.kind == Kind::Track)
-                    .map(|row| row.id)
-                    .collect();
-                let index = tracks.iter().position(|id| *id == first.id).unwrap_or(0);
-                crate::library::actions::play_list(&self.lib, tracks, index, cx);
-            }
+            // Return navigates and never touches playback: the verbs that
+            // play say so.
             Verb::Take if !picking => {
-                let page = match first.kind {
-                    Kind::Album => Page::Album(first.id),
-                    _ => Page::Artist(first.id),
+                let Some(page) = first.page() else {
+                    return;
                 };
                 self.lib.nav.update(cx, |nav, cx| {
                     nav.open(page, cx);
@@ -630,12 +631,11 @@ impl Render for Found {
         } else if !chosen {
             bar.key("↩", "all results").key("↑↓", "choose")
         } else {
-            let bar = if picking {
-                bar
-            } else if self.lit.and_then(|i| rows.get(i)).map(|r| r.kind) == Some(Kind::Track) {
-                bar.key("↩", "play")
-            } else {
+            let lit = self.lit.and_then(|i| rows.get(i));
+            let bar = if !picking && lit.and_then(Item::page).is_some() {
                 bar.key("↩", "go to")
+            } else {
+                bar
             };
             bar.key("⌘↩", "play next")
                 .key("⌥↩", "add to queue")
@@ -723,6 +723,18 @@ mod tests {
             detail: None,
             length: None,
         }
+    }
+
+    #[test]
+    fn return_goes_to_a_page_and_a_track_to_its_record() {
+        assert_eq!(item(Kind::Album, 3).page(), Some(Page::Album(3)));
+        assert_eq!(item(Kind::Artist, 4).page(), Some(Page::Artist(4)));
+        let track = Item {
+            art: Some(Art::Album(9)),
+            ..item(Kind::Track, 5)
+        };
+        assert_eq!(track.page(), Some(Page::Album(9)));
+        assert_eq!(item(Kind::Track, 5).page(), None);
     }
 
     #[test]

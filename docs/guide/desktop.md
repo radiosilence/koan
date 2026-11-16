@@ -107,11 +107,11 @@ History lists every play, most recent first, under a heading per day, with the t
 
 ## Search
 
-⌘K, `/`, ⇧⌘K (File → Find and Play…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches as you type and lists up to five tracks, five records and five artists, then "All results…"; in a small window the list scrolls between the query and the keys. Everything in it is done from the keyboard:
+⌘K, `/`, ⇧⌘K (File → Find…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches as you type and lists up to five tracks, five records and five artists, then "All results…"; in a small window the list scrolls between the query and the keys. Everything in it is done from the keyboard:
 
 | Key | Does |
 |---|---|
-| Return | With nothing lit, or "All results…", every result on a page of its own, whose headings open each kind's whole listing; on a result, a record or an artist opens its page and a track plays, with the other tracks listed after it |
+| Return | With nothing lit, or "All results…", every result on a page of its own, whose headings open each kind's whole listing; on a result, a record or an artist opens its page and a track opens its record's, so nothing that is playing is interrupted; the modified keys below play |
 | ↑ ↓ | Light a result, or "All results…" after the last |
 | ⌘Return | Play next |
 | ⌥Return | Add to the queue |
