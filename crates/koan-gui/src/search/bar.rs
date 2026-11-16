@@ -6,7 +6,7 @@
 //! | Key | Does |
 //! |---|---|
 //! | ↑ ↓ | light a row, or "All results…" after the last |
-//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, go to it: a record or an artist to its page; a track plays, the other tracks listed after it |
+//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, go to it: a record or an artist to its page, a track to its record's |
 //! | ⌘Return | play next |
 //! | ⌥Return | add to the queue |
 //! | ⇧⌘Return | replace the queue, asking first when it holds anything |
@@ -49,6 +49,8 @@ pub struct Dismissed;
 struct Item {
     kind: Kind,
     id: i64,
+    /// A track's record, the page Return takes it to.
+    album: Option<i64>,
     /// The sleeve the row shows: its record's, or the artist's photo.
     art: Option<Art>,
     title: SharedString,
@@ -87,6 +89,7 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
     let tracks = s.tracks.iter().take(TRACKS).map(|t| Item {
         kind: Kind::Track,
         id: t.id,
+        album: t.album_id,
         art: t.album_id.map(Art::Album),
         title: t.title.clone().into(),
         detail: Some(format!("{} · {}", credit(&t.artist_credit), t.album_title).into()),
@@ -95,6 +98,7 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
     let albums = s.albums.iter().take(ALBUMS).map(|a| Item {
         kind: Kind::Album,
         id: a.id,
+        album: None,
         art: Some(Art::Album(a.id)),
         title: a.title.clone().into(),
         detail: Some(credit(&a.artist_credit).into()),
@@ -103,6 +107,7 @@ fn items(s: &ShelfSummary) -> Vec<Item> {
     let artists = s.artists.iter().take(ARTISTS).map(|a| Item {
         kind: Kind::Artist,
         id: a.id,
+        album: None,
         art: Some(Art::Artist(a.id)),
         title: a.name.clone().into(),
         detail: None,
@@ -135,7 +140,7 @@ fn relit(item: Option<&Item>, rows: &[Item]) -> Option<usize> {
 /// What a key asks of the lit row, or of everything ticked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verb {
-    /// Play a track, open a record or an artist.
+    /// Go to the row's page: a record's, an artist's, a track's record's.
     Take,
     Next,
     Append,
@@ -409,21 +414,16 @@ impl Found {
             crate::library::actions::queue(&lib, &items, placement, cx).detach()
         };
         match verb {
-            // A track plays, as a tap on it does on the results page; a
-            // record or an artist opens.
-            Verb::Take if !picking && first.kind == Kind::Track => {
-                let tracks: Vec<i64> = rows
-                    .iter()
-                    .filter(|row| row.kind == Kind::Track)
-                    .map(|row| row.id)
-                    .collect();
-                let index = tracks.iter().position(|id| *id == first.id).unwrap_or(0);
-                crate::library::actions::play_list(&self.lib, tracks, index, cx);
-            }
+            // Return navigates and never touches playback: the verbs that
+            // play say so.
             Verb::Take if !picking => {
                 let page = match first.kind {
                     Kind::Album => Page::Album(first.id),
-                    _ => Page::Artist(first.id),
+                    Kind::Artist => Page::Artist(first.id),
+                    Kind::Track => match first.album {
+                        Some(album) => Page::Album(album),
+                        None => return,
+                    },
                 };
                 self.lib.nav.update(cx, |nav, cx| {
                     nav.open(page, cx);
@@ -718,6 +718,7 @@ mod tests {
         Item {
             kind,
             id,
+            album: None,
             art: None,
             title: SharedString::default(),
             detail: None,

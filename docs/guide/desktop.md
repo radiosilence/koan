@@ -111,7 +111,7 @@ History lists every play, most recent first, under a heading per day, with the t
 
 | Key | Does |
 |---|---|
-| Return | With nothing lit, or "All results…", every result on a page of its own, whose headings open each kind's whole listing; on a result, a record or an artist opens its page and a track plays, with the other tracks listed after it |
+| Return | With nothing lit, or "All results…", every result on a page of its own, whose headings open each kind's whole listing; on a result, a record or an artist opens its page and a track opens its record's, so nothing that is playing is interrupted; the modified keys below play |
 | ↑ ↓ | Light a result, or "All results…" after the last |
 | ⌘Return | Play next |
 | ⌥Return | Add to the queue |
