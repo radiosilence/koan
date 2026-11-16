@@ -27,11 +27,11 @@ import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.LocalKoanTokens
 
 fun EntryProviderScope<NavKey>.libraryEntries() {
-    entry<Tab.Library> { LibraryPage() }
-    entry<AlbumsRoute> { key -> AlbumsPage(key.shelf) }
-    entry<ArtistsRoute> { key -> ArtistsPage(key.shelf) }
-    entry<TracksRoute> { key -> TracksPage(key.shelf) }
-    entry<ShelfRoute> { key -> ShelfPage(key.shelf) }
+    entry<Tab.Library> { SyncOnPull { LibraryPage() } }
+    entry<AlbumsRoute> { key -> SyncOnPull { AlbumsPage(key.shelf) } }
+    entry<ArtistsRoute> { key -> SyncOnPull { ArtistsPage(key.shelf) } }
+    entry<TracksRoute> { key -> SyncOnPull { TracksPage(key.shelf) } }
+    entry<ShelfRoute> { key -> SyncOnPull { ShelfPage(key.shelf) } }
     entry<AlbumRoute> { key -> AlbumPage(key.albumId, key.track) }
     entry<ArtistRoute> { key -> ArtistPage(key.artistId) }
 }

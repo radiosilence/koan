@@ -138,7 +138,8 @@ pub use fade::{FadeIn, Reveal};
 pub use field::{AreaState, FieldState, InputEvent, Labelled, TextArea, TextField, labelled};
 pub use filter_field::{FilterButton, FilterField};
 pub use follow::{
-    Elastic, Follow, PUSH_FRONT, PUSH_UNDER, Push, SWIPE_ACTION, SwipeAction, settle_length,
+    Elastic, Follow, PULL_RING, PUSH_FRONT, PUSH_UNDER, Push, Refresh, SWIPE_ACTION, SwipeAction,
+    settle_length,
 };
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,

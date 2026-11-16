@@ -89,6 +89,13 @@ pub struct Shell {
     /// Watches the artwork viewer, and while it shows, the sleeve it waits
     /// for.
     _artwork: [Subscription; 2],
+    /// The library page's ends, giving under a trackpad; its top pulled
+    /// syncs with the server.
+    elastic: crate::components::Elastic,
+    /// Whether there is a server to sync with and a sync runs, as last
+    /// drawn, and what redraws the page when either changes.
+    sync_standing: (bool, bool),
+    _sync_standing: [Subscription; 2],
 }
 
 impl Shell {
@@ -210,6 +217,22 @@ impl Shell {
                             cx.notify();
                         }
                     }),
+                ]
+            },
+            elastic: crate::components::Elastic::new(),
+            sync_standing: (false, false),
+            _sync_standing: {
+                fn moved(this: &mut Shell, cx: &mut Context<Shell>) {
+                    let standing = library::activity::sync_standing(cx);
+                    if std::mem::replace(&mut this.sync_standing, standing) != standing {
+                        cx.notify();
+                    }
+                }
+                let activity = cx.global::<library::activity::ActivityHandle>().0.clone();
+                let connection = cx.global::<crate::mirror::Mirror>().connection.clone();
+                [
+                    cx.observe(&activity, |this, _, cx| moved(this, cx)),
+                    cx.observe(&connection, |this, _, cx| moved(this, cx)),
                 ]
             },
         }
@@ -688,10 +711,19 @@ impl Render for Shell {
                 .cached(StyleRefinement::default().size_full())
                 .into_any_element(),
             route if LibraryStage::draws(route) => match &self.library {
-                Some(library) => library
-                    .clone()
-                    .cached(StyleRefinement::default().size_full())
-                    .into_any_element(),
+                Some(library) => {
+                    let page = library
+                        .clone()
+                        .cached(StyleRefinement::default().size_full());
+                    let pull = library::activity::pull_to_sync(
+                        route,
+                        bar_inset,
+                        p.look.palette.muted.hsla(),
+                        cx,
+                    );
+                    self.elastic.refresh(pull, window, cx);
+                    self.elastic.wrap(page, window, cx)
+                }
                 None => div().size_full().into_any_element(),
             },
             _ => div()

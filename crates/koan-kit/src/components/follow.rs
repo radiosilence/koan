@@ -9,7 +9,9 @@
 //!   Playing pulled down, a queue row swiped).
 //! - `SwipeAction`: a row slid toward the leading edge over an action that
 //!   fills the room it leaves, both moved by one `Follow`.
-//! - `Elastic`: a phone page's ends giving under a pan and bouncing a fling.
+//! - `Elastic`: a page's ends giving under a finger's pan or a trackpad's
+//!   scroll and bouncing a fling; with a `Refresh`, its top pulled past a
+//!   threshold and let go asks its owner to refresh.
 //! - `Push`: a navigation stack's page sliding over the one under it, which
 //!   shows a third of its way behind and dimmed, by one progress track (a
 //!   page pushed, swiped back, or sent back by the bar's button).
@@ -23,7 +25,7 @@ use gpui::prelude::*;
 use gpui::*;
 
 use super::layer::{AnimatedLayer, LAYER, standing};
-use super::{Animated, Ease, SHADED, ShaderProgram};
+use super::{Animated, AnimatedQuad, Ease, SHADED, ShaderProgram};
 use crate::theme::{KoanTheme, Motion};
 
 /// Whether a settle moves, rather than landing at once.
@@ -123,6 +125,58 @@ fn unrubber(shown: f32, dimension: f32) -> f32 {
     shown.signum() * dimension * (1.0 / (1.0 - shown.abs() / dimension) - 1.0) / RUBBER
 }
 
+/// How far a page shows pulled from its top, in points, before letting go
+/// refreshes it.
+const PULL: f32 = 72.0;
+/// Where a page refreshing stands while its owner is busy, in points: the
+/// room the spinner takes.
+const HELD: f32 = 52.0;
+/// The ring and the spinner in the gap, in points.
+const MARK: f32 = 22.0;
+/// How long a page asked to refresh waits for its owner to say it is busy
+/// before it closes.
+const ASKED: Duration = Duration::from_secs(1);
+
+/// What a page's top, pulled past a threshold and let go, asks of its
+/// owner, given to `Elastic::refresh` each time the owner draws.
+#[derive(Clone)]
+pub struct Refresh {
+    /// Where the gap the page leaves begins, from the page's top: the room
+    /// a bar drawn over the page takes.
+    pub top: Pixels,
+    /// The owner is refreshing: the gap shows a spinner, and a page let go
+    /// past the threshold stays open until this ends.
+    pub busy: bool,
+    /// The ring's and the spinner's colour.
+    pub color: Hsla,
+    /// Starts the refresh. Not called while `busy`.
+    pub start: std::rc::Rc<dyn Fn(&mut Window, &mut App)>,
+}
+
+/// A page let go past the threshold, held open.
+#[derive(Clone, Copy, PartialEq)]
+enum Held {
+    /// Asked at this moment; closes if its owner has not said it is busy
+    /// within `ASKED`.
+    Asked(std::time::Instant),
+    Busy,
+}
+
+thread_local! {
+    /// Whether the list under the pointer stood at its top and at its foot
+    /// as the scroll being dispatched arrived, as the `Scrollbar` over it
+    /// read it: a trackpad's scroll reaches the page however much of it the
+    /// list took.
+    static ENDS: std::cell::Cell<Option<(bool, bool)>> = const { std::cell::Cell::new(None) };
+}
+
+/// The list under the pointer stood `at_top` and `at_foot` as the scroll
+/// being dispatched arrived. A `Scrollbar` says so as the scroll is
+/// captured, before any list takes it.
+pub(crate) fn scroll_ends(at_top: bool, at_foot: bool) {
+    ENDS.with(|ends| ends.set(Some((at_top, at_foot))));
+}
+
 #[derive(Default)]
 struct ElasticState {
     /// Finger travel past the end, in points; zero while none.
@@ -142,6 +196,13 @@ struct ElasticState {
     /// This gesture has had its give: what is left of its fling only runs
     /// out against the end. Until the fling's last step or the next touch.
     spent: bool,
+    /// A trackpad's fingers have lifted: what follows is its momentum,
+    /// which may bounce. Until they land again.
+    lifted: bool,
+    refresh: Option<Refresh>,
+    held: Option<Held>,
+    #[cfg(test)]
+    refreshes: u32,
     #[cfg(test)]
     bounces: u32,
 }
@@ -152,6 +213,16 @@ struct ElasticState {
 /// layer the GPU moves, so a list of any kind has it without knowing, and
 /// nothing is drawn while it moves. One per stage; the page goes in through
 /// `wrap`.
+///
+/// A finger on a touchscreen and a trackpad's scroll (AppKit's phases, with
+/// precise deltas) give it; a mouse wheel does not. A list's scroll reaches
+/// the page whether or not the list took it, so on a trackpad the
+/// `Scrollbar` over the list says whether the list stood at an end.
+///
+/// Given a `Refresh`, the top pulled past `PULL` and let go starts it, and
+/// the page stays open by `HELD` with a spinner until the owner says it is
+/// no longer busy. The gap shows a ring filling as the pull nears the
+/// threshold, drawn on the GPU from the page's offset.
 #[derive(Clone)]
 pub struct Elastic {
     follow: Follow,
@@ -174,8 +245,12 @@ impl Elastic {
 
     /// `page`, its ends giving.
     pub fn wrap(&self, page: impl IntoElement, window: &mut Window, _: &mut App) -> AnyElement {
-        let layered = self.state.borrow().layered;
+        let (layered, refresh) = {
+            let state = self.state.borrow();
+            (state.layered, state.refresh.clone())
+        };
         let view = window.current_view();
+        let gap = refresh.filter(|_| layered).map(|refresh| self.gap(refresh, window));
         let page = page.into_any_element();
         let page = if layered {
             self.follow.layer(page).into_any_element()
@@ -196,8 +271,11 @@ impl Elastic {
                         let this = this.clone();
                         let dimension = f32::from(bounds.size.height);
                         window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
-                            if event.source == ScrollSource::Touch
-                                && hitbox.should_handle_scroll(window)
+                            let gives = match event.source {
+                                ScrollSource::Touch => true,
+                                ScrollSource::Pointer => event.delta.precise(),
+                            };
+                            if gives && hitbox.should_handle_scroll(window)
                             {
                                 this.heard(event, phase, dimension, view, window, cx);
                             }
@@ -209,8 +287,86 @@ impl Elastic {
                 .left_0()
                 .size_full(),
             )
+            .children(gap)
             .child(page)
             .into_any_element()
+    }
+
+    /// What the gap over a page pulled from its top shows: the spinner while
+    /// the owner is busy, else the ring filling toward the threshold.
+    fn gap(&self, refresh: Refresh, window: &Window) -> AnyElement {
+        let room = div()
+            .absolute()
+            .top(refresh.top)
+            .left_0()
+            .w_full()
+            .h(px(HELD));
+        if refresh.busy {
+            return room
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(super::Spinner::new(px(MARK)).color(refresh.color))
+                .into_any_element();
+        }
+        if !SHADED {
+            return room.into_any_element();
+        }
+        let scale = window.scale_factor();
+        let animated = self.follow.animated();
+        animated.set(0, PULL * scale);
+        animated.set(1, MARK * scale);
+        animated.set_color(8, refresh.color);
+        room.child(AnimatedQuad::new(&PULL_RING, animated).size_full())
+            .into_any_element()
+    }
+
+    /// What the page's top refreshes, or nothing: given each time the owner
+    /// draws, with whether it is busy. A page held open closes once its
+    /// owner has been busy and is no longer, or was never busy within
+    /// `ASKED` of being asked, or no longer refreshes.
+    pub fn refresh(&self, refresh: Option<Refresh>, window: &Window, cx: &mut App) {
+        let mut state = self.state.borrow_mut();
+        let busy = refresh.as_ref().is_some_and(|r| r.busy);
+        let open = refresh.is_some();
+        state.refresh = refresh;
+        let Some(held) = state.held else { return };
+        let done = match held {
+            _ if !open => true,
+            Held::Asked(_) if busy => {
+                state.held = Some(Held::Busy);
+                false
+            }
+            Held::Asked(at) => at.elapsed() >= ASKED,
+            Held::Busy => !busy,
+        };
+        if !done {
+            return;
+        }
+        state.held = None;
+        if state.finger || state.pulled == 0.0 {
+            return;
+        }
+        state.pulled = 0.0;
+        drop(state);
+        let length = self.back(0.0, window, cx);
+        self.land(length, window.current_view(), cx);
+    }
+
+    /// The page easing back to stand `to` points down; how long that takes.
+    fn back(&self, to: f32, window: &Window, cx: &App) -> Duration {
+        if moves(cx) {
+            self.follow.animated().throw(
+                2,
+                to * window.scale_factor(),
+                0.0,
+                RETURN_STIFFNESS,
+                damped(RETURN_STIFFNESS),
+            )
+        } else {
+            self.follow.follow(point(Pixels::ZERO, px(to)), window);
+            Duration::ZERO
+        }
     }
 
     /// Swaps what the finger has moved the page by for `travelled`: the
@@ -278,7 +434,11 @@ impl Elastic {
         cx: &mut App,
     ) {
         let dy = f32::from(event.delta.pixel_delta(px(16.)).y);
+        let pointer = event.source == ScrollSource::Pointer;
         if phase == DispatchPhase::Capture {
+            if pointer {
+                ENDS.with(|ends| ends.set(None));
+            }
             let now = std::time::Instant::now();
             let mut state = self.state.borrow_mut();
             if let Some(last) = state.last.replace(now) {
@@ -291,6 +451,7 @@ impl Elastic {
                 TouchPhase::Started => {
                     state.finger = true;
                     state.spent = false;
+                    state.lifted = false;
                     // A finger landing on a bounce holds it where it stands.
                     if state.settling.take().is_some() {
                         let shown = self.follow.at().y / window.scale_factor();
@@ -315,23 +476,37 @@ impl Elastic {
                 }
                 TouchPhase::Ended | TouchPhase::Cancelled if state.finger => {
                     state.finger = false;
+                    state.lifted = pointer;
                     if state.layered && state.settling.is_none() {
-                        state.pulled = 0.0;
                         state.spent = true;
-                        let length = if moves(cx) {
-                            self.follow.animated().throw(
-                                2,
-                                0.0,
-                                0.0,
-                                RETURN_STIFFNESS,
-                                damped(RETURN_STIFFNESS),
-                            )
-                        } else {
-                            self.follow.follow(Point::default(), window);
-                            Duration::ZERO
-                        };
+                        let shown = rubber(state.pulled, dimension);
+                        let refresh = state.refresh.clone().filter(|_| {
+                            event.touch_phase == TouchPhase::Ended
+                                && (shown >= PULL || state.held.is_some() && shown > 0.0)
+                        });
+                        let to = if refresh.is_some() { HELD } else { 0.0 };
+                        state.pulled = if to > 0.0 { unrubber(to, dimension) } else { 0.0 };
+                        let asked = refresh.filter(|r| state.held.is_none() && !r.busy);
+                        if refresh.is_some() && state.held.is_none() {
+                            state.held = Some(Held::Asked(now));
+                        }
+                        #[cfg(test)]
+                        if asked.is_some() {
+                            state.refreshes += 1;
+                        }
                         drop(state);
+                        let length = self.back(to, window, cx);
                         self.land(length, view, cx);
+                        if let Some(refresh) = asked {
+                            (refresh.start)(window, cx);
+                            // The owner draws again then, to close the page
+                            // if it never said it was busy.
+                            cx.spawn(async move |cx| {
+                                cx.background_executor().timer(ASKED).await;
+                                cx.update(|cx| cx.notify(view));
+                            })
+                            .detach();
+                        }
                         cx.stop_propagation();
                     }
                     return;
@@ -347,7 +522,17 @@ impl Elastic {
                 }
             }
         }
-        // Bubbling: nothing under the finger could take this step.
+        // Bubbling: nothing under the finger could take this step. A
+        // trackpad's scroll bubbles whether or not a list took it, so it
+        // gives only where the list under it stood at the end it goes past.
+        if pointer {
+            let free = ENDS.with(|ends| ends.get()).is_none_or(|(top, foot)| {
+                (dy > 0.0 && top) || (dy < 0.0 && foot)
+            });
+            if !free {
+                return;
+            }
+        }
         let mut state = self.state.borrow_mut();
         state.travelled -= dy;
         match event.touch_phase {
@@ -361,7 +546,13 @@ impl Elastic {
                     cx.notify(view);
                 }
             }
-            TouchPhase::Moved if !state.finger && dy != 0.0 && !state.layered && !state.spent => {
+            TouchPhase::Moved
+                if !state.finger
+                    && (!pointer || state.lifted)
+                    && dy != 0.0
+                    && !state.layered
+                    && !state.spent =>
+            {
                 if !moves(cx) {
                     return;
                 }
@@ -385,6 +576,67 @@ impl Elastic {
         }
     }
 }
+
+/// The ring in the gap over a page pulled from its top: it rides in the
+/// middle of the gap and fills from twelve o'clock as the pull nears the
+/// threshold. Track 2 is the page's offset in device pixels, `u[0]` the
+/// threshold and `u[1]` the ring's side, both in device pixels, `u[8..12]`
+/// the colour. What the page covers is not drawn.
+pub static PULL_RING: ShaderProgram = ShaderProgram {
+    name: "koan-pull-ring",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float offset = koan_track(u, 2, time);
+    if (position.y > offset) {
+        return float4(0.0);
+    }
+    float share = clamp(offset / max(u[0], 1.0), 0.0, 1.0);
+    float side = u[1];
+    float stroke = side * 0.125;
+    float2 d = position - float2(size.x * 0.5, min(offset, size.y) * 0.5);
+    float radius = (side - stroke) * 0.5;
+    float edge = clamp(stroke * 0.5 - abs(length(d) - radius) + 0.5, 0.0, 1.0);
+    if (edge <= 0.0) {
+        return float4(0.0);
+    }
+    float a = atan2(d.x, -d.y) / 6.28318530718;
+    if (a < 0.0) {
+        a += 1.0;
+    }
+    float shown = clamp((share - a) * side * 3.14159265, 0.0, 1.0);
+    float strength = share >= 1.0 ? 1.0 : 0.3 + 0.4 * share;
+    return float4(u[8], u[9], u[10], u[11] * edge * shown * strength);
+}
+"#,
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20>, tile: vec4<f32>) -> vec4<f32> {
+    let offset = koan_track(u, 2u, time);
+    if (position.y > offset) {
+        return vec4<f32>(0.0);
+    }
+    let share = clamp(offset / max(u[0].x, 1.0), 0.0, 1.0);
+    let side = u[0].y;
+    let stroke = side * 0.125;
+    let d = position - vec2<f32>(size.x * 0.5, min(offset, size.y) * 0.5);
+    let radius = (side - stroke) * 0.5;
+    let edge = clamp(stroke * 0.5 - abs(length(d) - radius) + 0.5, 0.0, 1.0);
+    if (edge <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    var a = atan2(d.x, -d.y) / 6.28318530718;
+    if (a < 0.0) {
+        a += 1.0;
+    }
+    let shown = clamp((share - a) * side * 3.14159265, 0.0, 1.0);
+    var strength = 0.3 + 0.4 * share;
+    if (share >= 1.0) {
+        strength = 1.0;
+    }
+    return vec4<f32>(u[2].xyz, u[2].w * edge * shown * strength);
+}
+"#,
+    prepare: None,
+};
 
 /// What fills the room a row slid toward the leading edge leaves: drawn
 /// whole under the row and shown only on the strip the row uncovers, moved
@@ -625,25 +877,50 @@ mod tests {
         TouchEvent, TouchId, TouchPhase, VisualTestContext, Window, div, point, px,
     };
 
+    use std::cell::Cell;
+    use std::rc::Rc;
     use std::time::Instant;
 
-    use super::{Animated, Duration, Elastic, Motion, Push, rubber, unrubber};
+    use gpui::{ScrollDelta, ScrollEvent, ScrollSource};
 
-    /// One page of `tall` points over the window, its ends giving.
+    use super::{
+        Animated, Duration, Elastic, HELD, Motion, PULL, Push, Refresh, rubber, unrubber,
+    };
+    use crate::components::Scrollbar;
+
+    /// One page of `tall` points over the window, its ends giving, its top
+    /// refreshing while `refreshes`.
     struct Page {
         elastic: Elastic,
         list: ScrollHandle,
         tall: f32,
+        refreshes: bool,
+        busy: bool,
+        asked: Rc<Cell<u32>>,
     }
 
     impl Render for Page {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let asked = self.asked.clone();
+            let refresh = self.refreshes.then(|| Refresh {
+                top: px(0.),
+                busy: self.busy,
+                color: gpui::black(),
+                start: Rc::new(move |_, _| asked.set(asked.get() + 1)),
+            });
+            self.elastic.refresh(refresh, window, cx);
             let list = div()
-                .id("list")
+                .relative()
                 .size_full()
-                .overflow_y_scroll()
-                .track_scroll(&self.list)
-                .child(div().w_full().flex_none().h(px(self.tall)));
+                .child(
+                    div()
+                        .id("list")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.list)
+                        .child(div().w_full().flex_none().h(px(self.tall))),
+                )
+                .child(Scrollbar::vertical(&self.list));
             div().size_full().child(self.elastic.wrap(list, window, cx))
         }
     }
@@ -662,6 +939,9 @@ mod tests {
             elastic: Elastic::new(),
             list: ScrollHandle::new(),
             tall: f32::from(window.viewport_size().height) + tall_over_window,
+            refreshes: true,
+            busy: false,
+            asked: Rc::default(),
         });
         cx.run_until_parked();
         (page, cx)
@@ -784,6 +1064,141 @@ mod tests {
         touch(TouchPhase::Started, 300., at, cx);
         drag(300., 200., 8, at, cx);
         assert!(give(&page, cx).0 < -30.);
+    }
+
+    /// A trackpad's scroll step of `dy` points, in `phase`.
+    fn trackpad(phase: TouchPhase, dy: f32, cx: &mut VisualTestContext) {
+        cx.simulate_event(ScrollEvent {
+            position: point(px(100.), px(300.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+            touch_phase: phase,
+            source: ScrollSource::Pointer,
+            ..Default::default()
+        });
+    }
+
+    fn asked(page: &Entity<Page>, cx: &mut VisualTestContext) -> u32 {
+        page.read_with(cx, |page, _| page.asked.get())
+    }
+
+    fn set_busy(page: &Entity<Page>, busy: bool, cx: &mut VisualTestContext) {
+        page.update(cx, |page, cx| {
+            page.busy = busy;
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+
+    /// How far down the page stands, in points.
+    fn shown(page: &Entity<Page>, cx: &mut VisualTestContext) -> f32 {
+        page.read_with(cx, |page, _| page.elastic.follow.at().y)
+    }
+
+    #[gpui::test]
+    fn a_pull_past_the_threshold_refreshes_and_holds_until_done(cx: &mut TestAppContext) {
+        let (page, cx) = opened(3000., cx);
+        let at = Instant::now();
+        touch(TouchPhase::Started, 100., at, cx);
+        let at = drag(100., 500., 20, at, cx);
+        touch(TouchPhase::Ended, 500., at + FRAME, cx);
+        assert_eq!(asked(&page, cx), 1);
+        frames_until_still(cx);
+        let held = shown(&page, cx);
+        assert!((held - HELD).abs() < 1.0, "held at {held}");
+        // Busy, then done: the page goes back to its place.
+        set_busy(&page, true, cx);
+        assert!(give(&page, cx).1);
+        set_busy(&page, false, cx);
+        frames_until_still(cx);
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        assert_eq!(give(&page, cx).0, 0.0);
+        assert!(!give(&page, cx).1);
+        assert_eq!(asked(&page, cx), 1);
+    }
+
+    #[gpui::test]
+    fn a_short_pull_does_not_refresh(cx: &mut TestAppContext) {
+        let (page, cx) = opened(3000., cx);
+        let at = Instant::now();
+        touch(TouchPhase::Started, 100., at, cx);
+        let at = drag(100., 160., 6, at, cx);
+        assert!(rubber(give(&page, cx).0, 600.) < PULL);
+        touch(TouchPhase::Ended, 160., at + FRAME, cx);
+        frames_until_still(cx);
+        assert_eq!(asked(&page, cx), 0);
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        assert_eq!(give(&page, cx), (0.0, false, 0));
+    }
+
+    #[gpui::test]
+    fn a_pull_while_busy_holds_without_asking_again(cx: &mut TestAppContext) {
+        let (page, cx) = opened(3000., cx);
+        set_busy(&page, true, cx);
+        let at = Instant::now();
+        touch(TouchPhase::Started, 100., at, cx);
+        let at = drag(100., 500., 20, at, cx);
+        touch(TouchPhase::Ended, 500., at + FRAME, cx);
+        assert_eq!(asked(&page, cx), 0);
+        assert!(give(&page, cx).0 > 0.0);
+        set_busy(&page, true, cx);
+        set_busy(&page, false, cx);
+        assert_eq!(give(&page, cx).0, 0.0);
+    }
+
+    #[gpui::test]
+    fn an_owner_never_busy_closes_after_asking(cx: &mut TestAppContext) {
+        let (page, cx) = opened(3000., cx);
+        let at = Instant::now();
+        touch(TouchPhase::Started, 100., at, cx);
+        let at = drag(100., 500., 20, at, cx);
+        touch(TouchPhase::Ended, 500., at + FRAME, cx);
+        assert_eq!(asked(&page, cx), 1);
+        std::thread::sleep(super::ASKED);
+        cx.executor().advance_clock(super::ASKED * 2);
+        cx.run_until_parked();
+        assert_eq!(give(&page, cx).0, 0.0);
+    }
+
+    #[gpui::test]
+    fn a_trackpad_pulls_the_top_and_refreshes(cx: &mut TestAppContext) {
+        let (page, cx) = opened(3000., cx);
+        trackpad(TouchPhase::Started, 0., cx);
+        for _ in 0..20 {
+            trackpad(TouchPhase::Moved, 20., cx);
+        }
+        assert_eq!(offset(&page, cx).y, px(0.));
+        assert!(give(&page, cx).1);
+        trackpad(TouchPhase::Ended, 0., cx);
+        assert_eq!(asked(&page, cx), 1);
+    }
+
+    #[gpui::test]
+    fn a_trackpad_scrolling_a_list_back_to_its_top_does_not_pull(cx: &mut TestAppContext) {
+        let (page, cx) = opened(3000., cx);
+        page.update(cx, |page, _| page.list.set_offset(point(px(0.), px(-400.))));
+        cx.run_until_parked();
+        trackpad(TouchPhase::Started, 0., cx);
+        trackpad(TouchPhase::Moved, 100., cx);
+        cx.run_until_parked();
+        assert_eq!(give(&page, cx), (0.0, false, 0));
+        assert!(offset(&page, cx).y > px(-400.), "{:?}", offset(&page, cx));
+    }
+
+    #[gpui::test]
+    fn a_mouse_wheel_does_not_give(cx: &mut TestAppContext) {
+        let (page, cx) = opened(3000., cx);
+        for _ in 0..20 {
+            cx.simulate_event(ScrollEvent {
+                position: point(px(100.), px(300.)),
+                delta: ScrollDelta::Lines(point(0., 3.)),
+                source: ScrollSource::Pointer,
+                ..Default::default()
+            });
+        }
+        assert_eq!(give(&page, cx), (0.0, false, 0));
+        assert_eq!(asked(&page, cx), 0);
     }
 
     #[test]

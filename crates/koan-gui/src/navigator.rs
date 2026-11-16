@@ -63,6 +63,22 @@ pub enum Listing {
 }
 
 impl Route {
+    /// A listing of the library, which a pull from its top syncs with the
+    /// server.
+    pub fn syncs_on_pull(self) -> bool {
+        matches!(
+            self,
+            Route::Albums
+                | Route::Artists
+                | Route::Tracks
+                | Route::Favourites
+                | Route::RecentlyPlayed
+                | Route::OnDevice
+                | Route::Shelved(..)
+                | Route::Library
+        )
+    }
+
     /// A route by name, for tools that open the app somewhere: `albums`,
     /// `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`,
     /// `playlist:<id>`.

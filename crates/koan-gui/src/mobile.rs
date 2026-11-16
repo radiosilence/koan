@@ -1259,6 +1259,13 @@ impl Render for TouchShell {
             under_bar(bar, page, None, false, insets.top)
         });
         let stage = {
+            let pull = crate::library::activity::pull_to_sync(
+                route,
+                crate::components::bar_inset(window, cx),
+                p.look.palette.muted.hsla(),
+                cx,
+            );
+            self.elastic.refresh(pull, window, cx);
             let stage = self.elastic.wrap(stage, window, cx);
             let root = self.nav.read(cx).at_root();
             // What is wrong with the server and the output still opening
