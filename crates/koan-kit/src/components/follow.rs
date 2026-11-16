@@ -250,7 +250,9 @@ impl Elastic {
             (state.layered, state.refresh.clone())
         };
         let view = window.current_view();
-        let gap = refresh.filter(|_| layered).map(|refresh| self.gap(refresh, window));
+        let gap = refresh
+            .filter(|_| layered)
+            .map(|refresh| self.gap(refresh, window));
         let page = page.into_any_element();
         let page = if layered {
             self.follow.layer(page).into_any_element()
@@ -275,8 +277,7 @@ impl Elastic {
                                 ScrollSource::Touch => true,
                                 ScrollSource::Pointer => event.delta.precise(),
                             };
-                            if gives && hitbox.should_handle_scroll(window)
-                            {
+                            if gives && hitbox.should_handle_scroll(window) {
                                 this.heard(event, phase, dimension, view, window, cx);
                             }
                         });
@@ -485,7 +486,11 @@ impl Elastic {
                                 && (shown >= PULL || state.held.is_some() && shown > 0.0)
                         });
                         let to = if refresh.is_some() { HELD } else { 0.0 };
-                        state.pulled = if to > 0.0 { unrubber(to, dimension) } else { 0.0 };
+                        state.pulled = if to > 0.0 {
+                            unrubber(to, dimension)
+                        } else {
+                            0.0
+                        };
                         let asked = refresh.filter(|r| state.held.is_none() && !r.busy);
                         if refresh.is_some() && state.held.is_none() {
                             state.held = Some(Held::Asked(now));
@@ -526,9 +531,9 @@ impl Elastic {
         // trackpad's scroll bubbles whether or not a list took it, so it
         // gives only where the list under it stood at the end it goes past.
         if pointer {
-            let free = ENDS.with(|ends| ends.get()).is_none_or(|(top, foot)| {
-                (dy > 0.0 && top) || (dy < 0.0 && foot)
-            });
+            let free = ENDS
+                .with(|ends| ends.get())
+                .is_none_or(|(top, foot)| (dy > 0.0 && top) || (dy < 0.0 && foot));
             if !free {
                 return;
             }
@@ -883,9 +888,7 @@ mod tests {
 
     use gpui::{ScrollDelta, ScrollEvent, ScrollSource};
 
-    use super::{
-        Animated, Duration, Elastic, HELD, Motion, PULL, Push, Refresh, rubber, unrubber,
-    };
+    use super::{Animated, Duration, Elastic, HELD, Motion, PULL, Push, Refresh, rubber, unrubber};
     use crate::components::Scrollbar;
 
     /// One page of `tall` points over the window, its ends giving, its top

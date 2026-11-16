@@ -82,8 +82,8 @@ pub fn sync_standing(cx: &App) -> (bool, bool) {
         .0
         .as_ref()
         .is_some_and(|c| c.signed_in_to.is_some());
-    let syncing = cx.global::<ActivityHandle>().0.read(cx).syncing > 0
-        || mirror.tasks.read(cx).0.syncing;
+    let syncing =
+        cx.global::<ActivityHandle>().0.read(cx).syncing > 0 || mirror.tasks.read(cx).0.syncing;
     (signed_in, syncing)
 }
 
