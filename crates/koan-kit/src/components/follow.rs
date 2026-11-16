@@ -150,8 +150,11 @@ pub struct Refresh {
     /// The ring's and the spinner's colour.
     pub color: Hsla,
     /// Starts the refresh. Not called while `busy`.
-    pub start: std::rc::Rc<dyn Fn(&mut Window, &mut App)>,
+    pub start: RefreshStart,
 }
+
+/// What starts a `Refresh`.
+pub type RefreshStart = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// A page let go past the threshold, held open.
 #[derive(Clone, Copy, PartialEq)]
@@ -201,8 +204,6 @@ struct ElasticState {
     lifted: bool,
     refresh: Option<Refresh>,
     held: Option<Held>,
-    #[cfg(test)]
-    refreshes: u32,
     #[cfg(test)]
     bounces: u32,
 }
@@ -491,13 +492,9 @@ impl Elastic {
                         } else {
                             0.0
                         };
-                        let asked = refresh.filter(|r| state.held.is_none() && !r.busy);
+                        let asked = refresh.clone().filter(|r| state.held.is_none() && !r.busy);
                         if refresh.is_some() && state.held.is_none() {
                             state.held = Some(Held::Asked(now));
-                        }
-                        #[cfg(test)]
-                        if asked.is_some() {
-                            state.refreshes += 1;
                         }
                         drop(state);
                         let length = self.back(to, window, cx);
@@ -1094,7 +1091,8 @@ mod tests {
 
     /// How far down the page stands, in points.
     fn shown(page: &Entity<Page>, cx: &mut VisualTestContext) -> f32 {
-        page.read_with(cx, |page, _| page.elastic.follow.at().y)
+        let scale = cx.update(|window, _| window.scale_factor());
+        page.read_with(cx, |page, _| page.elastic.follow.at().y) / scale
     }
 
     #[gpui::test]
@@ -1105,12 +1103,12 @@ mod tests {
         let at = drag(100., 500., 20, at, cx);
         touch(TouchPhase::Ended, 500., at + FRAME, cx);
         assert_eq!(asked(&page, cx), 1);
+        set_busy(&page, true, cx);
         frames_until_still(cx);
         let held = shown(&page, cx);
         assert!((held - HELD).abs() < 1.0, "held at {held}");
-        // Busy, then done: the page goes back to its place.
-        set_busy(&page, true, cx);
         assert!(give(&page, cx).1);
+        // Done: the page goes back to its place.
         set_busy(&page, false, cx);
         frames_until_still(cx);
         cx.executor().advance_clock(Duration::from_secs(2));
