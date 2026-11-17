@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.72.4
+
+### Added
+
+- **Pull to refresh syncs with the server.** Pulling a library listing down past its top and letting go syncs with the signed-in server: with a finger on iOS and Android, and with two fingers on a Mac's trackpad in the kōan app, whose library listings now give at their ends under the trackpad.
+
+### Changed
+
+- **The search box goes to a track's record.** Return or a click on a track in the kōan app's search box opens its record page instead of playing it, so searching never interrupts what is playing; ⌘Return, ⌥Return and ⇧⌘Return still play.
+
+### Fixed
+
+- **A Mac app opened from the disk image or from where it was downloaded says to move it to Applications.** macOS runs such a copy read-only, so it cannot update itself; kōan said only that it could not write to its folder.
+- **EQ from the transport opens on the phone and tablet.** Edit… in the transport's EQ menu, and the server banner's Sign In, open Settings in the touch shell rather than a desktop Settings window that could not be left.
+
 ## 0.72.3
 
 ### Fixed
