@@ -69,34 +69,45 @@ pub fn shell_open(cx: &App) -> bool {
         && crate::app::main_window(cx).is_some()
 }
 
-/// On a phone, runs `f` on the shell in its window: whether it did.
+/// On a phone or tablet, runs `f` on the shell in its window: whether the
+/// shell is up to take it.
+///
+/// Deferred: the callers are menus and buttons inside that window, whose
+/// update is still under way, and a window cannot be updated from within
+/// its own update.
 fn on_shell(
     cx: &mut App,
-    f: impl FnOnce(&mut TouchShell, &mut Window, &mut Context<TouchShell>),
+    f: impl FnOnce(&mut TouchShell, &mut Window, &mut Context<TouchShell>) + 'static,
 ) -> bool {
-    let Some(shell) = cx.try_global::<Screens>().and_then(|s| s.0.upgrade()) else {
+    if !shell_open(cx) {
         return false;
-    };
-    let Some(window) = crate::app::main_window(cx) else {
-        return false;
-    };
-    window
-        .update(cx, |_, window, cx| {
-            shell.update(cx, |s, cx| f(s, window, cx))
-        })
-        .is_ok()
+    }
+    cx.defer(move |cx| {
+        let shell = cx.try_global::<Screens>().and_then(|s| s.0.upgrade());
+        let (Some(shell), Some(window)) = (shell, crate::app::main_window(cx)) else {
+            return;
+        };
+        window
+            .update(cx, |_, window, cx| {
+                shell.update(cx, |s, cx| f(s, window, cx))
+            })
+            .ok();
+    });
+    true
 }
 
 /// Settings, on `tab` or on its list of sections: on a phone, its screen on
 /// the Settings tab. Whether the phone took it.
 pub fn open_settings(tab: Option<crate::settings::Tab>, cx: &mut App) -> bool {
-    on_shell(cx, |shell, window, cx| shell.go_settings(tab, window, cx))
+    on_shell(cx, move |shell, window, cx| {
+        shell.go_settings(tab, window, cx)
+    })
 }
 
 /// A link Settings answers (an invite, a pairing), on a phone: on its
 /// section's screen. Whether the phone took it.
 pub fn answer_settings(link: crate::settings::Incoming, cx: &mut App) -> bool {
-    on_shell(cx, |shell, window, cx| {
+    on_shell(cx, move |shell, window, cx| {
         let settings = shell.settings(window, cx);
         settings.update(cx, |s, cx| s.answer(link, window, cx));
         let tab = settings.read(cx).tab();
@@ -107,7 +118,7 @@ pub fn answer_settings(link: crate::settings::Incoming, cx: &mut App) -> bool {
 /// EQ for `device`, or the output in use: on a phone, its screen on the tab
 /// showing. Whether the phone took it.
 pub fn open_eq(device: Option<String>, cx: &mut App) -> bool {
-    on_shell(cx, |shell, window, cx| shell.go_eq(device, window, cx))
+    on_shell(cx, move |shell, window, cx| shell.go_eq(device, window, cx))
 }
 
 /// The Search tab's first page: the field, and what it finds under it, as
