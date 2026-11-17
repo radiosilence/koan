@@ -63,6 +63,30 @@ pub enum Listing {
 }
 
 impl Route {
+    /// A listing of the library, which a pull from its top syncs with the
+    /// server.
+    pub fn syncs_on_pull(self) -> bool {
+        matches!(
+            self,
+            Route::Albums
+                | Route::Artists
+                | Route::Tracks
+                | Route::Favourites
+                | Route::RecentlyPlayed
+                | Route::OnDevice
+                | Route::Shelved(..)
+                | Route::Library
+        )
+    }
+
+    /// The route as a key that changes when the page showing does.
+    pub fn key(self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// A route by name, for tools that open the app somewhere: `albums`,
     /// `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`,
     /// `playlist:<id>`.
