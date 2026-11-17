@@ -1265,7 +1265,7 @@ impl Render for TouchShell {
                 p.look.palette.muted.hsla(),
                 cx,
             );
-            self.elastic.refresh(pull, window, cx);
+            self.elastic.refresh(route.key(), pull, window, cx);
             let stage = self.elastic.wrap(stage, window, cx);
             let root = self.nav.read(cx).at_root();
             // What is wrong with the server and the output still opening

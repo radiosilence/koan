@@ -93,7 +93,7 @@ pub fn sync_standing(cx: &App) -> (bool, bool) {
 pub fn pull_to_sync(
     route: crate::navigator::Route,
     top: Pixels,
-    color: Hsla,
+    color: crate::theme::Hsla,
     cx: &App,
 ) -> Option<crate::components::Refresh> {
     let (signed_in, busy) = sync_standing(cx);

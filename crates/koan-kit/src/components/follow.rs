@@ -159,25 +159,30 @@ pub type RefreshStart = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
 /// A page let go past the threshold, held open.
 #[derive(Clone, Copy, PartialEq)]
 enum Held {
-    /// Asked at this moment; closes if its owner has not said it is busy
-    /// within `ASKED`.
-    Asked(std::time::Instant),
+    /// Asked, the ask counted so that only its own timer expires it: closes
+    /// if its owner has not said it is busy within `ASKED`.
+    Asked(u32),
+    /// Asked `ASKED` ago, and the owner has not said it is busy.
+    Expired,
     Busy,
 }
 
 thread_local! {
-    /// Whether the list under the pointer stood at its top and at its foot
-    /// as the scroll being dispatched arrived, as the `Scrollbar` over it
-    /// read it: a trackpad's scroll reaches the page however much of it the
-    /// list took.
+    /// Whether every list under the pointer stood at its top, and every one
+    /// at its foot, as the scroll being dispatched arrived, as the
+    /// `Scrollbar`s over them read it: a trackpad's scroll reaches the page
+    /// however much of it the lists took.
     static ENDS: std::cell::Cell<Option<(bool, bool)>> = const { std::cell::Cell::new(None) };
 }
 
-/// The list under the pointer stood `at_top` and `at_foot` as the scroll
+/// A list under the pointer stood `at_top` and `at_foot` as the scroll
 /// being dispatched arrived. A `Scrollbar` says so as the scroll is
 /// captured, before any list takes it.
 pub(crate) fn scroll_ends(at_top: bool, at_foot: bool) {
-    ENDS.with(|ends| ends.set(Some((at_top, at_foot))));
+    ENDS.with(|ends| {
+        let (top, foot) = ends.get().unwrap_or((true, true));
+        ends.set(Some((top && at_top, foot && at_foot)));
+    });
 }
 
 #[derive(Default)]
@@ -204,6 +209,12 @@ struct ElasticState {
     lifted: bool,
     refresh: Option<Refresh>,
     held: Option<Held>,
+    asks: u32,
+    /// Held open and still: the page is laid out `HELD` down rather than
+    /// moved there by its layer, so it takes the pointer where it shows.
+    placed: bool,
+    /// The owner's page the refresh was last given for.
+    page: u64,
     #[cfg(test)]
     bounces: u32,
 }
@@ -246,17 +257,28 @@ impl Elastic {
 
     /// `page`, its ends giving.
     pub fn wrap(&self, page: impl IntoElement, window: &mut Window, _: &mut App) -> AnyElement {
-        let (layered, refresh) = {
+        let (layered, placed, held, refresh) = {
             let state = self.state.borrow();
-            (state.layered, state.refresh.clone())
+            (
+                state.layered,
+                state.placed,
+                state.held.is_some(),
+                state.refresh.clone(),
+            )
         };
         let view = window.current_view();
         let gap = refresh
-            .filter(|_| layered)
-            .map(|refresh| self.gap(refresh, window));
+            .filter(|_| layered || placed)
+            .map(|refresh| self.gap(refresh, held, window));
         let page = page.into_any_element();
         let page = if layered {
             self.follow.layer(page).into_any_element()
+        } else if placed {
+            div()
+                .size_full()
+                .pt(px(HELD))
+                .child(page)
+                .into_any_element()
         } else {
             page
         };
@@ -295,15 +317,16 @@ impl Elastic {
     }
 
     /// What the gap over a page pulled from its top shows: the spinner while
-    /// the owner is busy, else the ring filling toward the threshold.
-    fn gap(&self, refresh: Refresh, window: &Window) -> AnyElement {
+    /// it is held open and the owner is busy, else the ring filling toward
+    /// the threshold, drawn only where the page has uncovered it.
+    fn gap(&self, refresh: Refresh, held: bool, window: &Window) -> AnyElement {
         let room = div()
             .absolute()
             .top(refresh.top)
             .left_0()
             .w_full()
             .h(px(HELD));
-        if refresh.busy {
+        if refresh.busy && held {
             return room
                 .flex()
                 .items_center()
@@ -323,23 +346,36 @@ impl Elastic {
             .into_any_element()
     }
 
-    /// What the page's top refreshes, or nothing: given each time the owner
-    /// draws, with whether it is busy. A page held open closes once its
-    /// owner has been busy and is no longer, or was never busy within
-    /// `ASKED` of being asked, or no longer refreshes.
-    pub fn refresh(&self, refresh: Option<Refresh>, window: &Window, cx: &mut App) {
+    /// What the top of `page` (the owner's key for the page showing)
+    /// refreshes, or nothing: given each time the owner draws, with whether
+    /// it is busy. A page held open closes once its owner has been busy and
+    /// is no longer, or was never busy within `ASKED` of being asked, or no
+    /// longer refreshes; another page showing drops it at once.
+    pub fn refresh(&self, page: u64, refresh: Option<Refresh>, window: &Window, cx: &mut App) {
         let mut state = self.state.borrow_mut();
         let busy = refresh.as_ref().is_some_and(|r| r.busy);
         let open = refresh.is_some();
         state.refresh = refresh;
+        if std::mem::replace(&mut state.page, page) != page && state.held.is_some() {
+            state.held = None;
+            state.placed = false;
+            if !state.finger {
+                state.pulled = 0.0;
+                state.settling = None;
+                state.layered = false;
+                self.follow.animated().hold(2, 0.0);
+            }
+            return;
+        }
         let Some(held) = state.held else { return };
         let done = match held {
             _ if !open => true,
-            Held::Asked(_) if busy => {
+            Held::Asked(_) | Held::Expired if busy => {
                 state.held = Some(Held::Busy);
                 false
             }
-            Held::Asked(at) => at.elapsed() >= ASKED,
+            Held::Asked(_) => false,
+            Held::Expired => true,
             Held::Busy => !busy,
         };
         if !done {
@@ -350,6 +386,9 @@ impl Elastic {
             return;
         }
         state.pulled = 0.0;
+        if std::mem::take(&mut state.placed) {
+            self.follow.follow(point(Pixels::ZERO, px(HELD)), window);
+        }
         drop(state);
         let length = self.back(0.0, window, cx);
         self.land(length, window.current_view(), cx);
@@ -408,16 +447,27 @@ impl Elastic {
         }
         cx.notify(view);
         let state = self.state.clone();
+        let animated = self.follow.animated().clone();
         cx.spawn(async move |cx| {
             cx.background_executor().timer(after).await;
             let landed = {
                 let mut state = state.borrow_mut();
-                let landed = state.settling == Some(at) && state.pulled == 0.0 && !state.finger;
-                if landed {
+                let landed = state.settling == Some(at) && !state.finger;
+                if landed && state.pulled == 0.0 {
                     state.settling = None;
                     state.layered = false;
+                    true
+                } else if landed && state.held.is_some() {
+                    // Held open: laid out there instead, to take the
+                    // pointer where it shows.
+                    state.settling = None;
+                    state.layered = false;
+                    state.placed = true;
+                    animated.hold(2, 0.0);
+                    true
+                } else {
+                    false
                 }
-                landed
             };
             if landed {
                 cx.update(|cx| cx.notify(view));
@@ -454,6 +504,16 @@ impl Elastic {
                     state.finger = true;
                     state.spent = false;
                     state.lifted = false;
+                    // A finger landing on a page held open takes it from
+                    // where it is laid out.
+                    if std::mem::take(&mut state.placed) {
+                        state.pulled = unrubber(HELD, dimension);
+                        state.layered = true;
+                        self.follow.follow(point(Pixels::ZERO, px(HELD)), window);
+                        drop(state);
+                        cx.notify(view);
+                        return;
+                    }
                     // A finger landing on a bounce holds it where it stands.
                     if state.settling.take().is_some() {
                         let shown = self.follow.at().y / window.scale_factor();
@@ -493,8 +553,10 @@ impl Elastic {
                             0.0
                         };
                         let asked = refresh.clone().filter(|r| state.held.is_none() && !r.busy);
+                        let ask = state.asks.wrapping_add(1);
                         if refresh.is_some() && state.held.is_none() {
-                            state.held = Some(Held::Asked(now));
+                            state.asks = ask;
+                            state.held = Some(Held::Asked(ask));
                         }
                         drop(state);
                         let length = self.back(to, window, cx);
@@ -503,9 +565,15 @@ impl Elastic {
                             (refresh.start)(window, cx);
                             // The owner draws again then, to close the page
                             // if it never said it was busy.
+                            let state = self.state.clone();
                             cx.spawn(async move |cx| {
                                 cx.background_executor().timer(ASKED).await;
-                                cx.update(|cx| cx.notify(view));
+                                let mut state = state.borrow_mut();
+                                if state.held == Some(Held::Asked(ask)) {
+                                    state.held = Some(Held::Expired);
+                                    drop(state);
+                                    cx.update(|cx| cx.notify(view));
+                                }
                             })
                             .detach();
                         }
@@ -895,6 +963,7 @@ mod tests {
         list: ScrollHandle,
         tall: f32,
         refreshes: bool,
+        key: u64,
         busy: bool,
         asked: Rc<Cell<u32>>,
     }
@@ -908,7 +977,7 @@ mod tests {
                 color: gpui::black(),
                 start: Rc::new(move |_, _| asked.set(asked.get() + 1)),
             });
-            self.elastic.refresh(refresh, window, cx);
+            self.elastic.refresh(self.key, refresh, window, cx);
             let list = div()
                 .relative()
                 .size_full()
@@ -940,6 +1009,7 @@ mod tests {
             list: ScrollHandle::new(),
             tall: f32::from(window.viewport_size().height) + tall_over_window,
             refreshes: true,
+            key: 0,
             busy: false,
             asked: Rc::default(),
         });
@@ -1089,6 +1159,10 @@ mod tests {
         cx.run_until_parked();
     }
 
+    fn placed(page: &Entity<Page>, cx: &mut VisualTestContext) -> bool {
+        page.read_with(cx, |page, _| page.elastic.state.borrow().placed)
+    }
+
     /// How far down the page stands, in points.
     fn shown(page: &Entity<Page>, cx: &mut VisualTestContext) -> f32 {
         let scale = cx.update(|window, _| window.scale_factor());
@@ -1107,7 +1181,11 @@ mod tests {
         frames_until_still(cx);
         let held = shown(&page, cx);
         assert!((held - HELD).abs() < 1.0, "held at {held}");
-        assert!(give(&page, cx).1);
+        // Once still, laid out there: it takes the pointer where it shows.
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        assert!(placed(&page, cx));
+        assert_eq!(shown(&page, cx), 0.0);
         // Done: the page goes back to its place.
         set_busy(&page, false, cx);
         frames_until_still(cx);
@@ -1116,6 +1194,24 @@ mod tests {
         assert_eq!(give(&page, cx).0, 0.0);
         assert!(!give(&page, cx).1);
         assert_eq!(asked(&page, cx), 1);
+    }
+
+    #[gpui::test]
+    fn another_page_drops_a_page_held_open(cx: &mut TestAppContext) {
+        let (page, cx) = opened(3000., cx);
+        let at = Instant::now();
+        touch(TouchPhase::Started, 100., at, cx);
+        let at = drag(100., 500., 20, at, cx);
+        touch(TouchPhase::Ended, 500., at + FRAME, cx);
+        set_busy(&page, true, cx);
+        page.update(cx, |page, cx| {
+            page.key = 1;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(give(&page, cx), (0.0, false, 0));
+        assert!(!placed(&page, cx));
+        assert_eq!(shown(&page, cx), 0.0);
     }
 
     #[gpui::test]
@@ -1156,7 +1252,6 @@ mod tests {
         let at = drag(100., 500., 20, at, cx);
         touch(TouchPhase::Ended, 500., at + FRAME, cx);
         assert_eq!(asked(&page, cx), 1);
-        std::thread::sleep(super::ASKED);
         cx.executor().advance_clock(super::ASKED * 2);
         cx.run_until_parked();
         assert_eq!(give(&page, cx).0, 0.0);

@@ -79,6 +79,14 @@ impl Route {
         )
     }
 
+    /// The route as a key that changes when the page showing does.
+    pub fn key(self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// A route by name, for tools that open the app somewhere: `albums`,
     /// `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`,
     /// `playlist:<id>`.

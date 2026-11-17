@@ -700,6 +700,10 @@ impl Render for Shell {
         if route != Route::Downloads {
             self.downloads = None;
         }
+        // Given on every page, so one left while held open closes there.
+        let pull =
+            library::activity::pull_to_sync(route, bar_inset, p.look.palette.muted.hsla(), cx);
+        self.elastic.refresh(route.key(), pull, window, cx);
         let stage = match route {
             Route::Downloads => self
                 .downloads(cx)
@@ -715,13 +719,6 @@ impl Render for Shell {
                     let page = library
                         .clone()
                         .cached(StyleRefinement::default().size_full());
-                    let pull = library::activity::pull_to_sync(
-                        route,
-                        bar_inset,
-                        p.look.palette.muted.hsla(),
-                        cx,
-                    );
-                    self.elastic.refresh(pull, window, cx);
                     self.elastic.wrap(page, window, cx)
                 }
                 None => div().size_full().into_any_element(),
