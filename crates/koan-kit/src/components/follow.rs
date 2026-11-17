@@ -1179,13 +1179,14 @@ mod tests {
         assert_eq!(asked(&page, cx), 1);
         set_busy(&page, true, cx);
         frames_until_still(cx);
-        let held = shown(&page, cx);
-        assert!((held - HELD).abs() < 1.0, "held at {held}");
-        // Once still, laid out there: it takes the pointer where it shows.
+        // Once still, laid out `HELD` down rather than moved there, so it
+        // takes the pointer where it shows.
         cx.executor().advance_clock(Duration::from_secs(2));
         cx.run_until_parked();
         assert!(placed(&page, cx));
         assert_eq!(shown(&page, cx), 0.0);
+        let tall = cx.update(|window, _| f32::from(window.viewport_size().height));
+        assert!((rubber(give(&page, cx).0, tall) - HELD).abs() < 1.0);
         // Done: the page goes back to its place.
         set_busy(&page, false, cx);
         frames_until_still(cx);
