@@ -1,0 +1,1 @@
+- **EQ from the transport opens on the phone and tablet.** Edit… in the transport's EQ menu, and the server banner's Sign In, open Settings in the touch shell rather than a desktop Settings window that could not be left.
