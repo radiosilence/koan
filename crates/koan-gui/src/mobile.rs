@@ -99,13 +99,15 @@ fn on_shell(
 /// Settings, on `tab` or on its list of sections: on a phone, its screen on
 /// the Settings tab. Whether the phone took it.
 pub fn open_settings(tab: Option<crate::settings::Tab>, cx: &mut App) -> bool {
-    on_shell(cx, |shell, window, cx| shell.go_settings(tab, window, cx))
+    on_shell(cx, move |shell, window, cx| {
+        shell.go_settings(tab, window, cx)
+    })
 }
 
 /// A link Settings answers (an invite, a pairing), on a phone: on its
 /// section's screen. Whether the phone took it.
 pub fn answer_settings(link: crate::settings::Incoming, cx: &mut App) -> bool {
-    on_shell(cx, |shell, window, cx| {
+    on_shell(cx, move |shell, window, cx| {
         let settings = shell.settings(window, cx);
         settings.update(cx, |s, cx| s.answer(link, window, cx));
         let tab = settings.read(cx).tab();
@@ -116,7 +118,7 @@ pub fn answer_settings(link: crate::settings::Incoming, cx: &mut App) -> bool {
 /// EQ for `device`, or the output in use: on a phone, its screen on the tab
 /// showing. Whether the phone took it.
 pub fn open_eq(device: Option<String>, cx: &mut App) -> bool {
-    on_shell(cx, |shell, window, cx| shell.go_eq(device, window, cx))
+    on_shell(cx, move |shell, window, cx| shell.go_eq(device, window, cx))
 }
 
 /// The Search tab's first page: the field, and what it finds under it, as
