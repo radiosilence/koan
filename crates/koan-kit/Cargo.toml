@@ -78,4 +78,4 @@ objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
 # portal's settings as GPUI reads the colour scheme, with their change
 # signals.
 [target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "0.13", default-features = false, features = ["async-io", "settings"] }
+ashpd = { version = "0.14", default-features = false, features = ["async-io", "settings"] }
