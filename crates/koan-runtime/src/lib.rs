@@ -7493,7 +7493,8 @@ impl KoanEngine {
         rows.into_iter()
             .map(|r| {
                 let (row, favourite) = (credits.track(&r), favs.contains(&r.id));
-                Track::from_row(r, uids.remove(&r.id), favourite, row)
+                let uid = uids.remove(&r.id);
+                Track::from_row(r, uid, favourite, row)
             })
             .collect()
     }
