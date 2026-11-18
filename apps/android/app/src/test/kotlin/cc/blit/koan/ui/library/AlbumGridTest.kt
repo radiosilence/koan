@@ -29,7 +29,7 @@ import org.robolectric.annotation.Config
 class AlbumGridTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun album(id: Long) = Album(id, "Album $id", 1, "Artist", emptyList(), null, null, null, null, null, null, null, null, ReleaseSection.ALBUMS)
+    private fun album(id: Long) = Album(id, null, "Album $id", 1, "Artist", emptyList(), null, null, null, null, null, null, null, null, ReleaseSection.ALBUMS)
 
     private val library = (1L..10_000L).map(::album)
 

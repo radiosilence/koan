@@ -52,6 +52,9 @@ pub struct Nav {
     anchors: HashMap<Page, Anchor>,
     /// The track whose details are open over the page.
     pub info: Option<i64>,
+    /// The last record whose row changed, for the stage to carry its page
+    /// over to the new route.
+    pub relinked: Option<(Page, Page)>,
     _navigator: Subscription,
 }
 
@@ -74,6 +77,7 @@ impl Nav {
             offsets: HashMap::new(),
             anchors: HashMap::new(),
             info: None,
+            relinked: None,
             _navigator: watch,
         }
     }
@@ -92,6 +96,17 @@ impl Nav {
             if nav.go(page) {
                 cx.notify();
             }
+        });
+    }
+
+    /// A record's row went and came back as another (`Navigator::relink`):
+    /// its visits follow it, and the page made for it is kept as the new
+    /// route's, so it keeps its scroll.
+    pub fn relink(&mut self, from: Page, to: Page, cx: &mut Context<Self>) {
+        self.relinked = Some((from, to));
+        self.navigator.update(cx, |nav, cx| {
+            nav.relink(from, to);
+            cx.notify();
         });
     }
 

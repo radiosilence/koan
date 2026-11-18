@@ -219,14 +219,28 @@ impl Navigator {
 
     /// The library lost the row `route` names, and the id may come back as
     /// another record's: Back must not lead there. The page showing is left
-    /// to find its record again by uid, or to say it has gone.
+    /// to find its record again by uid, or to say it has gone; its other
+    /// visits go.
     pub fn forget_lost(&mut self, route: Route) {
         for (history, cursor) in self.stashed.values_mut() {
             Self::forget_here(history, cursor, route);
         }
         if self.current() != route {
             Self::forget_here(&mut self.history, &mut self.cursor, route);
+            return;
         }
+        let showing = self.cursor;
+        let before = self.history[..showing]
+            .iter()
+            .filter(|r| **r != route)
+            .count();
+        let mut ix = 0;
+        self.history.retain(|r| {
+            let keep = ix == showing || *r != route;
+            ix += 1;
+            keep
+        });
+        self.collapse(before);
     }
 
     /// A route chosen where it is listed (the sidebar): a move, or for the
@@ -361,8 +375,13 @@ impl Navigator {
             surviving
         }
         .min(self.history.len() - 1);
-        // The pages either side of a forgotten one can be the same page, and
-        // the same page twice in a row is not a step Back can take.
+        self.collapse(landing);
+    }
+
+    /// The pages either side of a forgotten one can be the same page, and the
+    /// same page twice in a row is not a step Back can take: runs become one
+    /// visit, the cursor on the run holding `landing`.
+    fn collapse(&mut self, landing: usize) {
         let mut collapsed: Vec<Route> = Vec::with_capacity(self.history.len());
         let mut cursor = 0;
         for (ix, route) in self.history.iter().enumerate() {
@@ -425,10 +444,21 @@ mod tests {
         assert_eq!(nav.current(), TRACKS);
         assert_eq!(nav.behind(), Some(QUEUE));
 
-        // The page showing finds its record again itself.
+        // The page showing finds its record again itself; its earlier
+        // visits go, so Back cannot lead to the id once it is another's.
+        nav.go(Route::Album(4));
+        nav.go(ALBUMS);
         nav.go(Route::Album(4));
         nav.forget_lost(Route::Album(4));
         assert_eq!(nav.current(), Route::Album(4));
+        assert_eq!(nav.behind(), Some(ALBUMS));
+        assert_eq!(
+            nav.history
+                .iter()
+                .filter(|r| **r == Route::Album(4))
+                .count(),
+            1
+        );
     }
 
     #[test]

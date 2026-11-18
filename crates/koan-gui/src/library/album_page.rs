@@ -177,20 +177,22 @@ impl AlbumPage {
             // Once shown, the record is followed by its uid: a sync can
             // delete its row and add it back as another, and its old id can
             // come back as some other record.
+            let mut id = id;
             if let Some(uid) = uid {
                 let now = engine.clone().album_for_uid(uid).await;
-                let moved = this.update(cx, |this, cx| {
+                let found = this.update(cx, |this, cx| {
                     if this.request != request {
-                        return true;
+                        return None;
                     }
                     match now {
-                        Ok(Some(now)) if now != id => {
-                            let navigator = this.lib.nav.read(cx).navigator();
-                            navigator.update(cx, |nav, cx| {
-                                nav.relink(Page::Album(id), Page::Album(now));
-                                cx.notify();
-                            });
-                            true
+                        Ok(Some(now)) => {
+                            if now != id {
+                                this.album_id = now;
+                                this.lib.nav.update(cx, |nav, cx| {
+                                    nav.relink(Page::Album(id), Page::Album(now), cx)
+                                });
+                            }
+                            Some(now)
                         }
                         Ok(None) => {
                             this.tracks.clear();
@@ -198,13 +200,14 @@ impl AlbumPage {
                             this.selection.retain(|_| false);
                             this.gone = Some(false);
                             cx.notify();
-                            true
+                            None
                         }
-                        _ => false,
+                        Err(_) => Some(id),
                     }
                 });
-                if moved.unwrap_or(true) {
-                    return;
+                match found {
+                    Ok(Some(now)) => id = now,
+                    _ => return,
                 }
             }
             let page = engine.album_page(id).await;
