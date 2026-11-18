@@ -981,10 +981,10 @@ impl TileHost for ArtistPage {
 }
 
 impl TrackList for ArtistPage {
-    fn row_tracks(&self) -> Vec<i64> {
+    fn row_tracks(&self) -> Vec<&koan_runtime::Track> {
         self.record
             .as_ref()
-            .map(|r| r.appearances.iter().map(|t| t.id).collect())
+            .map(|r| r.appearances.iter().collect())
             .unwrap_or_default()
     }
 
@@ -1024,7 +1024,7 @@ impl TrackList for ArtistPage {
                     rows::select(&mut self.selection, item, event, order, cx)
                 };
                 if plays {
-                    actions::play_list(&self.lib, ids, index, cx);
+                    actions::play_list(&self.lib, self.row_tracks(), index, cx);
                 }
                 cx.notify();
             }
@@ -1094,9 +1094,8 @@ impl super::keys::KeyedList for ArtistPage {
                 .nav
                 .update(cx, |nav, cx| nav.open(Page::Album(album), cx)),
             _ => {
-                let ids = r.appearances.iter().map(|t| t.id).collect();
                 let from = ix - r.albums.len() - r.features.len();
-                actions::play_list(&self.lib, ids, from, cx);
+                actions::play_list(&self.lib, &r.appearances, from, cx);
             }
         }
     }
