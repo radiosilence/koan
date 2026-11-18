@@ -38,13 +38,6 @@ impl LibraryStage {
         // hidden grid neither reloads nor keeps its sleeves ranked on screen;
         // its place comes back from the navigator's offsets.
         let mut subscriptions = vec![cx.observe(&lib.nav, |this: &mut Self, nav, cx| {
-            if let Some((from, to)) = nav.read(cx).relinked {
-                for made in this.page.iter_mut().chain(this.under.iter_mut()) {
-                    if made.page == from {
-                        made.page = to;
-                    }
-                }
-            }
             show_record(nav.read(cx).current(cx), cx);
             if !Self::draws(nav.read(cx).current(cx)) {
                 // Kept for the shell's move to its own page to slide over.
@@ -54,6 +47,16 @@ impl LibraryStage {
             }
             cx.notify();
         })];
+        subscriptions.push(cx.subscribe(
+            &lib.nav,
+            |this: &mut Self, _, moved: &super::nav::Relinked, _| {
+                for made in this.page.iter_mut().chain(this.under.iter_mut()) {
+                    if made.page == moved.from {
+                        made.page = moved.to;
+                    }
+                }
+            },
+        ));
         // Gone with its window (closed, the app kept running): no record's
         // page shows, and the windows left follow the playing record.
         subscriptions.push(cx.on_release(|_, cx| crate::root::ShownRecord::show(None, cx)));

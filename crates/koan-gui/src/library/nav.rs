@@ -43,6 +43,15 @@ pub enum Heading {
     Appearances,
 }
 
+/// A record's row went and came back as another: the page made for `from`
+/// is now `to`'s.
+pub struct Relinked {
+    pub from: Page,
+    pub to: Page,
+}
+
+impl EventEmitter<Relinked> for Nav {}
+
 pub struct Nav {
     navigator: Entity<Navigator>,
     /// How far down each page was scrolled when it was left, put back when
@@ -52,9 +61,6 @@ pub struct Nav {
     anchors: HashMap<Page, Anchor>,
     /// The track whose details are open over the page.
     pub info: Option<i64>,
-    /// The last record whose row changed, for the stage to carry its page
-    /// over to the new route.
-    pub relinked: Option<(Page, Page)>,
     _navigator: Subscription,
 }
 
@@ -77,7 +83,6 @@ impl Nav {
             offsets: HashMap::new(),
             anchors: HashMap::new(),
             info: None,
-            relinked: None,
             _navigator: watch,
         }
     }
@@ -103,7 +108,7 @@ impl Nav {
     /// its visits follow it, and the page made for it is kept as the new
     /// route's, so it keeps its scroll.
     pub fn relink(&mut self, from: Page, to: Page, cx: &mut Context<Self>) {
-        self.relinked = Some((from, to));
+        cx.emit(Relinked { from, to });
         self.navigator.update(cx, |nav, cx| {
             nav.relink(from, to);
             cx.notify();
