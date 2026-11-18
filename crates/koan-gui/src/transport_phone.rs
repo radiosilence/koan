@@ -578,15 +578,15 @@ impl Transport {
                             cx.notify();
                         }
                     }
-                    koan_kit::app::platform::TouchPhase::Moved => match this.pull {
-                        Some(by) => {
+                    // With no pull held, a fling's coasting after the
+                    // release decided.
+                    koan_kit::app::platform::TouchPhase::Moved => {
+                        if let Some(by) = this.pull {
                             let at = (by + dy).max(Pixels::ZERO);
                             this.pulled.follow(down(at), window);
                             this.pull = Some(at);
                         }
-                        // A fling's coasting after the release decided.
-                        None => return,
-                    },
+                    }
                     koan_kit::app::platform::TouchPhase::Ended => {
                         let Some(by) = this.pull.take() else { return };
                         let at = (by + dy).max(Pixels::ZERO);
