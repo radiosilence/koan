@@ -79,7 +79,11 @@ pub fn play_list<'a>(
 ) {
     let tracks: Vec<&koan_runtime::Track> = tracks.into_iter().collect();
     let engine = lib.engine.clone();
-    match tracks.iter().map(|t| t.uid.clone()).collect::<Option<Vec<_>>>() {
+    match tracks
+        .iter()
+        .map(|t| t.uid.clone())
+        .collect::<Option<Vec<_>>>()
+    {
         Some(uids) => played(engine.play_uids(uids, index as u32), cx),
         None => {
             let ids = tracks.iter().map(|t| t.id).collect();

@@ -7538,7 +7538,10 @@ fn resolve_uids(
         uids.iter().map(String::as_str),
     )
     .map_err(db_err)?;
-    if uids.get(start_at).is_none_or(|uid| !found.contains_key(uid)) {
+    if uids
+        .get(start_at)
+        .is_none_or(|uid| !found.contains_key(uid))
+    {
         return Err(KoanError::NotFound {
             message: "that track is no longer in the library".into(),
         });
@@ -7547,7 +7550,12 @@ fn resolve_uids(
         .iter()
         .filter(|uid| found.contains_key(*uid))
         .count();
-    Ok((uids.iter().filter_map(|uid| found.get(uid).copied()).collect(), start))
+    Ok((
+        uids.iter()
+            .filter_map(|uid| found.get(uid).copied())
+            .collect(),
+        start,
+    ))
 }
 
 /// Where the track asked for at `start_at` of `asked` sits among `items`,

@@ -65,7 +65,10 @@ pub enum Listing {
 impl Route {
     /// The route names a row by id, which the library can delete and reuse.
     pub fn names_row(self) -> bool {
-        matches!(self, Route::Album(_) | Route::Artist(_) | Route::Playlist(_))
+        matches!(
+            self,
+            Route::Album(_) | Route::Artist(_) | Route::Playlist(_)
+        )
     }
 
     /// A listing of the library, which a pull from its top syncs with the

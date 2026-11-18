@@ -107,8 +107,14 @@ impl Lib {
         cx.subscribe(&covers, move |_, gone: &covers::Evicted, cx| {
             crate::covers::Covers::forget(&gone.albums, cx);
             lost.update(cx, |nav, cx| {
-                let albums = gone.albums.iter().map(|id| crate::navigator::Route::Album(*id));
-                let artists = gone.artists.iter().map(|id| crate::navigator::Route::Artist(*id));
+                let albums = gone
+                    .albums
+                    .iter()
+                    .map(|id| crate::navigator::Route::Album(*id));
+                let artists = gone
+                    .artists
+                    .iter()
+                    .map(|id| crate::navigator::Route::Artist(*id));
                 for route in albums.chain(artists) {
                     nav.forget_lost(route);
                 }
