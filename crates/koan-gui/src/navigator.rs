@@ -63,6 +63,11 @@ pub enum Listing {
 }
 
 impl Route {
+    /// The route names a row by id, which the library can delete and reuse.
+    pub fn names_row(self) -> bool {
+        matches!(self, Route::Album(_) | Route::Artist(_) | Route::Playlist(_))
+    }
+
     /// A listing of the library, which a pull from its top syncs with the
     /// server.
     pub fn syncs_on_pull(self) -> bool {
@@ -109,6 +114,11 @@ impl Route {
         }
     }
 }
+
+/// How many pages a history keeps. Older visits than this are dropped from
+/// behind the root, so Back walks the most recent ones and a long session's
+/// history does not outgrow what anyone walks back through.
+const HISTORY_LIMIT: usize = 50;
 
 /// What choosing a route did.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -177,8 +187,43 @@ impl Navigator {
         }
         self.history.truncate(self.cursor + 1);
         self.history.push(route);
+        if self.history.len() > HISTORY_LIMIT {
+            // The root stays: a phone's tab is its root's.
+            self.history.remove(1);
+        }
         self.cursor = self.history.len() - 1;
         true
+    }
+
+    /// Whether any tab's history holds `route`.
+    pub fn holds(&self, route: Route) -> bool {
+        self.history.contains(&route) || self.stashed.values().any(|(h, _)| h.contains(&route))
+    }
+
+    /// A record's row went and came back as another row, as a sync can make
+    /// it: every visit of `from` becomes one of `to`, the cursor staying on
+    /// the same visit.
+    pub fn relink(&mut self, from: Route, to: Route) {
+        for (history, _) in self.stashed.values_mut() {
+            for route in history.iter_mut().filter(|r| **r == from) {
+                *route = to;
+            }
+        }
+        for route in self.history.iter_mut().filter(|r| **r == from) {
+            *route = to;
+        }
+    }
+
+    /// The library lost the row `route` names, and the id may come back as
+    /// another record's: Back must not lead there. The page showing is left
+    /// to find its record again by uid, or to say it has gone.
+    pub fn forget_lost(&mut self, route: Route) {
+        for (history, cursor) in self.stashed.values_mut() {
+            Self::forget_here(history, cursor, route);
+        }
+        if self.current() != route {
+            Self::forget_here(&mut self.history, &mut self.cursor, route);
+        }
     }
 
     /// A route chosen where it is listed (the sidebar): a move, or for the
@@ -338,6 +383,50 @@ mod tests {
     const ALBUMS: Route = Route::Albums;
     const TRACKS: Route = Route::Tracks;
     const PLAYLIST: Route = Route::Playlist(7);
+
+    #[test]
+    fn a_long_history_keeps_its_root_and_its_latest_pages() {
+        let mut nav = Navigator::default();
+        for id in 0..200 {
+            nav.go(Route::Album(id));
+        }
+        assert_eq!(nav.history.len(), HISTORY_LIMIT);
+        assert_eq!(nav.history[0], QUEUE);
+        assert_eq!(nav.current(), Route::Album(199));
+        assert_eq!(nav.behind(), Some(Route::Album(198)));
+        while nav.back() {}
+        assert_eq!(nav.current(), QUEUE);
+    }
+
+    #[test]
+    fn a_relinked_record_stays_where_it_was_in_every_tab() {
+        let mut nav = Navigator::default();
+        nav.go(Route::Album(3));
+        nav.go(TRACKS);
+        nav.switch(1, Route::Library);
+        nav.go(Route::Album(3));
+        nav.relink(Route::Album(3), Route::Album(9));
+        assert_eq!(nav.current(), Route::Album(9));
+        assert!(!nav.holds(Route::Album(3)));
+        nav.switch(0, QUEUE);
+        assert_eq!(nav.current(), TRACKS);
+        assert_eq!(nav.behind(), Some(Route::Album(9)));
+    }
+
+    #[test]
+    fn a_lost_record_leaves_history_but_not_the_screen() {
+        let mut nav = Navigator::default();
+        nav.go(Route::Album(3));
+        nav.go(TRACKS);
+        nav.forget_lost(Route::Album(3));
+        assert_eq!(nav.current(), TRACKS);
+        assert_eq!(nav.behind(), Some(QUEUE));
+
+        // The page showing finds its record again itself.
+        nav.go(Route::Album(4));
+        nav.forget_lost(Route::Album(4));
+        assert_eq!(nav.current(), Route::Album(4));
+    }
 
     #[test]
     fn adopting_puts_the_page_over_its_tabs_root() {

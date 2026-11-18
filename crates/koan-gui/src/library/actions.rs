@@ -68,11 +68,30 @@ pub fn play(lib: &Lib, items: &[Playable], shuffled: bool, cx: &mut App) -> Task
 /// Play a list from one of its rows, keeping the rest behind it: a double
 /// click in a track list. Where showing the queue once it plays belongs, when
 /// the shell has one to show.
-pub fn play_list(lib: &Lib, track_ids: Vec<i64>, index: usize, cx: &mut App) {
-    let replaced = lib
-        .engine
-        .clone()
-        .replace_queue(track_ids, Some(index as u32), false);
+/// Plays `tracks` from the one at `index`, named by uid where every one has
+/// a uid: a row id a page holds can name another track once a sync has
+/// deleted its own, and the tap would play that.
+pub fn play_list<'a>(
+    lib: &Lib,
+    tracks: impl IntoIterator<Item = &'a koan_runtime::Track>,
+    index: usize,
+    cx: &mut App,
+) {
+    let tracks: Vec<&koan_runtime::Track> = tracks.into_iter().collect();
+    let engine = lib.engine.clone();
+    match tracks.iter().map(|t| t.uid.clone()).collect::<Option<Vec<_>>>() {
+        Some(uids) => played(engine.play_uids(uids, index as u32), cx),
+        None => {
+            let ids = tracks.iter().map(|t| t.id).collect();
+            played(engine.replace_queue(ids, Some(index as u32), false), cx)
+        }
+    }
+}
+
+fn played(
+    replaced: impl Future<Output = Result<Vec<String>, koan_runtime::KoanError>> + 'static,
+    cx: &mut App,
+) {
     cx.spawn(async move |cx| match replaced.await {
         Ok(_) => cx.update(|cx| arrived(None, cx)),
         Err(e) => log::warn!("play: {e}"),

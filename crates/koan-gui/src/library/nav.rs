@@ -59,8 +59,14 @@ impl Nav {
     pub fn new(navigator: Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         // Pages observe this, so a move or a rewind reaches them through it.
         // A track's details belong to the page they were opened on.
-        let watch = cx.observe(&navigator, |nav: &mut Self, _, cx| {
+        // A page that names a row keeps its place only while some history
+        // can return to it: the row's id can come back as another record's.
+        let watch = cx.observe(&navigator, |nav: &mut Self, navigator, cx| {
             nav.info = None;
+            let navigator = navigator.read(cx);
+            let kept = |page: &Page| !page.names_row() || navigator.holds(*page);
+            nav.offsets.retain(|page, _| kept(page));
+            nav.anchors.retain(|page, _| kept(page));
             cx.notify()
         });
         Self {

@@ -539,8 +539,8 @@ impl actions::Menus for HistoryPage {
 }
 
 impl TrackList for HistoryPage {
-    fn row_tracks(&self) -> Vec<i64> {
-        self.entries.iter().map(|e| e.track.id).collect()
+    fn row_tracks(&self) -> Vec<&koan_runtime::Track> {
+        self.entries.iter().map(|e| &e.track).collect()
     }
 
     fn clicked(
