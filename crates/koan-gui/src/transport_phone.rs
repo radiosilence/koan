@@ -217,7 +217,7 @@ impl Transport {
             // as iOS players open; its buttons keep their own taps.
             .when(has_entry, |bar| {
                 bar.on_click(cx.listener(|_, _, _, cx| cx.emit(Expand)))
-                    .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
+                    .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
                         if event.source != ScrollSource::Touch {
                             return;
                         }
@@ -229,6 +229,12 @@ impl Transport {
                                 let lift = lift + dy;
                                 if lift < -Pixels::from(24.) {
                                     this.lift = None;
+                                    // The rest of the swipe, and its fling,
+                                    // are spent on opening: none of it
+                                    // reaches Now Playing, where a touch
+                                    // catching the fling would be a scroll
+                                    // rather than the seek bar's drag.
+                                    window.end_touch_scroll();
                                     cx.emit(Expand);
                                 } else {
                                     this.lift = Some(lift);
@@ -324,15 +330,44 @@ impl Transport {
                 &self.nav,
                 p.ink,
             );
+            // The track's menu, as the rows' hold opens it: its record, its
+            // artist, a playlist, the queue.
+            let more = e.track_id.zip(self.lib.clone()).map(|(track, lib)| {
+                let album = e.album_id;
+                div()
+                    .koan_menu_on_press("np-more", window, cx, move |m, _, cx| {
+                        crate::library::actions::menu(
+                            m,
+                            &lib,
+                            std::sync::Arc::from([crate::library::drag::Playable::Track(track)]),
+                            album,
+                            None,
+                            cx,
+                        )
+                    })
+                    .child(Button::icon_only("np-more-button", Icon::More, "more"))
+            });
+            // The heart and the menu on a line of their own, so the names
+            // below have the page's width.
+            let actions = (heart.is_some() || more.is_some()).then(|| {
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(p.space(Space::M))
+                    .children(heart)
+                    .children(more)
+            });
             div()
                 .w_full()
                 .flex()
-                .items_center()
-                .gap(p.space(Space::M))
+                .flex_col()
+                .gap(p.space(Space::S))
+                .children(actions)
                 .child(
                     div()
-                        .flex_1()
-                        .min_w_0()
+                        .w_full()
                         .flex()
                         .flex_col()
                         .gap(p.space(Space::Xs))
@@ -340,6 +375,7 @@ impl Transport {
                         .child(
                             div()
                                 .id("np-full-title")
+                                .w_full()
                                 .text_role(TypeRole::TitleSmall, &p.look)
                                 .text_color(p.strong)
                                 .truncate()
@@ -369,26 +405,6 @@ impl Transport {
                             ))
                         }),
                 )
-                .children(heart)
-                // The track's menu, as the rows' hold opens it: its record,
-                // its artist, a playlist, the queue.
-                .children(e.track_id.zip(self.lib.clone()).map(|(track, lib)| {
-                    let album = e.album_id;
-                    div()
-                        .koan_menu_on_press("np-more", window, cx, move |m, _, cx| {
-                            crate::library::actions::menu(
-                                m,
-                                &lib,
-                                std::sync::Arc::from([crate::library::drag::Playable::Track(
-                                    track,
-                                )]),
-                                album,
-                                None,
-                                cx,
-                            )
-                        })
-                        .child(Button::icon_only("np-more-button", Icon::More, "more"))
-                }))
         });
         let play_pause = Button::icon_outlined(
             "np-full-play-pause",
@@ -545,6 +561,7 @@ impl Transport {
                 if event.source != ScrollSource::Touch {
                     return;
                 }
+                cx.stop_propagation();
                 let dy = event.delta.pixel_delta(Pixels::from(16.)).y;
                 let down = |by: Pixels| Point::new(Pixels::ZERO, by.max(Pixels::ZERO));
                 match event.touch_phase {
@@ -575,6 +592,9 @@ impl Transport {
                         if at > close_at {
                             this.pulled.follow(down(at), window);
                             this.released = Some(true);
+                            // The swipe is spent on closing: its fling does
+                            // not carry on into the page uncovered.
+                            window.end_touch_scroll();
                             cx.emit(Collapse);
                         } else {
                             this.ease_back(window, cx);
@@ -586,7 +606,6 @@ impl Transport {
                         }
                     }
                 }
-                cx.stop_propagation();
             }))
             .clear_of_system(crate::components::Clear::System, window)
             .child(page);

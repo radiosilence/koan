@@ -1,0 +1,1 @@
+- **Now Playing on the phone.** Swiping it down no longer scrolls the page beneath, the seek bar takes a drag as soon as the sheet opens, and the heart and track menu sit on their own row so the title, artist and record lines use the full width.
