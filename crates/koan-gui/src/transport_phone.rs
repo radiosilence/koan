@@ -106,18 +106,19 @@ impl Transport {
         // The playhead's line glides on the GPU from the engine's last anchor,
         // as the seek bar does: no frame is drawn between the anchors.
         let anchor = *cx.global::<Mirror>().playhead.read(cx);
-        let share = if now.duration_ms > 0 {
-            let at = anchor.at(std::time::Instant::now(), now.duration_ms);
+        let duration = super::known_duration(now.duration_ms, entry.and_then(|e| e.duration_ms));
+        let share = if duration > 0 {
+            let at = anchor.at(std::time::Instant::now(), duration);
             self.mini_glide.set(
-                (anchor.position_ms as f64 / now.duration_ms as f64) as f32,
+                (anchor.position_ms as f64 / duration as f64) as f32,
                 if anchor.playing {
-                    1000.0 / now.duration_ms as f32
+                    1000.0 / duration as f32
                 } else {
                     0.0
                 },
                 anchor.at,
             );
-            (at as f32 / now.duration_ms as f32).clamp(0.0, 1.0)
+            (at as f32 / duration as f32).clamp(0.0, 1.0)
         } else {
             0.0
         };

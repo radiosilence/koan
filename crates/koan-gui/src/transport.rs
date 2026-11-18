@@ -1482,8 +1482,9 @@ fn answer_after(waiting: Option<u64>, count: u64) -> u64 {
 
 /// How long what is playing is: the stream's own figure, or, while it has
 /// none yet (the output still opening, a download not yet probed), the
-/// library's for the entry, so the seek bar is not left disabled.
-fn known_duration(stream_ms: u64, library_ms: Option<u64>) -> u64 {
+/// library's for the entry, so neither the seek bar nor the mini player's
+/// line is left empty.
+pub(super) fn known_duration(stream_ms: u64, library_ms: Option<u64>) -> u64 {
     match stream_ms {
         0 => library_ms.unwrap_or(0),
         known => known,
