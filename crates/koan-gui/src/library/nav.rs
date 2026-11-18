@@ -43,6 +43,15 @@ pub enum Heading {
     Appearances,
 }
 
+/// A record's row went and came back as another: the page made for `from`
+/// is now `to`'s.
+pub struct Relinked {
+    pub from: Page,
+    pub to: Page,
+}
+
+impl EventEmitter<Relinked> for Nav {}
+
 pub struct Nav {
     navigator: Entity<Navigator>,
     /// How far down each page was scrolled when it was left, put back when
@@ -59,8 +68,14 @@ impl Nav {
     pub fn new(navigator: Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         // Pages observe this, so a move or a rewind reaches them through it.
         // A track's details belong to the page they were opened on.
-        let watch = cx.observe(&navigator, |nav: &mut Self, _, cx| {
+        // A page that names a row keeps its place only while some history
+        // can return to it: the row's id can come back as another record's.
+        let watch = cx.observe(&navigator, |nav: &mut Self, navigator, cx| {
             nav.info = None;
+            let navigator = navigator.read(cx);
+            let kept = |page: &Page| !page.names_row() || navigator.holds(*page);
+            nav.offsets.retain(|page, _| kept(page));
+            nav.anchors.retain(|page, _| kept(page));
             cx.notify()
         });
         Self {
@@ -86,6 +101,17 @@ impl Nav {
             if nav.go(page) {
                 cx.notify();
             }
+        });
+    }
+
+    /// A record's row went and came back as another (`Navigator::relink`):
+    /// its visits follow it, and the page made for it is kept as the new
+    /// route's, so it keeps its scroll.
+    pub fn relink(&mut self, from: Page, to: Page, cx: &mut Context<Self>) {
+        cx.emit(Relinked { from, to });
+        self.navigator.update(cx, |nav, cx| {
+            nav.relink(from, to);
+            cx.notify();
         });
     }
 

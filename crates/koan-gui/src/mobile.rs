@@ -561,6 +561,11 @@ impl TouchShell {
             if let Some(was) = self.seen {
                 self.travel.insert(was, left);
             }
+            // A page naming a row is kept only while a history can return
+            // to it: its id can come back as another record's.
+            let nav = self.nav.read(cx);
+            self.travel
+                .retain(|(_, route), _| !route.names_row() || nav.holds(*route));
         }
         self.seen = Some(now);
     }

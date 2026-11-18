@@ -12,7 +12,7 @@ class PlaylistRowsTest {
     private fun entry(id: Long, album: String, albumId: Long?, run: RunRole = RunRole.OPENS, artist: String = "Tone Collective") = PlaylistEntry(
         entryId = id,
         track = Track(
-            id = id * 10, title = "Track $id", artistName = artist, artistCredit = emptyList(), albumArtistName = artist,
+            id = id * 10, uid = null, title = "Track $id", artistName = artist, artistCredit = emptyList(), albumArtistName = artist,
             albumArtistId = 1, albumArtistCredit = emptyList(), creditDiffers = false, albumTitle = album,
             albumId = albumId, artistId = 1, disc = 1, trackNumber = id.toInt(), durationMs = 60_000, codec = "FLAC",
             sampleRate = 44_100, bitDepth = 16, channels = 2, bitrate = null, genre = null, source = "remote",

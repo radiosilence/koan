@@ -1,0 +1,1 @@
+- **Library taps play what they show after a sync.** A sync that deleted and re-added rows could leave a record page holding ids that now named other tracks, so a tap played an unrelated record; plays from library pages now name tracks by uid, a record page follows its record by uid, and history no longer leads to records the library lost and keeps at most 50 pages per tab.

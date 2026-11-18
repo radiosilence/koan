@@ -172,7 +172,44 @@ impl AlbumPage {
         self.request += 1;
         let request = self.request;
         let (engine, id) = (self.lib.engine.clone(), self.album_id);
+        let uid = self.album.as_ref().and_then(|a| a.uid.clone());
         self._load = Some(cx.spawn(async move |this, cx| {
+            // Once shown, the record is followed by its uid: a sync can
+            // delete its row and add it back as another, and its old id can
+            // come back as some other record.
+            let mut id = id;
+            if let Some(uid) = uid {
+                let now = engine.clone().album_for_uid(uid).await;
+                let found = this.update(cx, |this, cx| {
+                    if this.request != request {
+                        return None;
+                    }
+                    match now {
+                        Ok(Some(now)) => {
+                            if now != id {
+                                this.album_id = now;
+                                this.lib.nav.update(cx, |nav, cx| {
+                                    nav.relink(Page::Album(id), Page::Album(now), cx)
+                                });
+                            }
+                            Some(now)
+                        }
+                        Ok(None) => {
+                            this.tracks.clear();
+                            this.lines.clear();
+                            this.selection.retain(|_| false);
+                            this.gone = Some(false);
+                            cx.notify();
+                            None
+                        }
+                        Err(_) => Some(id),
+                    }
+                });
+                match found {
+                    Ok(Some(now)) => id = now,
+                    _ => return,
+                }
+            }
             let page = engine.album_page(id).await;
             this.update(cx, |this, cx| {
                 if this.request != request {
@@ -188,6 +225,9 @@ impl AlbumPage {
                         this.gone = None;
                     }
                     Ok(_) => {
+                        this.tracks.clear();
+                        this.lines.clear();
+                        this.selection.retain(|_| false);
                         this.gone = Some(false);
                     }
                     Err(e) => {
@@ -422,8 +462,8 @@ impl actions::Menus for AlbumPage {
 }
 
 impl TrackList for AlbumPage {
-    fn row_tracks(&self) -> Vec<i64> {
-        self.tracks.iter().map(|t| t.id).collect()
+    fn row_tracks(&self) -> Vec<&Track> {
+        self.tracks.iter().collect()
     }
 
     fn clicked(
@@ -449,8 +489,7 @@ impl TrackList for AlbumPage {
                     order,
                     cx,
                 ) {
-                    let ids = self.tracks.iter().map(|t| t.id).collect();
-                    actions::play_list(&self.lib, ids, index, cx);
+                    actions::play_list(&self.lib, &self.tracks, index, cx);
                 }
                 cx.notify();
             }
@@ -584,8 +623,7 @@ impl super::keys::KeyedList for AlbumPage {
     }
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
-        let ids = self.tracks.iter().map(|t| t.id).collect();
-        actions::play_list(&self.lib, ids, ix, cx);
+        actions::play_list(&self.lib, &self.tracks, ix, cx);
     }
 
     fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
@@ -609,6 +647,7 @@ mod tests {
     fn track(disc: Option<i32>, number: Option<i32>) -> Track {
         Track {
             id: 0,
+            uid: None,
             title: String::new(),
             artist_name: String::new(),
             artist_credit: Vec::new(),

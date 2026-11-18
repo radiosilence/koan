@@ -1550,6 +1550,30 @@ impl KoanEngine {
         })
     }
 
+    /// Replace the queue with the tracks `uids` name and play from the one at
+    /// `start_at`, as `replace_queue` does. What a tap on a page's row sends:
+    /// a row id the page holds can name another track once a sync has
+    /// deleted its own, and a uid cannot. Refused when the track tapped is
+    /// gone; the others that are gone are left out.
+    pub fn play_uids(
+        self: Arc<Self>,
+        uids: Vec<String>,
+        start_at: u32,
+    ) -> impl Future<Output = Result<Vec<String>, KoanError>> + Send + 'static {
+        offload::sequenced(move || {
+            let db = self.db()?;
+            let (track_ids, start_at) = resolve_uids(&db, &uids, start_at as usize)?;
+            self.place(
+                &db,
+                &track_ids,
+                Placement::Replace {
+                    start_at: Some(start_at as u32),
+                    shuffled: false,
+                },
+            )
+        })
+    }
+
     /// Insert after an existing item — what a drop between two rows means.
     pub fn insert_after(
         self: Arc<Self>,
@@ -7268,9 +7292,10 @@ impl KoanEngine {
         let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
         match placement {
             Placement::Replace { start_at, shuffled } => {
+                let start = start_in_found(track_ids, &items, start_at.unwrap_or(0) as usize);
                 self.send(PlayerCommand::ReplacePlaylist {
                     items,
-                    start: start_at.unwrap_or(0) as usize,
+                    start,
                     position_ms: 0,
                     play: true,
                     mode: if shuffled {
@@ -7464,10 +7489,12 @@ impl KoanEngine {
         let favs: HashSet<i64> =
             queries::favourite_track_ids_batch(&db.conn, queries::LOCAL_USER).unwrap_or_default();
         let credits = koan_core::helpers::ListCredits::read_rows(&db.conn, &rows);
+        let mut uids = uids(db, queries::UidKind::Track, rows.iter().map(|r| r.id));
         rows.into_iter()
             .map(|r| {
                 let (row, favourite) = (credits.track(&r), favs.contains(&r.id));
-                Track::from_row(r, favourite, row)
+                let uid = uids.remove(&r.id);
+                Track::from_row(r, uid, favourite, row)
             })
             .collect()
     }
@@ -7489,12 +7516,71 @@ fn credits(
 fn decorate_albums(db: &Database, rows: Vec<queries::AlbumRow>) -> Vec<Album> {
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let credits = credits(db, queries::batch::CreditsOf::Albums, &ids);
+    let mut uids = uids(db, queries::UidKind::Album, ids);
     rows.into_iter()
         .map(|r| {
             let artists = credits.get(&r.id).map_or(&[][..], Vec::as_slice);
-            Album::from_row(r, artists)
+            let uid = uids.remove(&r.id);
+            Album::from_row(r, uid, artists)
         })
         .collect()
+}
+
+/// The tracks `uids` name, in order, and where the one at `start_at` is
+/// among them. Refused when that one names no track.
+fn resolve_uids(
+    db: &Database,
+    uids: &[String],
+    start_at: usize,
+) -> Result<(Vec<i64>, usize), KoanError> {
+    let found = queries::ids_for_uids(
+        &db.conn,
+        queries::UidKind::Track,
+        uids.iter().map(String::as_str),
+    )
+    .map_err(db_err)?;
+    if uids
+        .get(start_at)
+        .is_none_or(|uid| !found.contains_key(uid))
+    {
+        return Err(KoanError::NotFound {
+            message: "that track is no longer in the library".into(),
+        });
+    }
+    let start = uids[..start_at]
+        .iter()
+        .filter(|uid| found.contains_key(*uid))
+        .count();
+    Ok((
+        uids.iter()
+            .filter_map(|uid| found.get(uid).copied())
+            .collect(),
+        start,
+    ))
+}
+
+/// Where the track asked for at `start_at` of `asked` sits among `items`,
+/// which leave out what the library no longer holds: counted in `asked`, the
+/// start would land on a track further on.
+fn start_in_found(asked: &[i64], items: &[PlaylistItem], start_at: usize) -> usize {
+    let found: HashSet<i64> = items.iter().filter_map(|i| i.db_id).collect();
+    asked
+        .iter()
+        .take(start_at)
+        .filter(|id| found.contains(id))
+        .count()
+}
+
+/// The uids of these rows, none where the read fails.
+fn uids(
+    db: &Database,
+    kind: queries::UidKind,
+    ids: impl IntoIterator<Item = i64>,
+) -> HashMap<i64, String> {
+    queries::uids_for(&db.conn, kind, ids).unwrap_or_else(|e| {
+        log::warn!("uids unread: {e}");
+        HashMap::new()
+    })
 }
 
 fn decorate_album(db: &Database, row: Option<queries::AlbumRow>) -> Option<Album> {
@@ -8387,6 +8473,29 @@ mod restore_tests {
             uid: None,
             played: None,
         }
+    }
+
+    #[test]
+    fn a_play_by_uid_starts_on_the_track_tapped_and_skips_the_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let ids: Vec<i64> = ["One", "Two", "Three"]
+            .iter()
+            .map(|t| track(&db, t, &dir.path().join(format!("{t}.flac"))))
+            .collect();
+        let held = queries::uids_for(&db.conn, queries::UidKind::Track, ids.clone()).unwrap();
+        let gone = "019a0000-0000-7000-8000-000000000000".to_string();
+        let uids = vec![held[&ids[0]].clone(), gone.clone(), held[&ids[2]].clone()];
+
+        // Counted in what was asked, the start would land past Three.
+        let (found, start) = resolve_uids(&db, &uids, 2).unwrap();
+        assert_eq!(found, vec![ids[0], ids[2]]);
+        assert_eq!(found[start], ids[2]);
+
+        assert!(matches!(
+            resolve_uids(&db, &uids, 1),
+            Err(KoanError::NotFound { .. })
+        ));
     }
 
     #[test]
