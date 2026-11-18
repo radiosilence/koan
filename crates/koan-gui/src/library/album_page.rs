@@ -644,6 +644,7 @@ mod tests {
     fn track(disc: Option<i32>, number: Option<i32>) -> Track {
         Track {
             id: 0,
+            uid: None,
             title: String::new(),
             artist_name: String::new(),
             artist_credit: Vec::new(),

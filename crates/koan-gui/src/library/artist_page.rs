@@ -1249,6 +1249,7 @@ mod tests {
     fn album(id: i64, section: ReleaseSection) -> Album {
         Album {
             id,
+            uid: None,
             title: String::new(),
             artist_id: 1,
             artist_name: String::new(),

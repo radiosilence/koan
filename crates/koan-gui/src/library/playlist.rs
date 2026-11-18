@@ -1484,6 +1484,7 @@ mod tests {
     fn an_entry_is_listed_under_its_own_id_and_waits_for_nothing() {
         let track = koan_runtime::Track {
             id: 7,
+            uid: None,
             title: "Song".into(),
             artist_name: "Artist".into(),
             artist_credit: Vec::new(),

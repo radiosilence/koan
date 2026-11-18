@@ -823,6 +823,7 @@ mod tests {
     fn plays_fall_under_their_days_newest_first() {
         let track = |id| koan_runtime::Track {
             id,
+            uid: None,
             title: "Song".into(),
             artist_name: "Artist".into(),
             artist_credit: Vec::new(),
