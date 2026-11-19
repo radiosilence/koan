@@ -5157,6 +5157,8 @@ pub struct Meter { /* private fields */ }
 
 - `pub fn height(self, height: Pixels) -> Self`
 
+  The bar's thickness, rather than the 3-point default.
+
 - `pub fn ease(self, ease: Duration) -> Self`
 
   How long the fill takes to reach a new fraction. A meter fed at a
