@@ -25,11 +25,13 @@ use crate::theme::{Look, Motion};
 pub struct SlideState(Rc<Cell<f32>>);
 
 impl SlideState {
+    /// Whether the panel has eased fully shut, so its owner can drop it.
     pub fn closed(&self) -> bool {
         self.0.get() <= 0.0
     }
 }
 
+/// A panel at the trailing edge of a page whose width eases in and out.
 #[derive(IntoElement)]
 pub struct Slide {
     id: ElementId,
@@ -44,6 +46,8 @@ pub struct Slide {
 }
 
 impl Slide {
+    /// A panel `width` wide, shown or easing shut, its progress kept in
+    /// `state`.
     pub fn new(id: impl Into<ElementId>, state: &SlideState, shown: bool, width: Pixels) -> Self {
         Self {
             id: id.into(),
@@ -78,6 +82,7 @@ impl Slide {
         self
     }
 
+    /// The panel's content, laid out at its full width.
     pub fn child(mut self, content: impl IntoElement) -> Self {
         self.content = Some(content.into_any_element());
         self

@@ -15,6 +15,8 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native ap
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
 
+Plus **tools/kit-reference** — writes koan-kit's API reference (`docs/reference/koan-kit-api.md`), the guide's examples (`docs/guide/koan-kit.md`) and the plain-text copy of both (`site/public/koan-kit.txt`) from the kit's sources and doc comments (`just kit-reference`). It reads the sources with `syn` rather than rustdoc's JSON, which needs nightly. CI runs it with `--check`, so a change to the kit's public API or its doc comments regenerates the files in the same PR; `--missing` lists public items with no doc comment.
+
 Plus **apps/ios** — the Xcode project XcodeGen generates from `project.yml`: the SwiftUI tvOS app, the iOS target wrapping the GPUI app, and their extensions (Swift 6, iOS and tvOS 26+). Links koan-ffi.
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
@@ -152,6 +154,7 @@ just gui-present-frames # the GPU time of a GUI frame at its usual size, 4K and 
 just gui-build  # release build of the GUI app
 just gui-library DIR [ALBUMS] [TRACKS] # generate and scan a large throwaway library for the GUI benches
 just gui-theme-leaks # koan-gui's reach past koan-kit, against the ratchet in crates/koan-gui/theme-leaks.toml
+just kit-reference [--check|--missing] # koan-kit's reference, guide examples and plain-text copy, from its sources
 just gui-ios-lib [PLATFORM] # koan-gui with koan-ffi as the static library the iOS app links, and the Swift bindings
 just gui-bundle # package the desktop app for this machine: .app + DMG on macOS, AppImage + .deb on Linux
 ```

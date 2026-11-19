@@ -41,6 +41,9 @@ pub fn table_list(
     uniform_list(id, count, rows)
 }
 
+/// A row of a table: leading cells, a title over lines that flexes and
+/// truncates, and figure columns trailing, at the heights `RowMetrics`
+/// gives its kind.
 #[derive(IntoElement)]
 pub struct TableRow {
     base: Stateful<Div>,
@@ -63,6 +66,7 @@ pub struct TableRow {
 }
 
 impl TableRow {
+    /// A row of `kind`, given its cells by the methods.
     pub fn new(id: impl Into<ElementId>, kind: RowKind) -> Self {
         Self {
             base: div().id(id),
@@ -252,6 +256,7 @@ pub struct RowNumber {
 }
 
 impl RowNumber {
+    /// A row's number column saying `number`.
     pub fn new(id: impl Into<ElementId>, number: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
@@ -294,6 +299,7 @@ impl RowNumber {
         self
     }
 
+    /// What the play button over the number does.
     pub fn on_play(mut self, play: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_play = Some(std::rc::Rc::new(play));
         self

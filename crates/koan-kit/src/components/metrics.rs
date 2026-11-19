@@ -22,6 +22,8 @@ pub enum RowKind {
     Heading,
 }
 
+/// Row heights, gaps, margins and widths for lists and panels, measured
+/// from the Mac app and scaled by the look's text size.
 pub struct RowMetrics;
 
 /// The playing bars, the Mac's: three 2-point bars 2 points apart, 11 tall.
@@ -207,6 +209,7 @@ fn heading_sleeve(look: &Look) -> f32 {
 }
 
 impl RowMetrics {
+    /// The height of a row of `kind`, at least a finger's target under touch.
     pub fn height(kind: RowKind, look: &Look) -> Pixels {
         let points = match kind {
             RowKind::Line => 24.0,
@@ -338,10 +341,12 @@ impl RowMetrics {
         look.spaced(280.)
     }
 
+    /// The narrowest an inspector panel is dragged to.
     pub fn inspector_min(look: &Look) -> Pixels {
         look.spaced(220.)
     }
 
+    /// The widest an inspector panel is dragged to.
     pub fn inspector_max(look: &Look) -> Pixels {
         look.spaced(560.)
     }
@@ -419,6 +424,7 @@ impl TileGrid {
         self.columns == other.columns && self.row == other.row
     }
 
+    /// How many rows `items` tiles take.
     pub fn rows(&self, items: usize) -> usize {
         items.div_ceil(self.columns)
     }

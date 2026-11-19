@@ -34,6 +34,8 @@ fn open_hosted<V: Render>(
     Ok((window.into(), built.expect("the window ran its build")))
 }
 
+/// A window of the app's own beside the main one: titled, centred at its
+/// size, with a least size or none.
 pub struct SecondaryWindow {
     title: SharedString,
     app_id: SharedString,
@@ -105,6 +107,7 @@ impl SecondaryWindow {
         open_hosted(options, cx, build)
     }
 
+    /// The window's options, for opening it some other way than `open`.
     pub fn options(self, cx: &App) -> WindowOptions {
         let points = |(w, h): (f32, f32)| size(px(w), px(h));
         WindowOptions {
@@ -140,6 +143,8 @@ pub struct MainWindow {
 }
 
 impl MainWindow {
+    /// The main window titled `title`; `app_id` names the app to the desktop
+    /// on Linux.
     pub fn new(title: impl Into<SharedString>, app_id: impl Into<SharedString>) -> Self {
         Self {
             title: title.into(),
@@ -157,6 +162,7 @@ impl MainWindow {
         self
     }
 
+    /// The least it can be resized to.
     pub fn min(mut self, min: Size<Pixels>) -> Self {
         self.min = Some(min);
         self

@@ -140,6 +140,9 @@ pub fn scrolls_away(
         .child(div().relative().child(probe).child(header))
 }
 
+/// An element that reports the width it is laid out at into `width`, and
+/// notifies `owner` when it changes: for a list that lays out its rows by
+/// its own width.
 pub fn width_probe(width: Rc<Cell<Option<Pixels>>>, owner: EntityId) -> impl IntoElement {
     canvas(
         move |bounds, _, cx| {

@@ -119,6 +119,7 @@ pub struct SyncedLines {
 }
 
 impl SyncedLines {
+    /// `lines`, with `active` the one being sung.
     pub fn new(id: impl Into<ElementId>, lines: Vec<SharedString>, active: Option<usize>) -> Self {
         Self {
             id: id.into(),
@@ -148,6 +149,7 @@ impl SyncedLines {
         self
     }
 
+    /// What a press on a line does, given its index.
     pub fn on_line(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
         self.on_line = Some(std::sync::Arc::new(handler));
         self

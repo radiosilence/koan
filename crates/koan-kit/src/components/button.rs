@@ -113,6 +113,9 @@ impl ButtonKind {
     }
 }
 
+/// A button: its kind's weight and shape, a label or a glyph or both, and
+/// its states (hover, press, focus, disabled, selected). Made with `new` or
+/// `icon_only`.
 #[derive(IntoElement)]
 pub struct Button {
     id: ElementId,
@@ -132,6 +135,7 @@ pub struct Button {
 }
 
 impl Button {
+    /// A button of `kind`, given its label or glyph by the methods below.
     pub fn new(id: impl Into<ElementId>, kind: ButtonKind) -> Self {
         Self {
             id: id.into(),
@@ -207,6 +211,7 @@ impl Button {
         self
     }
 
+    /// Drawn at 40 % and taking no press or focus.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -226,6 +231,7 @@ impl Button {
         self
     }
 
+    /// What a press, Enter or Space on the focused button does.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,

@@ -98,6 +98,8 @@ impl CollectionSection {
     }
 }
 
+/// Sections of pills or tiles in rows that wrap, under an optional page
+/// header, with an empty state when there are no sections.
 #[derive(IntoElement)]
 pub struct Collection {
     id: ElementId,
@@ -111,6 +113,7 @@ pub struct Collection {
 }
 
 impl Collection {
+    /// A collection at `width`, the page's measure of how many fit a row.
     pub fn new(id: impl Into<ElementId>, width: &CollectionWidth) -> Self {
         Self {
             id: id.into(),
@@ -145,6 +148,7 @@ impl Collection {
         self
     }
 
+    /// The page header above the sections.
     pub fn header(mut self, header: PageHeader) -> Self {
         self.header = Some(header);
         self

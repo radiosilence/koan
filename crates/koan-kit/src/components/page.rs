@@ -115,6 +115,7 @@ pub struct SectionHeading {
 }
 
 impl SectionHeading {
+    /// A heading saying `title`, an app word drawn lowercase.
     pub fn new(title: impl AsRef<str>) -> Self {
         Self {
             title: label(title),
@@ -167,6 +168,8 @@ impl SectionHeading {
         look.space(Space::M)
     }
 
+    /// The height a heading takes with the space above and below it, for a
+    /// list that measures its rows.
     pub fn height(look: &Look) -> Pixels {
         Self::above(look) + look.line_height(TypeRole::Body) + Self::below(look)
     }
@@ -410,6 +413,7 @@ impl PlayButton {
         }
     }
 
+    /// A spinner in place of the glyph while what it plays is being fetched.
     pub fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
         self
@@ -422,6 +426,7 @@ impl PlayButton {
         self
     }
 
+    /// What a press does.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -506,11 +511,13 @@ impl ShuffleButton {
         }
     }
 
+    /// Dimmed and taking no press.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
+    /// What a press does.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -599,6 +606,7 @@ pub struct Page {
 }
 
 impl Page {
+    /// A page under `header`.
     pub fn new(header: PageHeader) -> Self {
         Self {
             header: Some(header),
@@ -614,6 +622,7 @@ impl Page {
         }
     }
 
+    /// What the page shows under its header, filling the rest.
     pub fn body(mut self, body: impl IntoElement) -> Self {
         self.body = Some(body.into_any_element());
         self

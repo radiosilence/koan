@@ -44,6 +44,7 @@ fn copy(state: &Entity<Moment>, value: &SharedString, cx: &mut App) {
     });
 }
 
+/// A button that copies a value to the clipboard and says so with a tick.
 #[derive(IntoElement)]
 pub struct CopyButton {
     id: ElementId,
@@ -77,6 +78,7 @@ impl CopyButton {
         self
     }
 
+    /// Drawn as `kind` rather than a compact button.
     pub fn kind(mut self, kind: ButtonKind) -> Self {
         self.kind = kind;
         self
@@ -132,6 +134,7 @@ pub struct CopyText {
 }
 
 impl CopyText {
+    /// `value`, which a press copies.
     pub fn new(id: impl Into<ElementId>, value: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),

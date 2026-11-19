@@ -19,6 +19,8 @@ use gpui::*;
 use super::{Answer, Answerer, Handler, accessible, answers_click, toggled};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Tone, TypeRole};
 
+/// The heart: an outline when off, filled in the accent when on, answering
+/// its own press on the GPU.
 #[derive(IntoElement)]
 pub struct Heart {
     base: Stateful<Div>,
@@ -69,6 +71,7 @@ impl Heart {
         follow(&id.into(), on, window, cx).live(cx)
     }
 
+    /// A heart, on or off; a click does what `on_click` says.
     pub fn new(id: impl Into<ElementId>, on: bool) -> Self {
         let id = id.into();
         Self {

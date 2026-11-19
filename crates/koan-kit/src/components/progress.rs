@@ -57,6 +57,8 @@ pub struct ProgressBar {
 }
 
 impl ProgressBar {
+    /// A bar filled to `fraction`, or running a segment along it while the
+    /// amount is unknown.
     pub fn new(id: impl Into<ElementId>, fraction: Option<f32>) -> Self {
         Self {
             id: id.into(),
@@ -158,6 +160,8 @@ impl RenderOnce for ProgressBar {
     }
 }
 
+/// Something under way, as a row: what it is, its counts and a line of
+/// detail over a bar, with a stop button where it can be stopped.
 #[derive(IntoElement)]
 pub struct ProgressRow {
     id: ElementId,

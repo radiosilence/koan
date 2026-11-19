@@ -20,6 +20,7 @@ impl Scale {
         }
     }
 
+    /// A transformed value back on the axis's own scale.
     pub fn invert(self, t: f64) -> f64 {
         match self {
             Scale::Linear => t,
@@ -40,6 +41,8 @@ pub struct Map {
 }
 
 impl Map {
+    /// The map from values between `lo` and `hi` on `scale` to shares of the
+    /// plot.
     pub fn new(scale: Scale, lo: f64, hi: f64) -> Self {
         let (t0, t1) = (scale.transform(lo), scale.transform(hi));
         let span = t1 - t0;
@@ -50,6 +53,7 @@ impl Map {
         }
     }
 
+    /// A transformed value as a share of the plot, 0 at `lo` and 1 at `hi`.
     pub fn unit(&self, t: f64) -> f64 {
         self.a * t + self.b
     }

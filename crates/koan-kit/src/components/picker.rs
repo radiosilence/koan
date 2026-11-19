@@ -25,6 +25,7 @@ pub struct Picker {
 }
 
 impl Picker {
+    /// A picker of `options`, showing `selected`, or nothing chosen.
     pub fn new<S: AsRef<str>>(
         id: impl Into<ElementId>,
         options: impl IntoIterator<Item = S>,
@@ -63,11 +64,13 @@ impl Picker {
         self
     }
 
+    /// Dimmed and taking no press.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
+    /// What choosing an option does, given its index.
     pub fn on_change(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
         self

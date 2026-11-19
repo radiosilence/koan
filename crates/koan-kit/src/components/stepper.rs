@@ -33,6 +33,8 @@ pub struct Stepper {
 }
 
 impl Stepper {
+    /// A row titled `title`, an app word drawn lowercase, holding `value`
+    /// within `range`, with buttons to step it.
     pub fn new(
         id: impl Into<ElementId>,
         title: impl AsRef<str>,
@@ -52,6 +54,7 @@ impl Stepper {
         }
     }
 
+    /// How far one press moves the value; 1 unless given.
     pub fn step(mut self, step: i64) -> Self {
         self.step = step;
         self
@@ -64,11 +67,13 @@ impl Stepper {
         self
     }
 
+    /// Dimmed and taking no press.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
+    /// What a step does, given the new value.
     pub fn on_change(mut self, handler: impl Fn(&i64, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
         self

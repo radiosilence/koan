@@ -21,6 +21,8 @@ pub struct Segmented {
 }
 
 impl Segmented {
+    /// A control choosing one of `options`, app words drawn lowercase, with
+    /// `selected` chosen.
     pub fn new<S: AsRef<str>>(
         id: impl Into<ElementId>,
         options: impl IntoIterator<Item = S>,
@@ -42,6 +44,7 @@ impl Segmented {
         self
     }
 
+    /// What choosing an option does, given its index.
     pub fn on_change(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
         self

@@ -286,6 +286,14 @@ signing-cert:
 ios_deployment_target := "26.0"
 tv_deployment_target := "26.0"
 
+# koan-kit's API reference, its guide's examples and the plain-text copy of
+# both, from the kit's sources and doc comments: docs/reference/koan-kit-api.md,
+# docs/guide/koan-kit.md, site/public/koan-kit.txt. `--check` writes nothing
+# and fails on a difference, as CI runs it; `--missing` lists the public
+# items with no doc comment.
+kit-reference *args:
+    cargo run -q -p kit-reference -- {{args}}
+
 # koan-gui's pages choosing a look by hand rather than from koan-kit, against
 # a baseline that only falls (`--update` lowers it). docs/design/koan-kit.md.
 gui-theme-leaks *args:
