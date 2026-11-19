@@ -1,0 +1,1 @@
+- **The downloads page on a phone shows each track and its record.** The rows kept the desktop's wide status and verb columns, which left the track's name no room; on a phone each row now gives its width to the track and record, with the progress bar or size beside them and the verb as its glyph.
