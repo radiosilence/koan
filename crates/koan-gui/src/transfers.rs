@@ -16,33 +16,18 @@ use std::time::{Duration, Instant};
 use koan_kit::app::*;
 use koan_runtime::{EntryStatus, Transfer, TransferFigure, TransferState};
 
-use crate::components::{Availability, Glide, RingGlide};
+use crate::components::{Availability, Glide, ProgressGlides, ProgressReport, RingGlide};
 use crate::mirror::Mirror;
 use crate::theme::Hsla;
 
 /// Each transfer's glides, by track.
 pub struct Transfers {
-    glides: HashMap<i64, Entry>,
+    glides: HashMap<i64, ProgressGlides>,
     /// The tracks whose transfer is running, from the Transfers slice: a
     /// figure is kept for queued, finished and failed transfers too.
     running: HashSet<i64>,
     _figures: Subscription,
     _transfers: Subscription,
-}
-
-struct Entry {
-    /// One per colour a ring is drawn in, since a ring writes its colour
-    /// into its glide.
-    rings: Vec<(Hsla, Glide)>,
-    /// The seek bar's, styled by the slider.
-    reach: Glide,
-    /// The downloads page's bar, styled by the bar.
-    bar: Glide,
-    /// The last report, for a glide made after it.
-    last: Option<Report>,
-    /// The engine has reported this transfer: once it stops reporting it,
-    /// the transfer has ended.
-    reported: bool,
 }
 
 /// How far past its last report a transfer is reckoned: about the gap
@@ -51,32 +36,6 @@ struct Entry {
 /// where they reckoned, a fraction of a second's bytes ahead at most, and
 /// stop presenting until the next report, which never draws them back.
 const RECKONS: Duration = Duration::from_millis(400);
-
-/// A glide for a transfer: reckoned only as far as `RECKONS`.
-fn transfer_glide() -> Glide {
-    let glide = Glide::new();
-    glide.reckon_for(RECKONS);
-    glide
-}
-
-impl Entry {
-    fn new() -> Self {
-        Self {
-            rings: Vec::new(),
-            reach: transfer_glide(),
-            bar: transfer_glide(),
-            last: None,
-            reported: false,
-        }
-    }
-
-    fn glides(&self) -> impl Iterator<Item = &Glide> {
-        self.rings
-            .iter()
-            .map(|(_, g)| g)
-            .chain([&self.reach, &self.bar])
-    }
-}
 
 #[derive(Clone)]
 struct TransfersHandle(Entity<Transfers>);
@@ -118,18 +77,11 @@ fn ring(track: i64, color: Hsla, cx: &mut App) -> Glide {
         return unknown;
     };
     handle.0.update(cx, |transfers, _| {
-        let entry = transfers.glides.entry(track).or_insert_with(Entry::new);
-        if let Some((_, glide)) = entry.rings.iter().find(|(k, _)| *k == color) {
-            return glide.clone();
-        }
-        // A new colour starts where the last report left the others.
-        let glide = transfer_glide();
-        match entry.last {
-            Some(last) => last.apply(&glide),
-            None => glide.set_unknown(),
-        }
-        entry.rings.push((color, glide.clone()));
-        glide
+        transfers
+            .glides
+            .entry(track)
+            .or_insert_with(|| ProgressGlides::new(RECKONS))
+            .ring(color)
     })
 }
 
@@ -144,11 +96,8 @@ pub fn reach(track: i64, cx: &App) -> Option<Glide> {
     let handle = cx.try_global::<TransfersHandle>()?;
     let transfers = handle.0.read(cx);
     let entry = transfers.glides.get(&track)?;
-    let partial = entry
-        .last
-        .and_then(|last| last.share)
-        .is_some_and(|share| share < 1.0);
-    (transfers.running.contains(&track) && partial).then(|| entry.reach.clone())
+    let partial = entry.last().is_some_and(ProgressReport::partial);
+    (transfers.running.contains(&track) && partial).then(|| entry.reach().clone())
 }
 
 /// The downloads page bar's glide for `track`'s transfer, fed from its
@@ -156,7 +105,14 @@ pub fn reach(track: i64, cx: &App) -> Option<Glide> {
 /// draws again for its first report.
 pub fn bar(track: i64, cx: &App) -> Glide {
     cx.try_global::<TransfersHandle>()
-        .and_then(|handle| handle.0.read(cx).glides.get(&track).map(|e| e.bar.clone()))
+        .and_then(|handle| {
+            handle
+                .0
+                .read(cx)
+                .glides
+                .get(&track)
+                .map(|e| e.bar().clone())
+        })
         .unwrap_or_default()
 }
 
@@ -173,44 +129,23 @@ impl Transfers {
         let now = Instant::now();
         let mut changed = false;
         for figure in figures {
-            let entry = self
+            changed |= self
                 .glides
                 .entry(figure.track_id)
-                .or_insert_with(Entry::new);
-            let report = Report::of(figure, now);
-            let partial = |r: Option<Report>| r.and_then(|r| r.share).is_some_and(|s| s < 1.0);
-            changed |= !entry.reported || partial(Some(report)) != partial(entry.last);
-            // A share below the last one is the track downloading afresh (its
-            // file cleared or evicted, a retry): bytes never go back within
-            // one transfer. Its glides start again from it, rather than
-            // standing where the last transfer finished, which a reckoned
-            // glide would otherwise hold.
-            let afresh = entry
-                .last
-                .and_then(|last| last.share)
-                .is_some_and(|last| report.share.is_none_or(|share| share < last));
-            entry.reported = true;
-            entry.last = Some(report);
-            for glide in entry.glides() {
-                if afresh {
-                    glide.set_unknown();
-                }
-                report.apply(glide);
-            }
+                .or_insert_with(|| ProgressGlides::new(RECKONS))
+                .take(report_of(figure, now));
         }
         let running = &self.running;
         self.glides.retain(|track, entry| {
             // Reported and no longer, or made for a ring before any report
             // and not running now: either way nothing will feed it again.
-            let ended = if entry.reported {
+            let ended = if entry.last().is_some() {
                 !figures.iter().any(|f| f.track_id == *track)
             } else {
                 !running.contains(track)
             };
             if ended {
-                for glide in entry.glides() {
-                    glide.set_moving(false);
-                }
+                entry.end();
                 changed = true;
             }
             !ended
@@ -232,11 +167,9 @@ impl Transfers {
             // that is not running now, is never fed: it stops turning and
             // goes.
             self.glides.retain(|track, entry| {
-                let orphan = !entry.reported && !running.contains(track);
+                let orphan = entry.last().is_none() && !running.contains(track);
                 if orphan {
-                    for glide in entry.glides() {
-                        glide.set_moving(false);
-                    }
+                    entry.end();
                 }
                 !orphan
             });
@@ -246,39 +179,18 @@ impl Transfers {
     }
 }
 
-/// One report of a transfer: its share while its size is known, the rate it
-/// grows at, and when.
-#[derive(Clone, Copy)]
-struct Report {
-    share: Option<f32>,
-    rate: f32,
-    at: Instant,
-}
-
-impl Report {
-    fn of(figure: &TransferFigure, at: Instant) -> Self {
-        let rate = if figure.total_bytes > 0 {
-            figure.bytes_per_second as f32 / figure.total_bytes as f32
-        } else {
-            0.0
-        };
-        Self {
-            share: figure.progress.map(|p| p as f32),
-            rate,
-            at,
-        }
-    }
-
-    /// Into a glide: the share and its rate, or turning while the server
-    /// gave no size.
-    fn apply(self, glide: &Glide) {
-        match self.share {
-            Some(share) => {
-                glide.set(share, self.rate, self.at);
-                glide.set_moving(self.rate > 0.0 && share < 1.0);
-            }
-            None => glide.set_unknown(),
-        }
+/// One report of a transfer: its share while its size is known, and the
+/// rate it grows at.
+fn report_of(figure: &TransferFigure, at: Instant) -> ProgressReport {
+    let rate = if figure.total_bytes > 0 {
+        figure.bytes_per_second as f32 / figure.total_bytes as f32
+    } else {
+        0.0
+    };
+    ProgressReport {
+        share: figure.progress.map(|p| p as f32),
+        rate,
+        at,
     }
 }
 

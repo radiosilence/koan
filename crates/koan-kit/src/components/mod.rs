@@ -23,6 +23,7 @@ mod availability;
 mod badge;
 mod banner;
 mod bars;
+mod bars_feed;
 mod button;
 mod chain;
 pub mod chart;
@@ -66,6 +67,7 @@ pub(crate) mod placeholder;
 mod popover;
 mod prism;
 mod progress;
+mod progress_glides;
 mod qr;
 mod ring;
 mod root;
@@ -114,6 +116,10 @@ pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
 pub use banner::Banner;
 pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay, renderer_mark};
+pub use bars_feed::{
+    BandSource, BarsFeed, bars_feed, bars_prism, bars_visibility, install_bars, live_bars,
+    paint_bars,
+};
 pub use button::{Button, ButtonKind};
 pub use chain::{ChainEnd, ChainJoin, ChainLink, ChainSlot, ChainStage};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
@@ -170,7 +176,7 @@ pub use lists::{
     UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, reveal_around_list,
     rows_under_foot, scrolls_away, spoken_list, uniform_list, width_probe,
 };
-pub use lyrics::{LYRICS, SyncedLines};
+pub use lyrics::{Cue, LYRICS, SyncedLines};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot, on_menu_focus_lost};
 pub use meter::Meter;
 pub use metrics::{
@@ -188,6 +194,7 @@ pub use pill::Pill;
 pub use placeholder::{Placeholder, enso_svg};
 pub use prism::{Burst, FlashGate, Prism, PrismFill, Prisms, Sheen};
 pub use progress::{ProgressBar, ProgressRow};
+pub use progress_glides::{ProgressGlides, ProgressReport};
 pub use qr::QrCode;
 pub use ring::ProgressRing;
 pub use row_list::{RowList, RowListState, RowOffset};

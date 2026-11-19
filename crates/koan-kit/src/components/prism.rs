@@ -1444,6 +1444,32 @@ impl Prism {
     pub fn ball(&self) -> AnimatedQuad {
         AnimatedQuad::new(&MIRROR_BALL, &self.animated).decorative()
     }
+    /// The mirror ball's side, in points on the spacing scale.
+    pub const BALL_SIDE: f32 = 72.0;
+    /// How far the ball hangs below the window's top, clear of a toolbar,
+    /// and in from its right, in points on the spacing scale.
+    pub const BALL_TOP: f32 = 56.0;
+    pub const BALL_RIGHT: f32 = 18.0;
+
+    /// Hangs the ball in the window's top right corner (`BALL_TOP`,
+    /// `BALL_RIGHT`), where `hung_ball` lays it out: the disco layer's spots
+    /// wheel out from its centre.
+    pub fn hang_ball(&self) {
+        self.ball_at(
+            Self::BALL_RIGHT + Self::BALL_SIDE / 2.0,
+            Self::BALL_TOP + Self::BALL_SIDE / 2.0,
+        );
+    }
+
+    /// The ball laid out where `hang_ball` says it hangs, over the window.
+    pub fn hung_ball(&self, look: &crate::theme::Look) -> impl IntoElement + use<> {
+        div()
+            .absolute()
+            .top(look.spaced(Self::BALL_TOP))
+            .right(look.spaced(Self::BALL_RIGHT))
+            .size(look.spaced(Self::BALL_SIDE))
+            .child(self.ball().size_full())
+    }
 }
 
 /// A burst's clock before it is fired: past any length, so it draws nothing.
