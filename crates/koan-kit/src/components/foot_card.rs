@@ -8,7 +8,9 @@ use gpui::{
     SharedString, Styled, Window, div,
 };
 
-use super::{AccessoryBar, Clear, FadeIn, Shifted, TransportMetrics, foot_inset, foot_probe, system_insets};
+use super::{
+    AccessoryBar, Clear, FadeIn, Shifted, TransportMetrics, foot_inset, foot_probe, system_insets,
+};
 use crate::theme::{Look, Space};
 
 /// A card over the foot of the pages, a step above what the shell draws

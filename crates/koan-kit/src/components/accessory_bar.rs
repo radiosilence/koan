@@ -4,9 +4,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, Pixels,
-    RenderOnce, ScrollEvent, ScrollSource, SharedString, StatefulInteractiveElement, Styled,
-    TouchPhase, Window, div,
+    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
+    ScrollEvent, ScrollSource, SharedString, StatefulInteractiveElement, Styled, TouchPhase,
+    Window, div,
 };
 
 use super::{Glide, ProgressBar};
@@ -105,11 +105,10 @@ impl RenderOnce for AccessoryBar {
             .children(progress)
             .children(self.children);
         if let Some(open) = self.on_open {
-            let lift = window.use_keyed_state(
-                ElementId::Name(format!("{id}-lift").into()),
-                cx,
-                |_, _| None::<Pixels>,
-            );
+            let lift =
+                window.use_keyed_state(ElementId::Name(format!("{id}-lift").into()), cx, |_, _| {
+                    None::<Pixels>
+                });
             let tapped = open.clone();
             bar = bar
                 .on_click(move |_, window, cx| tapped(window, cx))

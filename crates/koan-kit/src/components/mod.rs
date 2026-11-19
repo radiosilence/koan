@@ -23,6 +23,7 @@ mod arrive;
 mod availability;
 mod badge;
 mod banner;
+mod bar_control;
 mod bars;
 mod bars_feed;
 mod button;
@@ -94,7 +95,6 @@ mod tile;
 mod toggle;
 mod toolbar;
 mod touch;
-mod bar_control;
 mod two_lines;
 mod viewer;
 mod window;
@@ -145,6 +145,7 @@ pub mod list_actions {
         PageUp, Pick, Right, ShowMenu, Up,
     };
 }
+pub use bar_control::{BarControl, bar_item};
 pub use chart::{
     Axis, Base, Chart, ChartDrag, ChartPoint, DataMotion, DragPhase, Legend, PointPlaces, Rule,
     Series, Swatch, Ticks,
@@ -224,7 +225,6 @@ pub use toolbar::{
     ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
 pub use touch::{KoanLongPress, KoanTouchDrag};
-pub use bar_control::{BarControl, bar_item};
 pub use two_lines::TwoLines;
 pub use viewer::Viewer;
 pub use window::{

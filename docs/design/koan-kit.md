@@ -24,6 +24,10 @@ koan-kit is written to be used by other projects (sbr, say) and published to cra
 
 One thing does not travel: the GPUI patch that stops an idle window waking at every display refresh (#1614) is vendored in this workspace through `[patch.crates-io]`, which applies to this workspace alone. Another project using koan-kit gets GPUI as published until the patch is taken upstream.
 
+### Composition
+
+The kit is built for applications of any kind, so it is mostly small parts that compose, in the manner of atomic design. Atoms are the indivisible parts: `Text`, `KoanIcon`, `Button`, `Divider` and the spacing steps. Molecules combine a few atoms into a part with one job, such as `TwoLines` (a title over a subtitle), `ControlGroup` (touch-sized controls on one rhythm) or a `TableRow`. A few generic organisms hold molecules in a layout of their own: bars (`Toolbar`, `AccessoryBar`), sheets and the page. Anything named for one domain, such as a music player's mini player, is a composition in the app from these parts rather than a component in the kit; a kit name says what the part is (`BarControl`, `bar_item`), not what one app uses it for.
+
 ## Built without the Mac's glitches
 
 The Swift app fixed its glitches one at a time: a seek bar that snapped back, menus that reopened when their button was clicked to close them, hover jank, scroll jumps, layout shifts on load, covers jumping while a window resized. Each koan-kit component is built from its Swift counterpart's history (`git log -p` on the view, and the merged PRs that fixed it), so it has those fixes by construction, with a test where one can be written, and its docs list them. Two so far:

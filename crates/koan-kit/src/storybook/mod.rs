@@ -21,13 +21,13 @@ use gpui::prelude::*;
 use gpui::*;
 
 use crate::components::{
-    Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Clear, CopyButton,
-    Cover, CoverArt, DragChip, EmptyState, FormRow, INSERTION, IconToggle, KoanContextMenu,
-    KoanInsets, Level, ListRow, Menu, MenuEntry, MenuPanel, MenuRow, Meter, NavRow, PageHeader,
-    Picker, Placeholder, ProgressBar, ProgressRing, ProgressRow, RowKind, ScrollArea,
-    SectionHeader, SectionHeading, Segmented, SelectionBar, Slider, Sparkline, Spinner,
-    StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextArea, TextField, TileArt, TileMark,
-    TileSleeve, Toggle, Toolbar, ToolbarButton, ToolbarTitle, Tooltip,
+    AccessoryBar, Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Clear,
+    ControlGroup, CopyButton, Cover, CoverArt, DragChip, EmptyState, FormRow, INSERTION,
+    IconToggle, KoanContextMenu, KoanInsets, Level, ListRow, Menu, MenuEntry, MenuPanel, MenuRow,
+    Meter, NavRow, PageHeader, Picker, Placeholder, ProgressBar, ProgressRing, ProgressRow,
+    RowKind, ScrollArea, SectionHeader, SectionHeading, Segmented, SelectionBar, Slider, Sparkline,
+    Spinner, StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextArea, TextField, TileArt,
+    TileMark, TileSleeve, Toggle, Toolbar, ToolbarButton, ToolbarTitle, Tooltip, TwoLines,
 };
 use crate::theme::{
     self, Accent, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole,
@@ -1205,6 +1205,31 @@ impl StoryContent {
                     SectionHeading::new("Appears on").into_any_element(),
                     SectionHeader::new("Frosted bar").into_any_element(),
                     frosted_bar(look),
+                    // A touch window's bar over its tabs, composed from a
+                    // picture, the two lines and a group of controls.
+                    SectionHeader::new("Accessory bar").into_any_element(),
+                    AccessoryBar::new("story-accessory")
+                        .progress(0.4, None)
+                        .on_open(|_, _| {})
+                        .child(Cover::new(
+                            CoverArt::Colour(gpui::hsla(0.55, 0.5, 0.45, 1.0)),
+                            AccessoryBar::picture(look),
+                        ))
+                        .child(TwoLines::new("syncing the library").subtitle("312 of 1,024 records"))
+                        .child(
+                            ControlGroup::new()
+                                .control(Button::icon_only("story-acc-share", Icon::Share, "share"))
+                                .control(Button::icon_only("story-acc-pause", Icon::Pause, "pause"))
+                                .control(Button::icon_only("story-acc-stop", Icon::Clear, "stop")),
+                        )
+                        .into_any_element(),
+                    AccessoryBar::new("story-accessory-plain")
+                        .child(TwoLines::new("draft saved"))
+                        .child(
+                            ControlGroup::new()
+                                .control(Button::icon_only("story-acc-more", Icon::More, "more")),
+                        )
+                        .into_any_element(),
                 ]
             }
         }

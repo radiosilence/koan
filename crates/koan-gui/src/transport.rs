@@ -11,8 +11,8 @@ use koan_runtime::{
 };
 
 use crate::components::{
-    Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
-    BarControl, TransportMetrics,
+    Badge, BarControl, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry,
+    MenuSlot, Slider, TransportMetrics,
 };
 use crate::components::{Inset, Stack};
 use crate::covers::{self, CoversHandle};

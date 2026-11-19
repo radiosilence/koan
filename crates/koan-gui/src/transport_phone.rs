@@ -164,12 +164,14 @@ impl Transport {
                 Cover::new(self.cover.clone(), sleeve),
             ))
             .child(
-                div().flex_1().min_w_0().child(crate::components::FadeIn::new(
-                    ElementId::NamedInteger("mini-titles".into(), track_id),
-                    crate::components::TwoLines::new(title).when_some(detail, |lines, detail| {
-                        lines.subtitle(detail)
-                    }),
-                )),
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(crate::components::FadeIn::new(
+                        ElementId::NamedInteger("mini-titles".into(), track_id),
+                        crate::components::TwoLines::new(title)
+                            .when_some(detail, |lines, detail| lines.subtitle(detail)),
+                    )),
             )
             .child(controls);
         // A first track's bar rises into the foot over "nothing playing".
