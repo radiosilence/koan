@@ -6,8 +6,7 @@ import XCTest
 /// and waits for the sign-in page to give way to the app. Given an account,
 /// this test approves the code the way a phone would — `koanPairApprove` with
 /// its credentials — which is `just tv-pair`; without one something else
-/// approves it, which is `just tv-pair-qr`, where a phone scans the code off
-/// the screen. `KOAN_PAIR_OUTCOME` asks for the other endings instead:
+/// must approve it. `KOAN_PAIR_OUTCOME` asks for the other endings instead:
 /// `decline`, which turns the code away, or `expire`, which approves nothing
 /// and waits for the code to lapse; either must say what happened and offer
 /// the code again. With `KOAN_PAIR_DISCOVER`, the TV is given no address and

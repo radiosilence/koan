@@ -200,7 +200,7 @@ just fmt         # cargo fmt
 just cli         # cargo run -p koan-cli -- <args>
 just gui-run     # build and launch the desktop app
 just gui-bundle  # package the desktop app: .app and DMG on macOS, AppImage and .deb on Linux
-just ios-run     # build and launch the iOS app on a simulator
+just gui-ios     # build and launch the iOS app on a simulator
 just ios-phone   # install on the iPhone plugged in, signed with your personal team
 just tv-run      # build and launch the Apple TV app on a simulator
 just tv-device   # install on the Apple TV paired with Xcode

@@ -445,7 +445,7 @@ follows the top of the stack in front — see `TabShell`.
 | `Views/PlaylistView.swift` | A playlist, laid out like the queue — grouped or flat, drag reorder, drop to add |
 | `Support/PlaylistsModel.swift` | The playlists and everything done to them. Rows held whole; contents one at a time |
 | `Views/OrganizeSheet.swift` | Organize: pattern + destination pickers, preview table with conflicts flagged per row |
-| `Support/DspModel.swift` | EQ and convolution profiles, and the one import flow Settings, "Open in" and the iOS share extension (`apps/ios/Share`, via `KoanIOS/ShareInbox.swift`) all go through. `Views/DspProfilePage.swift` shows what a profile holds |
+| `Support/DspModel.swift` | EQ and convolution profiles, and the one import flow Settings and "Open in" go through. `Views/DspProfilePage.swift` shows what a profile holds |
 | `Support/OrganizeModel.swift` | Organize sheet state — debounced preview, generation-guarded so a slow plan can't land on a newer one |
 
 ### apps/android (`apps/android/app/src/main/kotlin/cc/blit/koan/`)
