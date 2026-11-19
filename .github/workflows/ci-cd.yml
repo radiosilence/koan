@@ -1535,6 +1535,9 @@ jobs:
             desc "Bit-perfect music player"
             homepage "https://github.com/radiosilence/koan"
 
+            # The app replaces itself with each release, so \`brew upgrade\`
+            # leaves it alone unless asked with --greedy.
+            auto_updates true
             depends_on macos: :tahoe
 
             app "kōan.app"

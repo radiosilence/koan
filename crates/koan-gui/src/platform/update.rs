@@ -6,11 +6,13 @@
 //! macOS the app inside it against the Developer ID this one is signed with.
 //! The AppImage is renamed into place at once, since a running AppImage
 //! keeps its own mounted image; the Mac's bundle is swapped by a script that
-//! waits for this process to exit. The Homebrew cask and the `.deb` belong
-//! to their package managers, an app bundle kōan cannot write to belongs to
-//! an administrator, and a Mac app run from the disk image or from where it
-//! was downloaded is asked to be moved to Applications first: those are only
-//! told a version is out. A build from source never checks.
+//! waits for this process to exit. The Homebrew cask's copy is the DMG's
+//! app and replaces itself as it does; the cask declares `auto_updates`, so
+//! `brew upgrade` leaves it alone. The `.deb` belongs to its package
+//! manager, an app bundle kōan cannot write to belongs to an administrator,
+//! and a Mac app run from the disk image or from where it was downloaded is
+//! asked to be moved to Applications first: those are only told a version
+//! is out. A build from source never checks.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -626,13 +628,6 @@ fn install() -> Install {
     let Some((id, team)) = signature(&app) else {
         return Install::Source;
     };
-    let cask = ["/opt/homebrew", "/usr/local"]
-        .iter()
-        .any(|prefix| Path::new(prefix).join("Caskroom/koan-app").exists());
-    // The cask installs into /Applications; a copy elsewhere is the DMG's.
-    if cask && app.starts_with("/Applications") {
-        return Install::Told("Homebrew keeps this copy up to date: brew upgrade --cask koan-app.");
-    }
     const MOVE: &str = "Move kōan to Applications to keep it up to date: where it runs now, macOS keeps it read-only.";
     if translocated(&app) {
         return Install::Told(MOVE);
@@ -642,6 +637,16 @@ fn install() -> Install {
         // administrator's.
         if app.starts_with("/Volumes") {
             return Install::Told(MOVE);
+        }
+        // The cask's copy, in a /Applications this user cannot write to. The
+        // cask declares `auto_updates`, so a plain `brew upgrade` skips it.
+        let cask = ["/opt/homebrew", "/usr/local"]
+            .iter()
+            .any(|prefix| Path::new(prefix).join("Caskroom/koan-app").exists());
+        if cask && app.starts_with("/Applications") {
+            return Install::Told(
+                "kōan cannot write to Applications, so it cannot replace itself: brew upgrade --cask radiosilence/tap/koan-app updates it.",
+            );
         }
         return Install::Told(
             "kōan cannot write to the folder it is in, so it cannot replace itself.",
