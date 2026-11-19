@@ -17,8 +17,11 @@
 //! the bars over its content (`paint_bars`), so a frame of the bars redraws
 //! the root alone, whose content is a cached view and is replayed.
 //!
-//! The app says where the bands come from (`install_bars`): a stream of
-//! heights, 0 to 1, low band to high, yielding only frames that moved.
+//! The app says where the bands come from (`install_bars`): a stream with
+//! an item for every frame of its analyser, the heights, 0 to 1, low band
+//! to high, where they moved and `None` where they did not. Every frame
+//! is a moment to stop at once nothing shows, and the gap a glide runs
+//! over is the gap between frames.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -33,7 +36,7 @@ use super::{BarLevels, BarsPlace, PlayingBars, Prism, SHADED, bars_overlay};
 
 /// Where the bands come from: asked for a stream when a bar first shows,
 /// which is dropped when none does.
-pub type BandSource = Arc<dyn Fn(&mut App) -> BoxStream<'static, [f32; 3]> + Send + Sync>;
+pub type BandSource = Arc<dyn Fn(&mut App) -> BoxStream<'static, Option<[f32; 3]>> + Send + Sync>;
 
 #[derive(Default)]
 struct Registry {
@@ -271,7 +274,9 @@ fn follow(bars: &Bars, cx: &mut App) {
             }
             // Shaders are presented by their own windows as the bands are
             // written; quads need a frame of their windows' roots.
-            registry.take(heights);
+            if !registry.take(heights) {
+                continue;
+            }
             let windows: Vec<WindowId> = registry
                 .slots
                 .values()
@@ -305,15 +310,18 @@ impl Registry {
             || self.prisms.keys().any(shows)
     }
 
-    /// A frame from the source; the shaders' bands are written as it is
-    /// taken.
-    fn take(&mut self, heights: [f32; 3]) {
+    /// A frame from the source. Whether the bars moved; the shaders' bands
+    /// are written as it is taken.
+    fn take(&mut self, heights: Option<[f32; 3]>) -> bool {
         let now = Instant::now();
         // Clamped: a machine that slept owes the bars nothing.
         let elapsed = self
             .stamp
             .map_or(0.0, |then| now.duration_since(then).as_secs_f32().min(0.25));
         self.stamp = Some(now);
+        let Some(heights) = heights else {
+            return false;
+        };
         self.heights = heights;
         // Glided to over the gap between the last two frames, so it is
         // reached about as the next arrives; the first frame lands.
@@ -324,6 +332,7 @@ impl Registry {
         for prism in self.prisms.values() {
             prism.hear(heights, over);
         }
+        true
     }
 }
 
@@ -353,9 +362,11 @@ mod tests {
         registry
             .shaders
             .insert(1, (WindowId::from(1), levels.clone()));
-        registry.take([1.0, 0.4, 0.2]);
+        assert!(registry.take(Some([1.0, 0.4, 0.2])));
         assert_eq!(levels.target(0), 1.0);
-        registry.take([0.5, 0.4, 0.2]);
+        assert!(!registry.take(None), "a frame that moved nothing");
+        assert_eq!(levels.target(0), 1.0);
+        registry.take(Some([0.5, 0.4, 0.2]));
         assert!((levels.target(0) - 0.5).abs() < 0.01);
     }
 }

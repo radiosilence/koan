@@ -66,16 +66,15 @@ pub fn install(cx: &mut App) {
             let heard = stream.next().await;
             heard.map(|heard| (heard, stream))
         })
-        .filter_map(move |heard| {
-            let moved = heights.lock().take(
+        .map(move |heard| {
+            heights.lock().take(
                 VizLevels {
                     low: heard.low,
                     mid: heard.mid,
                     high: heard.high,
                 },
                 Instant::now(),
-            );
-            async move { moved }
+            )
         })
         .boxed()
     });

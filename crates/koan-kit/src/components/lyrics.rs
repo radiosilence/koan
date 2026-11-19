@@ -715,8 +715,9 @@ impl SyncedLines {
 
 #[cfg(test)]
 mod cue_tests {
-    use super::*;
-    use core::prelude::v1::test;
+    use std::time::{Duration, Instant};
+
+    use super::SyncedLines;
 
     #[test]
     fn the_line_sung_is_the_last_one_started_and_the_wait_is_to_the_next() {
@@ -724,15 +725,9 @@ mod cue_tests {
         let now = Instant::now();
         let at = |position| SyncedLines::cue(&starts, position, true, now);
         assert_eq!(at(0.0).active, None);
-        assert_eq!(
-            at(0.0).next_in,
-            Some(std::time::Duration::from_secs_f64(0.5))
-        );
+        assert_eq!(at(0.0).next_in, Some(Duration::from_secs_f64(0.5)));
         assert_eq!(at(3.0).active, Some(1));
-        assert_eq!(
-            at(3.0).next_in,
-            Some(std::time::Duration::from_secs_f64(4.0))
-        );
+        assert_eq!(at(3.0).next_in, Some(Duration::from_secs_f64(4.0)));
         assert_eq!(at(9.0).active, Some(2));
         assert_eq!(at(9.0).next_in, None);
         let paused = SyncedLines::cue(&starts, 3.0, false, now);
