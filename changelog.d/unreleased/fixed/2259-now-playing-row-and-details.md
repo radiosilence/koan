@@ -1,0 +1,1 @@
+- **Now Playing on a phone keeps the heart and menu under the art, and a track's details open over it.** The heart and ⋯ sit as a compact row directly under the sleeve, so the names move up. A track's details, opened from the title or the ⋯ menu, now layer over Now Playing and close back to it instead of closing it.
