@@ -1,0 +1,1 @@
+- **A scrolling chart series keeps every sample.** Thinned to the plot's width, a narrow one slid two samples at each step while its data moved one.
