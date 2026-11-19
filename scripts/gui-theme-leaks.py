@@ -32,6 +32,16 @@ KINDS = {
         r"\.(p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|gap_x|gap_y|w|h|size|min_w|min_h|max_w|max_h|top|left|right|bottom|inset)_[1-9]\d*(p\d+)?\("
         r"|\.text_(xs|sm|base|lg|xl|\dxl)\(|\.rounded_(sm|md|lg|xl|full)\(|\.(text_size|line_height|font_family|font_weight)\("
     ),
+    # A length on the spacing or size scale written as a number of points:
+    # a step the kit's tokens or a component's metrics should name.
+    "points": re.compile(r"\.(spaced|sized)\(\s*[\d.]"),
+    # Spacing set by the page: a gap, a padding or a margin. Containers own
+    # their spacing; a page that needs another says so through an option.
+    "spacing": re.compile(r"\.(gap|gap_x|gap_y|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr)\("),
+    # A size or a place set by the page.
+    "size": re.compile(r"\.(w|h|min_w|min_h|max_w|max_h|size|top|left|right|bottom)\((?!\))"),
+    # A colour or a type role applied by the page rather than a component.
+    "style": re.compile(r"\.(text_color|bg|border_color|text_role|typeset)\("),
     # Containers built from parts: a page's title, a toolbar's button.
     "container": re.compile(r"\b(TypeRole|Type)::Title\b|ButtonKind::Toolbar\b"),
     # GPUI named directly rather than through koan-kit.

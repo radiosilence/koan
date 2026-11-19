@@ -16,14 +16,16 @@ use koan_runtime::{Album, AlbumOnDevice};
 use super::actions;
 use super::covers::Sleeve;
 use super::drag::PlayableDrag;
-use super::tokens::{Paint, Type, Typeset};
+use super::tokens::{Paint, Type};
 use crate::components::{
     Arrival, TileArt, TileGrid, TileMark, TileSleeve, origin_probe, text_widths,
 };
 use crate::theme::KoanTheme;
 use crate::theme::tokens::Motion;
 
+use crate::components::{Stack, Text};
 use crate::theme::Hsla;
+use crate::theme::Tone;
 
 /// The record grid, koan-kit's: every tile the same size, nothing measured.
 pub type Grid = TileGrid;
@@ -335,23 +337,23 @@ impl<V: TileHost> Render for TileView<V> {
                     .map(|brat| (ElementId::from("tile-sheen"), brat)),
             );
 
-        let title = div()
+        let title = Text::new(Type::Meta)
+            .tone(Tone::Ink)
             .w_full()
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
-            .typeset(p, Type::Meta, p.ink)
             .when(hovered == Some(Part::Title) && !state.selecting, |d| {
                 d.underline()
             })
             .child(record.title.clone());
 
-        let mut credit = div()
-            .flex()
+        let mut credit = Stack::row()
+            .type_role(Type::Fine)
+            .tone(Tone::Muted)
             .w_full()
             .overflow_hidden()
-            .whitespace_nowrap()
-            .typeset(p, Type::Fine, p.muted);
+            .whitespace_nowrap();
         if state.show_artist {
             for (text, artist) in &record.credit {
                 let lit =

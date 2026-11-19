@@ -534,3 +534,44 @@ mod tests {
         assert!(cx.debug_bounds("filter-clear-mark").is_none());
     }
 }
+
+/// What leads a phone's list: its filter or search field, at the page's
+/// margin, scrolled away with the list as an iOS list's search field is. A
+/// page whose field stays put under the bar (a search tab) sets `under_bar`.
+#[derive(IntoElement)]
+pub struct FieldLead {
+    field: AnyElement,
+    under_bar: bool,
+}
+
+impl FieldLead {
+    /// A lead holding `field`.
+    pub fn new(field: impl IntoElement) -> Self {
+        Self {
+            field: field.into_any_element(),
+            under_bar: false,
+        }
+    }
+
+    /// Below the bar the page runs under, a step clear of it and of what
+    /// follows, rather than a step under the list's top.
+    pub fn under_bar(mut self) -> Self {
+        self.under_bar = true;
+        self
+    }
+}
+
+impl RenderOnce for FieldLead {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let margin = super::RowMetrics::page_margin(&look);
+        let lead = div().px(margin);
+        if self.under_bar {
+            lead.mt(super::bar_inset(window, cx))
+                .py(look.space(crate::theme::Space::M))
+        } else {
+            lead.pt(look.space(crate::theme::Space::S))
+        }
+        .child(self.field)
+    }
+}

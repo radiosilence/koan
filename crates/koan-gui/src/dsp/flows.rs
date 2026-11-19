@@ -17,7 +17,8 @@ use super::model::{Dsp, describe};
 use super::sheet::{Confirm, Sheets, body, choice_row, content, head, head_data, note, section};
 use super::stage::target_label;
 use crate::components::{Button, ButtonKind, EmptyState, FormRow, Segmented, TextField};
-use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::components::{Stack, Text};
+use crate::theme::{Icon, KoanIcon, Look, Space, Tone, TypeRole, label};
 
 /// The output in use, recognised by its name as a headphone AutoEQ has
 /// measured, or roughly so: its profile, or a search for its model. Offered
@@ -54,20 +55,17 @@ pub fn suggestion(
                         install(&dsp, &sheets, entry.clone(), &device, cx);
                     })
             };
-            div()
-                .flex()
-                .flex_col()
-                .gap(look.space(Space::S))
+            Stack::column()
+                .space(Space::S)
                 .child(note(
                     format!("AutoEQ has a correction for {}. Use it?", entry.name),
                     Tone::Muted,
                     look,
                 ))
                 .child(
-                    div()
-                        .flex()
+                    Stack::row()
+                        .space(Space::M)
                         .items_center()
-                        .gap(look.space(Space::M))
                         .child(use_it)
                         .child(dismiss),
                 )
@@ -91,10 +89,9 @@ pub fn suggestion(
                         sheets.update(cx, |s, cx| s.view(view, cx));
                     })
             };
-            div()
-                .flex()
+            Stack::row()
+                .space(Space::M)
                 .items_center()
-                .gap(look.space(Space::M))
                 .child(find)
                 .child(dismiss)
                 .into_any_element()
@@ -748,9 +745,8 @@ impl MeasurementFlow {
     fn step_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let look = Look::of(window, cx);
         let text = |s: &str| {
-            div()
-                .text_role(TypeRole::Body, &look)
-                .text_color(look.palette.ink.hsla())
+            Text::new(TypeRole::Body)
+                .tone(Tone::Ink)
                 .child(s.to_owned())
                 .into_any_element()
         };
@@ -772,7 +768,7 @@ impl MeasurementFlow {
                 .into_any_element(),
                 section(
                     Some("What the file looks like"),
-                    vec![div().text_role(TypeRole::Meta, &look).text_color(look.text_color(Tone::Muted)).child("20, 92.4  ·  21, 92.6  ·  22, 92.7  ·  …").into_any_element()],
+                    vec![Text::new(TypeRole::Meta).tone(Tone::Muted).child("20, 92.4  ·  21, 92.6  ·  22, 92.7  ·  …").into_any_element()],
                     Some("Two numbers a line: a frequency in hertz, then a level in decibels. Commas, tabs or spaces between them all work.".into()),
                     &look,
                 )
@@ -1279,9 +1275,7 @@ impl Render for SplitFlow {
                 }
             });
         let mut rows: Vec<AnyElement> = vec![
-            div()
-                .text_role(TypeRole::Body, &look)
-                .text_color(look.palette.ink.hsla())
+            Text::new(TypeRole::Body).tone(Tone::Ink)
                 .child(format!("{name} is a correction for a device that already includes a tuning. With a measurement of the device, kōan takes it apart: a correction that makes it neutral, and the tuning, your taste, which then works on any device."))
                 .into_any_element(),
         ];

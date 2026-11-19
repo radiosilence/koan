@@ -24,6 +24,7 @@ mod badge;
 mod banner;
 mod bars;
 mod button;
+mod chain;
 pub mod chart;
 pub mod choice;
 mod collection;
@@ -39,6 +40,7 @@ pub mod field;
 mod filter_field;
 pub mod focus_trap;
 mod follow;
+mod foot_card;
 mod form;
 mod gesture;
 mod grip;
@@ -47,6 +49,7 @@ mod heart;
 mod insets;
 mod inspector;
 mod layer;
+mod layout;
 mod level;
 mod link_text;
 mod list_keys;
@@ -112,6 +115,7 @@ pub use badge::{Badge, Chip};
 pub use banner::Banner;
 pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay, renderer_mark};
 pub use button::{Button, ButtonKind};
+pub use chain::{ChainEnd, ChainJoin, ChainLink, ChainSlot, ChainStage};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
 pub use command_bar::{CommandBar, CommandResults, CommandSection};
 pub use copy::{CopyButton, CopyText};
@@ -136,12 +140,15 @@ pub use chart::{
 };
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
-pub use field::{AreaState, FieldState, InputEvent, Labelled, TextArea, TextField, labelled};
-pub use filter_field::{FilterButton, FilterField};
+pub use field::{
+    AreaState, FieldState, FieldWidth, InputEvent, Labelled, TextArea, TextField, labelled,
+};
+pub use filter_field::{FieldLead, FilterButton, FilterField};
 pub use follow::{
     Elastic, Follow, PULL_RING, PUSH_FRONT, PUSH_UNDER, Push, Refresh, RefreshStart, SWIPE_ACTION,
     SwipeAction, settle_length,
 };
+pub use foot_card::{FootCard, ShellFoot};
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_field, form_item,
     form_note, form_text,
@@ -155,6 +162,7 @@ pub use insets::{
 };
 pub use inspector::{Inspector, plain_text};
 pub use layer::{AnimatedLayer, LAYER};
+pub use layout::{Divider, Inset, Stack, Text};
 pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
@@ -204,7 +212,7 @@ pub use toolbar::{
     ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
 pub use touch::{KoanLongPress, KoanTouchDrag};
-pub use transport_control::TransportControl;
+pub use transport_control::{TransportControl, transport_item};
 pub use viewer::Viewer;
 pub use window::{
     MainWindow, SecondaryWindow, close_button, draws_decorations, host, moves_window,

@@ -23,6 +23,7 @@ use super::menu::{Item, Trigger, menu};
 use super::model::{Commit, Dsp};
 use crate::components::sheet::note;
 use crate::components::{Align, Column, DenseRow, DenseTable, TextField};
+use crate::components::{Stack, Text};
 use crate::theme::{Look, Space, Tone};
 
 /// A figure of a band's row, or of a curve's point.
@@ -398,7 +399,6 @@ pub fn table<V: 'static>(
     window: &mut Window,
     cx: &mut Context<V>,
 ) -> AnyElement {
-    let look = Look::of(window, cx);
     let dsp = fields.dsp.clone();
     let profile = fields.profile.clone();
     let kinds = dsp.read(cx).bounds.kinds.clone();
@@ -422,20 +422,14 @@ pub fn table<V: 'static>(
     }
     for (position, (index, band)) in shown.into_iter().enumerate() {
         let kind = kinds.iter().find(|k| k.id == band.kind);
-        let number = div()
-            .text_color(look.text_color(Tone::Muted))
-            .child(format!("{}", position + 1));
+        let number = Text::in_tone(Tone::Muted).child(format!("{}", position + 1));
         let summary = || {
             div()
                 .w_full()
                 .flex()
                 .justify_between()
                 .child(kind_name(band, &kinds))
-                .child(
-                    div()
-                        .text_color(look.text_color(Tone::Muted))
-                        .child(values(band)),
-                )
+                .child(Text::in_tone(Tone::Muted).child(values(band)))
         };
         let row = DenseRow::new().cell(number);
         let row = match (kind, read_only) {
@@ -535,20 +529,13 @@ pub fn points<V: 'static>(
             .enumerate()
             .map(|(i, _): (usize, &DspPoint)| {
                 DenseRow::new()
-                    .cell(
-                        div()
-                            .text_color(look.text_color(Tone::Muted))
-                            .child(format!("{}", i + 1)),
-                    )
+                    .cell(Text::in_tone(Tone::Muted).child(format!("{}", i + 1)))
                     .cell(div())
                     .cell(fields.field(index, Part::PointHz(i), band, stamp, window, cx))
                     .cell(fields.field(index, Part::PointDb(i), band, stamp, window, cx))
             }),
     );
-    div()
-        .flex()
-        .flex_col()
-        .gap(look.space(Space::Xs))
+    Stack::column().space(Space::Xs)
         .child(table)
         .child(note(
             "Edits play at once. Frequency and gain are held to 10 Hz–22 kHz and ±30 dB; a point moved past another takes its place in order.",

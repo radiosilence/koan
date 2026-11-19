@@ -142,10 +142,10 @@ fn show(_cx: &mut App) {
 /// its build, and the links.
 #[cfg(not(target_os = "macos"))]
 fn show(cx: &mut App) {
-    use koan_kit::app::{AppContext, IntoElement, ParentElement, Render, Styled, div};
+    use koan_kit::app::{AppContext, IntoElement, ParentElement, Render, Styled};
 
-    use crate::components::{Button, ButtonKind, SecondaryWindow};
-    use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
+    use crate::components::{Button, ButtonKind, SecondaryWindow, Stack, Text};
+    use crate::theme::{Look, Space, Tone, TypeRole};
 
     struct AboutWindow;
 
@@ -156,25 +156,21 @@ fn show(cx: &mut App) {
             cx: &mut koan_kit::app::Context<Self>,
         ) -> impl IntoElement {
             let look = Look::of(window, cx);
-            div()
+            Stack::column()
+                .space(Space::M)
                 .size_full()
-                .flex()
-                .flex_col()
                 .items_center()
                 .justify_center()
-                .gap(look.space(Space::M))
                 .bg(look.palette.bg.hsla())
                 .child(crate::components::title_text("kōan", &look))
                 .child(
-                    div()
-                        .text_role(TypeRole::Meta, &look)
-                        .text_color(look.text_color(Tone::Muted))
+                    Text::new(TypeRole::Meta)
+                        .tone(Tone::Muted)
                         .child(format!("{VERSION} ({BUILD})")),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .gap(look.space(Space::L))
+                    Stack::row()
+                        .space(Space::L)
                         .child(
                             Button::new("about-site", ButtonKind::Link)
                                 .text("koan.rocks")

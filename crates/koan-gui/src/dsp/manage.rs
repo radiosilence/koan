@@ -17,7 +17,8 @@ use super::page::EqPage;
 use super::profile::ProfilePage;
 use super::sheet::{Confirm, Sheets, body, content, head, note, section};
 use crate::components::{Button, ButtonKind, SectionHeader, TextField};
-use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::components::{Inset, Stack, Text};
+use crate::theme::{Look, Space, Tone, TypeRole, label};
 
 pub struct ManageEq {
     dsp: Entity<Dsp>,
@@ -404,11 +405,10 @@ impl ManageEq {
         };
         let items = self.actions(p, cx);
         let (this, name) = (cx.weak_entity(), p.name.clone());
-        div()
-            .flex()
+        Stack::row()
+            .space(Space::M)
+            .inset_y(Space::S)
             .items_center()
-            .gap(look.space(Space::M))
-            .py(look.space(Space::S))
             .child(
                 div()
                     .id(SharedString::from(format!("manage-{}", p.name)))
@@ -420,14 +420,12 @@ impl ManageEq {
                             .ok();
                     })
                     .child(
-                        div()
-                            .flex()
+                        Stack::row()
+                            .space(Space::S)
                             .items_baseline()
-                            .gap(look.space(Space::S))
                             .child(
-                                div()
-                                    .text_role(TypeRole::Body, &look)
-                                    .text_color(look.palette.ink.hsla())
+                                Text::new(TypeRole::Body)
+                                    .tone(Tone::Ink)
                                     .child(p.name.clone()),
                             )
                             .when(p.edited, |d| {
@@ -472,7 +470,7 @@ impl ManageEq {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let look = Look::of(window, cx);
+        let _look = Look::of(window, cx);
         let members: Vec<&DspProfileSummary> = group
             .members
             .iter()
@@ -494,37 +492,27 @@ impl ManageEq {
                 this.update(cx, |m, cx| m.add_to_filters(&names, cx)).ok();
             })
         });
-        div()
-            .flex()
-            .flex_col()
-            .gap(look.space(Space::Xs))
+        Stack::column()
+            .space(Space::Xs)
             .child(
-                div()
-                    .flex()
+                Stack::row()
+                    .space(Space::M)
                     .items_end()
                     .justify_between()
-                    .gap(look.space(Space::M))
                     .child(
-                        div()
-                            .pt(look.space(Space::L))
-                            .text_role(TypeRole::Fine, &look)
-                            .text_color(look.palette.ink.hsla())
+                        Text::new(TypeRole::Fine)
+                            .inset_top(Space::L)
+                            .tone(Tone::Ink)
                             .child(group.name.clone()),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(look.space(Space::M))
-                            .children(add_all)
-                            .child(menu(
-                                SharedString::from(format!("group-options-{}", group.name)),
-                                label("Options"),
-                                Trigger::Word,
-                                items,
-                                window,
-                                cx,
-                            )),
-                    ),
+                    .child(Stack::row().space(Space::M).children(add_all).child(menu(
+                        SharedString::from(format!("group-options-{}", group.name)),
+                        label("Options"),
+                        Trigger::Word,
+                        items,
+                        window,
+                        cx,
+                    ))),
             )
             .children(rows)
             .into_any_element()
@@ -571,19 +559,17 @@ impl ManageEq {
                 format!("{} days left", d.days_left)
             };
             rows.push(
-                div()
-                    .flex()
+                Stack::row()
+                    .inset_y(Space::S)
                     .items_center()
                     .justify_between()
-                    .py(look.space(Space::S))
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .child(
-                                div()
-                                    .text_role(TypeRole::Body, &look)
-                                    .text_color(look.palette.ink.hsla())
+                                Text::new(TypeRole::Body)
+                                    .tone(Tone::Ink)
                                     .child(d.name.clone()),
                             )
                             .child(note(days, Tone::Muted, &look)),
@@ -647,10 +633,8 @@ impl Render for ManageEq {
             let this = cx.weak_entity();
             let cancel = this.clone();
             sections.push(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(look.space(Space::S))
+                Stack::column()
+                    .space(Space::S)
                     .child(SectionHeader::new(match naming {
                         Naming::Rename => "Rename",
                         Naming::Copy => "Save as New",
@@ -665,9 +649,8 @@ impl Render for ManageEq {
                         ))
                     })
                     .child(
-                        div()
-                            .flex()
-                            .gap(look.space(Space::M))
+                        Stack::row()
+                            .space(Space::M)
                             .child(div().flex_1().child(TextField::new(&input)))
                             .child(
                                 Button::new("naming-go", ButtonKind::Bordered)
@@ -724,10 +707,8 @@ impl Render for ManageEq {
         }
         sections.extend(self.recently_deleted(window, cx));
         let (dsp, sheets) = (self.dsp.clone(), self.sheets.clone());
-        let adds = div()
-            .flex()
-            .flex_wrap()
-            .gap(look.space(Space::M))
+        let adds = Stack::wrapping()
+            .space(Space::M)
             .child(
                 Button::new("manage-import", ButtonKind::Bordered)
                     .label("Import a File…")

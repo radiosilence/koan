@@ -75,13 +75,22 @@ Pages may not decide **where or how it looks**:
 - no `px(…)`, `rgb(…)`, `hsla(…)`, font sizes or line heights;
 - no margins, gaps or padding between sections, rows or header parts;
 - no row heights, sleeve sizes or column widths of their own;
-- no header, toolbar button, table row, menu panel, placeholder or loading state built from `div()`s.
+- no header, toolbar button, table row, menu panel, placeholder or loading state built from `div()`s;
+- no `.gap(…)`, `.p(…)`, `.w(…)`, `.text_color(…)` or `.text_role(…)` on a `div`: `Stack` and `Text` take the theme's steps, roles and tones instead.
 
 When a page needs something no container offers, the container grows the capability (or a new one is added here) and every page gets it. That is the only way a new look enters the app.
 
 ## The pieces
 
 API sketches; the module docs are authoritative once each lands.
+
+### Stack, Text and Divider (SwiftUI's `VStack`, `HStack`, `Text`, `Divider`)
+
+What a page arranges between the containers: `Stack::column()`, `row()`, `wrapping()` and `block()`, with `space(Space)` between children and `Inset` on the edges (`inset_x(Space)`, `page_margins()`, `page_head()`, …) and `measure(Measure)` for a column's widest; `Text::new(TypeRole)` with `tone(Tone)`, `icon(Icon)` for a glyph that says what the line is, and `picked` on a selected row; `Divider` for a hairline in `rule`. Each is a `div` that reads the window's `Look` as it lays out, so a page names a step, a role or a tone and never a length or a colour, and everything else a `div` takes (flex alignment, ids, handlers) goes on as before. The steps are `Space`'s, from `Xxs` (2) to `Xxl` (32).
+
+### Chain (Mac: the EQ page's chain)
+
+A signal chain down the page: `ChainEnd` where it starts and ends, `ChainStage` for a stage (outlined, its words over the picture and controls below the compact width), `ChainSlot` for an empty one, `ChainLink` and `ChainJoin` for the line between them, in the accent while the chain is `lit`.
 
 ### Page and PageHeader (Mac: `PageHeader`, the stage's page edges)
 
@@ -454,7 +463,7 @@ Two parts, the compiler first.
 
 **The crate boundary.** Pages are written in `koan_kit::app`, which leaves out `px`, `rgb`, `hsla` and fonts. koan-gui still depends on GPUI itself, as `gpui`, since GPUI's derive macros name `gpui::` paths, so the boundary is a convention the check below holds rather than a compile error. Sizes reach pages as values the system computed (`RowMetrics`, `Look::space`); where a component takes a figure in points (`TableRow::figure`, `Look::spaced`), it is a column's or a gap's width the component scales, and the check does not count it.
 
-**`just gui-theme-leaks`**, in CI's GUI job: sizes and colours written as numbers (`px(`, `rgb(`, `hsla(` and the like), methods of the `Styled` trait that fix a size (`.p_4()`, `.text_xs()`, `.w_64()`, `.line_height(`), hand-built containers in koan-gui (`TypeRole::Title` outside a `PageHeader`, `ButtonKind::Toolbar`), `gpui::` named directly, and each name taken from `koan_kit::raw`.
+**`just gui-theme-leaks`**, in CI's GUI job: sizes and colours written as numbers (`px(`, `rgb(`, `hsla(` and the like), methods of the `Styled` trait that fix a size (`.p_4()`, `.text_xs()`, `.w_64()`, `.line_height(`), hand-built containers in koan-gui (`TypeRole::Title` outside a `PageHeader`, `ButtonKind::Toolbar`), `gpui::` named directly, each name taken from `koan_kit::raw`, and what a page styles itself: a length on the scale written as points (`look.spaced(18.0)`), a gap, padding or margin, a size or a place, a colour or a type role set on a `div`. What is left of those is drawing of kōan's own (the EQ graph's frame, the shell's safe areas, a measured height) and is listed in the baseline.
 
 Pages are written in `koan_kit::app`: the app model (entities, contexts, views, events, actions, focus, globals, tasks), `div` with the traits that give it children, layout and listeners, and the platform services the app uses (the clipboard, dropped files, the file picker). Sizes, colours, fonts, images, canvases, lists, overlays and animation are not in it.
 

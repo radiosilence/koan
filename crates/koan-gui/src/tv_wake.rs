@@ -12,6 +12,7 @@
 
 use koan_kit::app::*;
 
+use crate::components::Stack;
 use crate::components::sheet as ask;
 use crate::components::{Button, ButtonKind, FieldState, InputEvent, Spinner, TextField};
 use crate::engine::{engine, reported};
@@ -272,10 +273,9 @@ impl Render for TvWake {
             .on_click(cx.listener(|this, _, _, cx| this.close(cx)));
         let name = self.name.clone();
         let waiting = |text: String| {
-            div()
-                .flex()
+            Stack::row()
+                .space(Space::S)
                 .items_center()
-                .gap(look.space(Space::S))
                 .child(Spinner::new(look.font_size(TypeRole::Control)))
                 .child(ask::note(text, Tone::Muted, look))
                 .into_any_element()
@@ -286,20 +286,15 @@ impl Render for TvWake {
             Phase::Entering => {
                 let on = self.asked.clone().unwrap_or_else(|| name.clone());
                 let ready = self.digits(cx).len() == 4;
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(look.space(Space::M))
+                Stack::column().space(Space::M)
                     .child(ask::note(
                         format!("Type the code on {on}. It waits about half a minute."),
                         Tone::Muted,
                         look,
                     ))
                     .child(
-                        div()
-                            .flex()
+                        Stack::row().space(Space::M)
                             .items_center()
-                            .gap(look.space(Space::M))
                             .child(div().flex_1().child(TextField::new(&self.code)))
                             .child(
                                 Button::new("tv-wake-pair", ButtonKind::Prominent)
@@ -318,10 +313,7 @@ impl Render for TvWake {
                 look,
             )
             .into_any_element(),
-            Phase::Failed(why) => div()
-                .flex()
-                .flex_col()
-                .gap(look.space(Space::M))
+            Phase::Failed(why) => Stack::column().space(Space::M)
                 .child(ask::note(why.clone(), Tone::Bad, look))
                 .child(
                     Button::new("tv-wake-retry", ButtonKind::Bordered)

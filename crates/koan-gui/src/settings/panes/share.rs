@@ -419,7 +419,7 @@ impl ShareForm {
         );
         rows.push(
             Row::new("Port")
-                .control(div().w(look.sized(120.0)).child(TextField::new(&self.port)))
+                .control(TextField::new(&self.port).width(crate::components::FieldWidth::Number))
                 .into_any_element(),
         );
         section(

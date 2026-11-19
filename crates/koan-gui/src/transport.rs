@@ -14,20 +14,21 @@ use crate::components::{
     Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
     TransportControl, TransportMetrics,
 };
+use crate::components::{Inset, Stack};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::links;
 use crate::mirror::{Devices, Mirror, Outputs, Playback, Playhead, Renderers, Slice};
 use crate::paint::Paint;
 use crate::platform::actions::{Next, Previous, ShowEq, help};
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
+use crate::theme::{self, Icon, KoanIcon, Space, Tone, TypeRole};
 use crate::time::clock;
 
 pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
 
 #[path = "transport_phone.rs"]
 mod phone;
-pub use phone::{Collapse, Expand, Flight, Form, MINI_HEIGHT, SLEEVE, ShowInfo};
+pub use phone::{Collapse, Expand, Flight, Form, ShowInfo};
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
@@ -862,25 +863,7 @@ const CENTRE_LEAST: f32 = 300.0;
 /// to click: padding taken back by an equal negative margin, so the item's
 /// own bounds grow and nothing moves.
 fn trailing_item(base: Stateful<Div>, p: &Paint, glyph_only: bool) -> Stateful<Div> {
-    let gap = TransportMetrics::trailing_gap(&p.look) / 2.;
-    let glyph = Pixels::from(TransportMetrics::trailing_icon(&p.look));
-    let reach = if glyph_only {
-        gap.max((theme::HIT - glyph) / 2.)
-    } else {
-        gap
-    };
-    // A glyph's reach can pass its neighbour's at small gaps: each item
-    // blocks the ones drawn before it, so a press in the overlap goes to
-    // one item, never two.
-    base.flex()
-        .items_center()
-        .justify_center()
-        .h(theme::HIT)
-        .px(reach)
-        .mx(-reach)
-        .occlude()
-        .cursor_pointer()
-        .text_role(TypeRole::Meta, &p.look)
+    crate::components::transport_item(base, glyph_only, &p.look)
 }
 
 /// A transport control's tooltip.
@@ -922,12 +905,11 @@ impl Render for Transport {
         // back and forth for it.
         let playing =
             now.state == PlayState::Playing || (now.state == PlayState::Stopped && now.waiting);
-        let left = div()
+        let left = Stack::row()
+            .space(Space::M)
             .flex_1()
             .min_w_0()
-            .flex()
             .items_center()
-            .gap(p.space(Space::M))
             .child(
                 div()
                     .id("transport-cover")
@@ -1037,10 +1019,9 @@ impl Render for Transport {
                                         }),
                                 )
                             });
-                        div()
-                            .flex()
+                        Stack::row()
+                            .space(Space::Xs)
                             .items_center()
-                            .gap(p.space(Space::Xs))
                             .min_w_0()
                             .child(div().min_w_0().child(title))
                             .children(heart)
@@ -1285,7 +1266,9 @@ impl Render for Transport {
             );
 
         let ring = crate::components::focus_ring(&self.focus, window, cx);
-        div()
+        Stack::row()
+            .space(Space::L)
+            .inset_x(Space::L)
             .id("transport")
             .relative()
             .track_focus(&self.focus)
@@ -1321,10 +1304,7 @@ impl Render for Transport {
             .h(HEIGHT)
             .w_full()
             .flex_shrink_0()
-            .flex()
             .items_center()
-            .gap(p.space(Space::L))
-            .px(p.space(Space::L))
             // No ground: the shell draws it over the pages, on their frost.
             // The width the bar was laid out at, for the next frame to fit
             // the trailing group to.

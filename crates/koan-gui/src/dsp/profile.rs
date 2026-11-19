@@ -22,12 +22,10 @@ use super::page::thumb;
 use super::sheet::{Confirm, Sheets, body, content, head, head_data, note, section};
 use super::stage::target_label;
 use crate::components::{
-    Badge, Button, ButtonKind, Clear, FormRow, ScrollArea, SectionHeader, Segmented, TextField,
-    Toggle, system_insets,
+    Badge, Button, ButtonKind, Clear, FormRow, Inset, SectionHeader, Segmented, Stack, Text,
+    TextField, Toggle, system_insets,
 };
-use crate::theme::{
-    Icon, KoanIcon, KoanStyled, KoanTheme, Look, Motion, Space, Tone, TypeRole, label,
-};
+use crate::theme::{Icon, KoanIcon, KoanTheme, Look, Motion, Space, Tone, TypeRole, label};
 
 /// A profile's sheet: its name and Done, the graph, which stays in view
 /// while the bands scroll under it, and the body, drawn by `ProfileBody` as
@@ -708,7 +706,7 @@ impl Render for ProfileBody {
         let mut s: Vec<AnyElement> = Vec::new();
         s.push(summary(&d, &look));
         if let Some(twice) = &d.corrects_twice {
-            s.push(warning(twice.clone(), &look));
+            s.push(warning(twice.clone()));
         }
         s.push(TextField::new(&self.name_input).into_any_element());
         if let Some(message) = self
@@ -716,7 +714,7 @@ impl Render for ProfileBody {
             .clone()
             .or_else(|| self.dsp.read(cx).last_error.clone())
         {
-            s.push(warning(message, &look));
+            s.push(warning(message));
         }
         if let Some(layout) = d.channels.clone().filter(|_| !d.read_only) {
             s.push(self.channels(&d, layout, &look, cx));
@@ -725,7 +723,7 @@ impl Render for ProfileBody {
             s.push(self.keeping(&d, &look, window, cx));
         }
         if let Some(problem) = &d.problem {
-            s.push(warning(problem.clone(), &look));
+            s.push(warning(problem.clone()));
         }
         {
             let mut rows: Vec<AnyElement> = Vec::new();
@@ -734,9 +732,8 @@ impl Render for ProfileBody {
             }
             for device in &d.devices {
                 rows.push(
-                    div()
-                        .text_role(TypeRole::Body, &look)
-                        .text_color(look.palette.ink.hsla())
+                    Text::new(TypeRole::Body)
+                        .tone(Tone::Ink)
                         .child(self.dsp.read(cx).label(device))
                         .into_any_element(),
                 );
@@ -825,19 +822,9 @@ impl Render for ProfileBody {
         }
         // Scrolled by the kit's area, which keeps a field being typed in
         // clear of the keyboard.
-        ScrollArea::new(
-            "profile-body",
-            div()
-                .flex()
-                .flex_col()
-                .gap(look.space(Space::S))
-                .px(look.space(Space::L))
-                .pt(look.space(Space::M))
-                .pb(look.space(Space::L))
-                .children(s),
-        )
-        .handle(&self.scroll)
-        .into_any_element()
+        crate::components::sheet::scroll_body("profile-body", s, &look)
+            .handle(&self.scroll)
+            .into_any_element()
     }
 }
 
@@ -855,9 +842,8 @@ impl ProfileBody {
             Some(input) => {
                 let (go, cancel) = (this.clone(), this.clone());
                 rows.push(
-                    div()
-                        .flex()
-                        .gap(look.space(Space::M))
+                    Stack::row()
+                        .space(Space::M)
                         .child(div().flex_1().child(TextField::new(input)))
                         .child(
                             Button::new("copy-go", ButtonKind::Bordered)
@@ -938,9 +924,8 @@ impl ProfileBody {
                     );
                 }
                 rows.push(
-                    div()
-                        .flex()
-                        .gap(look.space(Space::M))
+                    Stack::row()
+                        .space(Space::M)
                         .children(buttons)
                         .into_any_element(),
                 );
@@ -1167,19 +1152,15 @@ impl ProfileBody {
                         };
                         // Cells of one width, so the previews stand in
                         // columns; a long name ends in an ellipsis.
-                        div()
+                        Stack::column()
+                            .space(Space::Xxs)
                             .w(look.spaced(150.0))
-                            .flex()
-                            .flex_col()
-                            .gap(look.spaced(2.0))
                             .child(thumb(db.clone(), Stroke::eq(1), Some(range)))
                             .child(note(name, Tone::Muted, &look).truncate())
                     });
                 rows.push(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(look.space(Space::M))
+                    Stack::wrapping()
+                        .space(Space::M)
                         .children(thumbs.collect::<Vec<_>>())
                         .into_any_element(),
                 );
@@ -1482,16 +1463,14 @@ impl ProfileBody {
             }
             let role = d.layer_roles.get(i).copied().flatten();
             rows.push(
-                div()
-                    .flex()
+                Stack::row()
                     .items_center()
-                    .gap(look.space(Space::M))
+                    .space(Space::M)
                     .child(toggle)
                     .child(
-                        div()
+                        Text::new(TypeRole::Body)
+                            .tone(Tone::Ink)
                             .flex_1()
-                            .text_role(TypeRole::Body, &look)
-                            .text_color(look.palette.ink.hsla())
                             .child(layer.profile.clone()),
                     )
                     .children(role.map(|r| {
@@ -1585,7 +1564,7 @@ impl ProfileBody {
                     .into_any_element(),
             );
             if let Some(p) = &d.sync_problem {
-                rows.push(warning(p.clone(), &look));
+                rows.push(warning(p.clone()));
             }
             if let Some(n) = &d.sync_note {
                 rows.push(note(n.clone(), Tone::Muted, &look).into_any_element());
@@ -1619,22 +1598,15 @@ impl ProfileBody {
                     if ir.delayed {
                         shape.push("delays channels".into());
                     }
-                    div()
-                        .flex()
-                        .flex_col()
-                        .py(look.spaced(2.0))
+                    Stack::column()
+                        .inset_y(Space::Xxs)
                         .child(
-                            div()
-                                .flex()
+                            Stack::row()
                                 .justify_between()
-                                .text_role(TypeRole::Meta, &look)
-                                .text_color(look.palette.ink.hsla())
+                                .type_role(TypeRole::Meta)
+                                .tone(Tone::Ink)
                                 .child(format!("{} kHz", khz(ir.rate)))
-                                .child(
-                                    div()
-                                        .text_color(look.text_color(Tone::Muted))
-                                        .child(channels),
-                                ),
+                                .child(Text::new(TypeRole::Meta).tone(Tone::Muted).child(channels)),
                         )
                         .child(note(shape.join(" · "), Tone::Muted, &look))
                         .child(note(ir.file.clone(), Tone::Muted, &look))
@@ -1802,7 +1774,6 @@ impl ProfileBody {
         }
         body("curve-body", &look)
             .size_full()
-            .pt(look.space(Space::M))
             .children(s)
             .into_any_element()
     }
@@ -1866,28 +1837,20 @@ pub fn target_groups(
 
 /// What a profile is for, in a line each: the headphone the chain corrects
 /// and how, and the tuning on top.
-fn summary(d: &DspProfileDetail, look: &Look) -> AnyElement {
+fn summary(d: &DspProfileDetail, _look: &Look) -> AnyElement {
     let line = |role: DspRole, text: String, muted: bool| {
-        div()
-            .flex()
+        Stack::row()
             .items_baseline()
-            .gap(look.spaced(6.0))
+            .space(Space::Xs)
             .child(Badge::new(role_label(role)).accent(role == DspRole::Correction))
             .child(
-                div()
-                    .text_role(TypeRole::Body, look)
-                    .text_color(if muted {
-                        look.text_color(Tone::Muted)
-                    } else {
-                        look.palette.ink.hsla()
-                    })
+                Text::new(TypeRole::Body)
+                    .tone(if muted { Tone::Muted } else { Tone::Ink })
                     .child(text),
             )
     };
-    div()
-        .flex()
-        .flex_col()
-        .gap(look.spaced(4.0))
+    Stack::column()
+        .space(Space::Xs)
         .child(match &d.corrects {
             Some(c) => line(
                 if d.corrects_baked {
@@ -1906,19 +1869,11 @@ fn summary(d: &DspProfileDetail, look: &Look) -> AnyElement {
         .into_any_element()
 }
 
-fn warning(text: impl Into<SharedString>, look: &Look) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .gap(look.space(Space::S))
-        .when(look.icons, |d| {
-            d.child(
-                KoanIcon::new(Icon::WarningFilled)
-                    .role(TypeRole::Meta)
-                    .tone(Tone::Bad),
-            )
-        })
-        .child(note(text, Tone::Bad, look))
+fn warning(text: impl Into<SharedString>) -> AnyElement {
+    Text::new(TypeRole::Fine)
+        .tone(Tone::Bad)
+        .icon(Icon::WarningFilled)
+        .child(text.into())
         .into_any_element()
 }
 

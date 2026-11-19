@@ -1,9 +1,10 @@
 //! Library: the folders scanned, scanning them, and clearing the index.
 
 use crate::components::{Button, ButtonKind};
-use crate::theme::{Icon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
 use koan_kit::app::*;
 
+use crate::components::{Inset, Stack, Text};
 use crate::settings::Ctx;
 use crate::settings::form::{buttons, page, section, text};
 use crate::settings::model::{Uses, count};
@@ -159,17 +160,15 @@ impl Render for LibraryPane {
             let tracks = folder.tracks;
             let entity = entity.clone();
             folders.push(
-                div()
-                    .flex()
+                Stack::row()
+                    .space(Space::M)
+                    .inset_y(Space::Xs)
                     .items_center()
-                    .gap(look.space(Space::M))
-                    .py(look.space(Space::Xs))
                     .child(
-                        div()
+                        Text::new(TypeRole::Meta)
+                            .tone(Tone::Ink)
                             .flex_1()
                             .min_w_0()
-                            .text_role(TypeRole::Meta, &look)
-                            .text_color(look.palette.ink.hsla())
                             // Cut in the middle, so the folder's own name at
                             // the end stays in view however deep it lies.
                             .overflow_hidden()

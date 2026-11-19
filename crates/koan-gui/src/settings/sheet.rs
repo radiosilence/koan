@@ -6,7 +6,9 @@
 use std::rc::Rc;
 
 use crate::components::{Button, ButtonKind, TextField};
-use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
+use crate::components::{Inset, Stack, Text};
+use crate::theme::Tone;
+use crate::theme::{Look, Space, TypeRole, label};
 use koan_kit::app::input::{InputEvent, InputState, TextContentType};
 use koan_kit::app::*;
 
@@ -330,12 +332,11 @@ impl Sheets {
             .map(|(_, state)| state.read(cx).value().to_string())
             .collect();
 
-        let mut buttons = div()
-            .flex()
+        let mut buttons = Stack::row()
+            .space(Space::M)
+            .inset_top(Space::M)
             .justify_end()
             .items_center()
-            .gap(look.space(Space::M))
-            .pt(look.space(Space::M))
             .child(
                 Button::new("sheet-dismiss", ButtonKind::Compact)
                     .label(sheet.dismiss.as_ref())
@@ -385,26 +386,22 @@ impl Sheets {
             .gap(look.space(Space::S))
             .p(look.space(Space::L))
             .child(
-                div()
-                    .text_role(TypeRole::TitleSmall, look)
-                    .text_color(look.palette.strong.hsla())
+                Text::new(TypeRole::TitleSmall)
+                    .tone(Tone::Strong)
                     .child(sheet.title.clone()),
             )
-            .children(sheet.message.clone().map(|message| {
-                div()
-                    .text_role(TypeRole::Meta, look)
-                    .text_color(look.palette.muted.hsla())
-                    .child(message)
-            }))
+            .children(
+                sheet
+                    .message
+                    .clone()
+                    .map(|message| Text::new(TypeRole::Meta).tone(Tone::Muted).child(message)),
+            )
             .children(sheet.fields.iter().map(|(name, state)| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(look.space(Space::Xs))
+                Stack::column()
+                    .space(Space::Xs)
                     .child(
-                        div()
-                            .text_role(TypeRole::Fine, look)
-                            .text_color(look.palette.ink.hsla())
+                        Text::new(TypeRole::Fine)
+                            .tone(Tone::Ink)
                             .child(name.clone()),
                     )
                     .child(TextField::new(state))

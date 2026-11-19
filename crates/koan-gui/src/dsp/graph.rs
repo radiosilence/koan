@@ -26,7 +26,8 @@ use koan_runtime::{DspBand, DspBrush, DspPoint, DspResponse};
 
 use super::model::{Commit, Done, Dsp, Ended, GRAPH_RATE, Outcome};
 use crate::components::Segmented;
-use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label, observe_accent};
+use crate::components::Stack;
+use crate::theme::{Look, Space, Tone, TypeRole, label, observe_accent};
 // a stroke's colour, and the default height, given to the chart.
 use koan_kit::raw::{Hsla, px};
 
@@ -671,10 +672,9 @@ impl Render for Graph {
 
         let compact = self.compact;
         let this = cx.weak_entity();
-        div()
+        Stack::column()
+            .space(Space::M)
             .relative()
-            .flex()
-            .flex_col()
             .w_full()
             .when(self.fills, |d| d.h_full())
             .when(!self.fills, |d| {
@@ -689,7 +689,6 @@ impl Render for Graph {
                     .ok();
                 }))
             })
-            .gap(look.space(Space::M))
             .when(measured && !compact, |d| {
                 d.child(
                     Segmented::new(
@@ -715,15 +714,14 @@ impl Render for Graph {
                     .when(self.fills, |d| d.flex().flex_col().flex_1().min_h_0())
                     .child(chart)
                     .children(self.flat_note.clone().filter(|_| !compact).map(|note| {
-                        div()
+                        Stack::row()
+                            .type_role(TypeRole::Meta)
                             .absolute()
                             .top(look.space(Space::Xl))
                             .left_0()
                             .right_0()
-                            .flex()
                             .justify_center()
-                            .text_role(TypeRole::Meta, &look)
-                            .text_color(look.text_color(Tone::Muted))
+                            .tone(Tone::Muted)
                             .child(label(note))
                     })),
             )

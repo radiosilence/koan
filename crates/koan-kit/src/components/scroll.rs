@@ -29,17 +29,27 @@ pub struct ScrollArea {
     handle: Option<ScrollHandle>,
 }
 
+/// The scrolling column, laid out flex-none when spacers stand around it.
+type Column = Box<dyn FnOnce(bool) -> AnyElement>;
+
 enum Content {
-    Column(Box<Div>),
+    Column(Column),
     Items(Vec<AnyElement>),
 }
 
 impl ScrollArea {
     /// `content` is the column that scrolls, styled as the page needs.
-    pub fn new(id: impl Into<ElementId>, content: Div) -> Self {
+    pub fn new(id: impl Into<ElementId>, content: impl IntoElement + Styled + 'static) -> Self {
+        let column: Column = Box::new(move |spaced| {
+            if spaced {
+                content.flex_none().into_any_element()
+            } else {
+                content.into_any_element()
+            }
+        });
         Self {
             id: id.into(),
-            content: Content::Column(Box::new(content)),
+            content: Content::Column(column),
             reveal: None,
             follow: None,
             shrinks: false,
@@ -277,12 +287,12 @@ impl RenderOnce for ScrollArea {
             .child(super::AnimatedLayer::new(
                 &clearing,
                 match self.content {
-                    Content::Column(column) if !spaced => scrolled.child(*column),
+                    Content::Column(column) if !spaced => scrolled.child(column(false)),
                     Content::Column(column) => scrolled
                         .flex()
                         .flex_col()
                         .children(spacer(under_bar))
-                        .child(column.flex_none())
+                        .child(column(true))
                         .children(spacer(under_foot)),
                     // Each item at its own height: a column taller than the
                     // view scrolls, and no item (an empty spacer least of all)

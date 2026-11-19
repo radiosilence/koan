@@ -22,9 +22,10 @@ use crate::components::{
     Button, ButtonKind, FieldState, FormRow, InputEvent, Picker, RowKind, TableRow, TextField,
     Toggle, table_list,
 };
+use crate::components::{Stack, Text};
 use crate::engine::engine;
 use crate::paint::Paint;
-use crate::theme::{KoanStyled, Tone, TypeRole};
+use crate::theme::{Tone, TypeRole};
 
 /// How long typing rests before the plan is checked against the disk.
 const SETTLE: Duration = Duration::from_millis(300);
@@ -593,8 +594,7 @@ impl Render for OrganizeSheet {
         let list = table_list(
             "organize-plan",
             entries,
-            cx.processor(move |this, range: Range<usize>, window, cx| {
-                let p = Paint::of(window, cx);
+            cx.processor(move |this, range: Range<usize>, _window, _cx| {
                 let Some(plan) = &this.plan else {
                     return Vec::new();
                 };
@@ -604,24 +604,21 @@ impl Render for OrganizeSheet {
                         let (said, warns) = outcome(entry);
                         TableRow::new(("organize-row", i), RowKind::Text)
                             .title(
-                                div()
-                                    .text_role(TypeRole::Body, &p.look)
-                                    .text_color(p.ink)
+                                Text::new(TypeRole::Body)
+                                    .tone(Tone::Ink)
                                     .truncate()
                                     .child(entry.to_path.clone().unwrap_or_default()),
                             )
                             .line(
-                                div()
-                                    .text_role(TypeRole::Meta, &p.look)
-                                    .text_color(p.muted)
+                                Text::new(TypeRole::Meta)
+                                    .tone(Tone::Muted)
                                     .truncate()
                                     .child(entry.from_path.clone()),
                             )
                             .figure(
                                 OUTCOME,
-                                div()
-                                    .text_role(TypeRole::Fine, &p.look)
-                                    .text_color(if warns { p.bad } else { p.muted })
+                                Text::new(TypeRole::Fine)
+                                    .tone(if warns { Tone::Bad } else { Tone::Muted })
                                     .truncate()
                                     .child(said),
                             )
@@ -641,7 +638,6 @@ impl Render for OrganizeSheet {
             .child(
                 ask::body("organize-form", look)
                     .flex_none()
-                    .pt(look.space(crate::theme::Space::M))
                     .child(FormRow::new("pattern").control(picker))
                     .child(
                         TextField::new(&self.draft)
@@ -652,10 +648,9 @@ impl Render for OrganizeSheet {
                         let preview = self.save_preview(cx);
                         d.child(
                             FormRow::new("save as").control(
-                                div()
-                                    .flex()
+                                Stack::row()
+                                    .space(crate::theme::Space::S)
                                     .items_center()
-                                    .gap(look.space(crate::theme::Space::S))
                                     .child(
                                         TextField::new(&self.save_name)
                                             .label(crate::theme::label("save as"))

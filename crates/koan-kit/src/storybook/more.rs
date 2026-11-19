@@ -17,6 +17,10 @@ use crate::components::{
     SuggestionHeading, SuggestionPanel, SuggestionRow, SyncedLines, TableRow, TileArt, TileGrid,
     TileSleeve, Viewer, link_action, link_text, name_line, plain_text, table_list,
 };
+use crate::components::{
+    ChainEnd, ChainJoin, ChainLink, ChainSlot, ChainStage, Divider, FieldLead, FieldWidth, Stack,
+    Text, TextField,
+};
 use crate::theme::{HAIRLINE, Icon, KoanStyled, Look, Space, Tone, TypeRole};
 
 /// What the components on these pages hold.
@@ -680,6 +684,99 @@ impl StoryContent {
                         )
                         .into_any_element(),
                     CheckItem::new("story-looking", Check::Looking, "Funnel is allowed")
+                        .into_any_element(),
+                ]
+            }
+            Story::Layout => {
+                let step = |name: &'static str, space: Space| {
+                    Stack::row()
+                        .space(Space::M)
+                        .items_center()
+                        .child(Text::new(TypeRole::Meta).tone(Tone::Muted).child(name))
+                        .child(Stack::row().space(space).children((0..3).map(|_| {
+                            div()
+                                .size(look.space(Space::M))
+                                .bg(look.palette.muted.hsla())
+                        })))
+                };
+                let chain_lit = self.more.choice.is_some();
+                vec![
+                    SectionHeader::new("Stack: the spacing steps").into_any_element(),
+                    Stack::column()
+                        .space(Space::S)
+                        .child(step("xxs", Space::Xxs))
+                        .child(step("xs", Space::Xs))
+                        .child(step("s", Space::S))
+                        .child(step("m", Space::M))
+                        .child(step("l", Space::L))
+                        .child(step("xl", Space::Xl))
+                        .child(step("xxl", Space::Xxl))
+                        .into_any_element(),
+                    SectionHeader::new("Text: roles, tones and a glyph").into_any_element(),
+                    Stack::column()
+                        .space(Space::Xs)
+                        .child(Text::new(TypeRole::Body).tone(Tone::Ink).child("Body, in ink."))
+                        .child(Text::new(TypeRole::Meta).tone(Tone::Muted).child("Meta, muted."))
+                        .child(
+                            Text::new(TypeRole::Fine)
+                                .tone(Tone::Accent)
+                                .icon(Icon::Check)
+                                .child("matched"),
+                        )
+                        .child(
+                            Text::new(TypeRole::Fine)
+                                .tone(Tone::Bad)
+                                .icon(Icon::Warning)
+                                .child("Clips by 2.1 dB at full scale."),
+                        )
+                        .into_any_element(),
+                    SectionHeader::new("Divider").into_any_element(),
+                    Divider::horizontal().into_any_element(),
+                    SectionHeader::new("A measured column").into_any_element(),
+                    Stack::column()
+                        .measure(crate::theme::Measure::Prose)
+                        .child(Text::new(TypeRole::Control).tone(Tone::Muted).child(
+                            "Prose keeps to a reading measure however wide the window: past it a line is too long to follow back to its start, so a biography or a long note wraps here.",
+                        ))
+                        .into_any_element(),
+                    SectionHeader::new("Field widths").into_any_element(),
+                    Stack::row()
+                        .space(Space::M)
+                        .child(TextField::new(&self.more.filter).width(FieldWidth::Figure))
+                        .child(TextField::new(&self.more.filter).width(FieldWidth::Number))
+                        .child(TextField::new(&self.more.filter).width(FieldWidth::Name))
+                        .into_any_element(),
+                    SectionHeader::new("A phone list's leading field").into_any_element(),
+                    FieldLead::new(FilterField::new(&self.more.filter).label("filter").fill())
+                        .into_any_element(),
+                    SectionHeader::new("Chain").into_any_element(),
+                    Stack::column()
+                        .measure(crate::theme::Measure::Page)
+                        .child(ChainEnd::new(Icon::Track, "music in"))
+                        .child(ChainLink::new(chain_lit))
+                        .child(
+                            ChainStage::new("story-stage", "correction", "Sundara (oratory1990)")
+                                .detail(Some("parametric · 10 bands · to Harman over-ear"))
+                                .lit(chain_lit)
+                                .control(
+                                    crate::components::Button::new(
+                                        "story-stage-show",
+                                        crate::components::ButtonKind::Link,
+                                    )
+                                    .label("Show"),
+                                ),
+                        )
+                        .child(
+                            ChainJoin::new(chain_lit).child(
+                                Text::new(TypeRole::Fine)
+                                    .tone(Tone::Accent)
+                                    .icon(Icon::Check)
+                                    .child("matched"),
+                            ),
+                        )
+                        .child(ChainSlot::new("story-slot", "add eq").lit(chain_lit))
+                        .child(ChainLink::new(chain_lit))
+                        .child(ChainEnd::new(Icon::Speaker, "desk dac out"))
                         .into_any_element(),
                 ]
             }

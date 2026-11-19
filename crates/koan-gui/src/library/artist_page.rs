@@ -31,6 +31,8 @@ use super::tile::{Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::components::{Cover, CoverArt, FadeIn, Reveal, RowMetrics, SectionHeading, Spinner};
+use crate::components::{Inset, Stack, Text};
+use crate::theme::Tone;
 use crate::theme::{Motion, Space, TypeRole};
 
 /// A biography longer than this opens clamped, with "more" under it.
@@ -703,7 +705,7 @@ impl ArtistPage {
         scale: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stack {
         let id = self.artist_id;
         let item = Playable::Artist(id);
         let name = record
@@ -752,11 +754,7 @@ impl ArtistPage {
         if let Some(photo) = photo {
             header = header.art(photo);
         }
-        div()
-            .w_full()
-            .pt(RowMetrics::page_top(&p.look))
-            .pb(RowMetrics::header_gap(&p.look))
-            .child(header)
+        Stack::block().page_head().w_full().child(header)
     }
 
     /// The article's opening, under "about" after the records, as the Mac's
@@ -768,12 +766,12 @@ impl ArtistPage {
             if !self.looking_up {
                 return div().into_any_element();
             }
-            return div()
-                .pt(p.space(Space::L))
-                .flex()
+            return Stack::row()
+                .inset_top(Space::L)
+                .space(Space::S)
+                .type_role(Type::Control)
+                .tone(Tone::Muted)
                 .items_center()
-                .gap(p.space(Space::S))
-                .typeset(p, Type::Control, p.muted)
                 .child(Spinner::new(p.look.font_size(TypeRole::Control)))
                 .child("looking up biography…")
                 .into_any_element();
@@ -782,19 +780,19 @@ impl ArtistPage {
         let long = bio.len() > BIO_CLAMP;
         // As wide as the page, up to a reading measure, so it wraps on a
         // phone too.
-        let mut text = div()
+        let mut text = Text::new(Type::Control)
+            .tone(Tone::Muted)
             .w_full()
             .min_w_0()
             .max_w(p.look.spaced(680.0))
-            .typeset(p, Type::Control, p.muted)
             .child(bio.replace('\n', "\n\n"));
         if long && !self.expanded {
             text = text.line_clamp(4);
         }
-        let links = div()
-            .flex()
-            .gap(p.space(Space::M))
-            .typeset(p, Type::Fine, p.muted)
+        let links = Stack::row()
+            .space(Space::M)
+            .type_role(Type::Fine)
+            .tone(Tone::Muted)
             .when(long && !self.expanded, |d| {
                 d.child(
                     div()
@@ -828,11 +826,9 @@ impl ArtistPage {
             .pb(RowMetrics::page_top(&p.look))
             .child(SectionHeading::new("about"))
             .child({
-                let body = div()
+                let body = Stack::column()
+                    .space(Space::S)
                     .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(p.space(Space::S))
                     .child(text)
                     .child(links);
                 if self.bio_arriving {
@@ -1175,19 +1171,16 @@ impl Render for ArtistPage {
         let view = cx.weak_entity();
         // The page's margin is the list's parent's: a list lays its items out
         // across its own bounds and ignores padding of its own.
-        let body = div()
+        let body = Stack::block().page_margins().size_full().child(
+            list(self.list.clone(), move |ix, window, cx| {
+                view.update(cx, |this, cx| this.item(ix, window, cx))
+                    .unwrap_or_else(|_| div().into_any_element())
+            })
             .size_full()
-            .px(RowMetrics::page_margin(&p.look))
-            .child(
-                list(self.list.clone(), move |ix, window, cx| {
-                    view.update(cx, |this, cx| this.item(ix, window, cx))
-                        .unwrap_or_else(|_| div().into_any_element())
-                })
-                .size_full()
-                // Rows are laid out over the bottom padding as the list
-                // scrolls: the last ends clear of a phone's foot.
-                .pb(crate::components::foot_inset(window, cx)),
-            );
+            // Rows are laid out over the bottom padding as the list
+            // scrolls: the last ends clear of a phone's foot.
+            .pb(crate::components::foot_inset(window, cx)),
+        );
 
         self.keyed = self.focus.is_focused(window);
         let len = super::keys::KeyedList::len(self);

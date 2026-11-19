@@ -15,7 +15,8 @@ use super::model::{Dsp, RATES, RoleAsk, Stage, khz};
 use super::sheet::{body, choice_row, content, head, note, panel, section};
 use crate::components::sheet::scrim;
 use crate::components::{Button, ButtonKind, Rise, SectionHeader, TextField};
-use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::components::{Stack, Text};
+use crate::theme::{Look, Space, Tone, TypeRole, label};
 
 pub fn render(dsp: &Entity<Dsp>, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let d = dsp.read(cx);
@@ -84,9 +85,8 @@ fn import_plan(dsp: &Entity<Dsp>, look: &Look, window: &mut Window, cx: &mut App
         .files
         .iter()
         .map(|f| {
-            div()
-                .text_role(TypeRole::Meta, look)
-                .text_color(look.palette.ink.hsla())
+            Text::new(TypeRole::Meta)
+                .tone(Tone::Ink)
                 .child(f.clone())
                 .into_any_element()
         })
@@ -132,7 +132,7 @@ fn rate(dsp: &Entity<Dsp>, look: &Look) -> AnyElement {
                     Tone::Muted,
                     look,
                 ))
-                .child(div().flex().flex_wrap().gap(look.space(Space::M)).children(rates)),
+                .child(Stack::wrapping().space(Space::M).children(rates)),
         )
         .into_any_element()
 }
@@ -191,7 +191,7 @@ fn role(dsp: &Entity<Dsp>, ask: RoleAsk, look: &Look, cx: &App) -> AnyElement {
         .child(head(if many { "What are these EQs?" } else { "What is this EQ?" }, Vec::new(), look))
         .child(
             body("role-body", look)
-                .child(div().text_role(TypeRole::Body, look).text_color(look.palette.ink.hsla()).child(what))
+                .child(Text::new(TypeRole::Body).tone(Tone::Ink).child(what))
                 .children(into.map(|i| note(i, Tone::Muted, look)))
                 .child(choice(
                     "role-correction",

@@ -10,6 +10,7 @@ use crate::components::{
     Button, ButtonKind, CoverArt, DropTarget, INSERTION, KoanContextMenu, ListCursor, Menu,
     MenuEntry, Mosaic, NavHeading, NavNote, NavRow, RowMetrics, ScrollArea, list_actions,
 };
+use crate::components::{Inset, Stack};
 use crate::engine::{command, engine, reported};
 use crate::library::chrome::count;
 use crate::library::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
@@ -441,11 +442,9 @@ impl Render for Sidebar {
         let sleeves = self.sleeves(window, cx);
         // The rows scroll and keep their height when the window is short;
         // the lines at the foot stay put beneath them.
-        let body = div()
-            .flex()
-            .flex_col()
-            .pt(p.space(Space::S))
-            .pb(p.space(Space::S))
+        let body = Stack::column()
+            .inset_top(Space::S)
+            .inset_bottom(Space::S)
             // Files, and what is dragged from the library, dropped on the
             // queue's row are queued.
             .child(

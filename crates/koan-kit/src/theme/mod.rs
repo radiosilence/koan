@@ -31,7 +31,7 @@ pub use accent::{Accent, Shade};
 pub use gpui::Hsla;
 pub use icons::{Icon, KoanIcon};
 pub use tokens::{
-    COMPACT_WIDTH, DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Motion, Palette,
+    COMPACT_WIDTH, DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Measure, Motion, Palette,
     ROW_HOVER_OPACITY, ROW_RULE_OPACITY, Scale, Space, TOOLBAR_BUTTON, TypeRole,
 };
 
@@ -911,6 +911,14 @@ impl Look {
     /// size rather than the spacing.
     pub fn sized(&self, points: f32) -> Pixels {
         px(points * self.scale.size)
+    }
+
+    /// The widest a column of content runs (`Measure`).
+    pub fn measure(&self, measure: Measure) -> Pixels {
+        match measure {
+            Measure::Prose => self.spaced(680.0),
+            Measure::Page => self.sized(720.0),
+        }
     }
 
     /// A type role's size, at the text size.

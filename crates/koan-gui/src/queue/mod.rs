@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use koan_kit::app::*;
 use koan_runtime::{CreditPart, EntryStatus, QueueItem, QueueLock};
 
+use crate::components::Text;
 use crate::components::{
     Availability, AvailabilityMark, Button, ButtonKind, Cover, DragChip, EmptyState, INSERTION,
     IconToggle, KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind,
@@ -33,6 +34,7 @@ use crate::platform::actions::{
     ClearSelection, Delete, EndOfQueue, Redo, SelectAll, TopOfQueue, Undo,
 };
 use crate::platform::drop;
+use crate::theme::Tone;
 use crate::theme::{self, Hsla, Icon, KoanIcon, KoanStyled, TypeRole};
 use crate::window_state;
 use rows::Row;
@@ -1666,8 +1668,7 @@ pub(crate) fn track(
     } else {
         (p.muted, p.muted)
     };
-    let place = div()
-        .text_role(TypeRole::Meta, &p.look)
+    let place = Text::new(TypeRole::Meta)
         .text_color(if playing { p.accent_text } else { place_color })
         .child(rows::track_place(item, numbering.by_disc));
     // A grouped row names its artists only where they differ from the
@@ -1711,14 +1712,13 @@ pub(crate) fn track(
         }
         EntryStatus::Queued | EntryStatus::Downloading => None,
     };
-    let mark = div()
+    let mark = Text::new(TypeRole::Fine)
         .id(look.id("status", 0))
         .when_some(meaning, |d, meaning| {
             d.tooltip(move |window, cx| {
                 crate::components::Tooltip::view(crate::theme::label(meaning), window, cx)
             })
         })
-        .text_role(TypeRole::Fine, &p.look)
         .map(|d| match item.status {
             // Bars in the look that draws glyphs, as the library's rows:
             // moving with what is heard, so they fall with a pause's fade and
@@ -1816,9 +1816,9 @@ pub(crate) fn track(
         )
         .figure(
             CODEC,
-            div()
-                .text_role(TypeRole::Fine, &p.look)
-                .text_color(p.muted)
+            Text::new(TypeRole::Fine)
+                .tone(Tone::Muted)
+                .picked(look.picked)
                 .children(item.codec.as_ref().map(|codec| codec.to_uppercase())),
         )
     })

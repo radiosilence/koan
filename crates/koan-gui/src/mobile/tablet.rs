@@ -12,7 +12,6 @@ use crate::navigator::Route;
 use crate::paint::Paint;
 use crate::sidebar::Sidebar;
 use crate::theme::{self, Space};
-use crate::transport;
 use crate::window_state;
 
 /// Narrower than this the page cannot stand between the sidebar and the
@@ -177,24 +176,11 @@ impl TouchShell {
         );
         let sidebar = self.sidebar(cx);
         let showing = self.sidebar_showing(window);
-        let foot = div()
-            .id("tablet-foot")
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .right_0()
-            .occlude()
-            .pb(insets.bottom)
-            .child(crate::components::Frost::foot())
-            .child(crate::components::foot_probe())
-            .child(
-                self.transport.clone().cached(
-                    StyleRefinement::default()
-                        .w_full()
-                        .h(transport::HEIGHT)
-                        .flex_shrink_0(),
-                ),
-            );
+        let foot = crate::components::ShellFoot::tablet(
+            self.transport
+                .clone()
+                .cached(StyleRefinement::default().size_full()),
+        );
         let lyrics = Slide::new(
             "lyrics-slide",
             &self.lyrics_slide,

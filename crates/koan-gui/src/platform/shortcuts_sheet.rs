@@ -12,9 +12,10 @@ use koan_kit::app::platform::OperatingSystem;
 use koan_kit::app::*;
 
 use crate::components::{Badge, Button, ButtonKind, Rise, sheet};
-use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Look, Space, Tone, TypeRole, label};
 
 use super::actions::{APPLICATION, Group, HOTKEYS, LISTS, MENU, Shortcut, caption};
+use crate::components::{Stack, Text};
 
 actions!(shortcuts_sheet, [Dismiss]);
 
@@ -86,28 +87,24 @@ fn with_modifier(os: OperatingSystem) -> Vec<&'static Shortcut> {
 }
 
 /// One group's column: its title, then each line's keys and what they do.
-fn group_column(group: Group, lines: Vec<Line>, look: &Look) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(look.space(Space::S))
+fn group_column(group: Group, lines: Vec<Line>, look: &Look) -> Stack {
+    Stack::column()
+        .space(Space::S)
         .min_w(look.spaced(210.0))
         .child(sheet::note(label(group.title()), Tone::Muted, look))
         .children(lines.into_iter().enumerate().map(|(row, line)| {
-            div()
-                .flex()
+            Stack::row()
+                .space(Space::S)
                 .items_center()
-                .gap(look.space(Space::S))
-                .child(div().flex().gap(look.space(Space::Xs)).children(
+                .child(Stack::row().space(Space::Xs).children(
                     line.keys.into_iter().enumerate().map(|(k, key)| {
                         Badge::new(key)
                             .key((SharedString::from(format!("{}-{row}", group.title())), k))
                     }),
                 ))
                 .child(
-                    div()
-                        .text_role(TypeRole::Meta, look)
-                        .text_color(look.palette.ink.hsla())
+                    Text::new(TypeRole::Meta)
+                        .tone(Tone::Ink)
                         .child(label(line.label)),
                 )
         }))
@@ -123,17 +120,13 @@ impl Render for ShortcutsSheet {
             "with ctrl"
         };
         let columns = |table: &[&Shortcut]| {
-            div()
-                .flex()
-                .flex_wrap()
-                .gap(look.space(Space::Xl))
-                .children(
-                    Group::ALL
-                        .into_iter()
-                        .map(|group| (group, lines(table, group, os)))
-                        .filter(|(_, lines)| !lines.is_empty())
-                        .map(|(group, lines)| group_column(group, lines, &look)),
-                )
+            Stack::wrapping().space(Space::Xl).children(
+                Group::ALL
+                    .into_iter()
+                    .map(|group| (group, lines(table, group, os)))
+                    .filter(|(_, lines)| !lines.is_empty())
+                    .map(|(group, lines)| group_column(group, lines, &look)),
+            )
         };
         let done = Button::new("shortcuts-sheet-done", ButtonKind::Text)
             .label("done")
@@ -159,7 +152,7 @@ impl Render for ShortcutsSheet {
                     .pt(look.space(Space::L))
                     .gap(look.space(Space::L))
                     .child(columns(&HOTKEYS.iter().chain(LISTS).collect::<Vec<_>>()))
-                    .child(div().h(look.hairline).bg(look.palette.rule.hsla()))
+                    .child(crate::components::Divider::horizontal())
                     .child(sheet::note(modifier, Tone::Muted, &look))
                     .child(columns(&with_modifier(os)))
                     .child(sheet::note(

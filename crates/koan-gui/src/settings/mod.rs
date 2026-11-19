@@ -16,7 +16,7 @@ pub(crate) mod sheet;
 
 use std::sync::Arc;
 
-use crate::theme::{self, Icon, KoanTheme, Look, Space, Tone};
+use crate::theme::{self, Icon, KoanTheme, Look, Tone};
 use koan_kit::app::*;
 use koan_runtime::{ConnectionInfo, KoanEngine};
 
@@ -761,20 +761,15 @@ impl SettingsWindow {
         cx: &mut koan_kit::app::Context<Self>,
     ) -> Stateful<Div> {
         let client = crate::components::draws_decorations(window);
-        let look = Look::of(window, cx);
-        let strip = div()
-            .id("settings-top")
-            .flex()
-            .justify_end()
-            .items_center()
-            .h(crate::components::SecondaryWindow::strip_height())
-            .px(look.space(Space::S));
-        crate::components::moves_window(strip, window, cx).when(client, |strip| {
-            let sheets = self.ctx.sheets.clone();
-            strip.child(crate::components::close_button(move |window, cx| {
-                answer_unanswered(&sheets, window, cx)
-            }))
-        })
+        crate::components::SecondaryWindow::top_strip("settings-top", window, cx).when(
+            client,
+            |strip| {
+                let sheets = self.ctx.sheets.clone();
+                strip.child(crate::components::close_button(move |window, cx| {
+                    answer_unanswered(&sheets, window, cx)
+                }))
+            },
+        )
     }
 }
 

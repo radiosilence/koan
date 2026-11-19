@@ -17,7 +17,9 @@ use super::tile::Grid;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::components::{Cover, CoverArt, RowKind, RowMetrics};
+use crate::components::{Inset, Stack, Text};
 use crate::theme::Space;
+use crate::theme::Tone;
 
 /// A line of the list: a disc's heading, or a track and the number it shows.
 enum Line {
@@ -280,18 +282,18 @@ impl AlbumPage {
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
                 // A heading to a screen reader.
-                return div()
+                return Stack::row()
+                    .inset_bottom(Space::Xs)
+                    .type_role(Type::Fine)
+                    .tone(Tone::Ink)
                     .id(("disc", i))
                     .role(a11y::Role::Heading)
                     .aria_label(title.clone())
                     .aria_level(3)
                     .w_full()
                     .h(height)
-                    .flex()
                     .items_end()
                     .px(RowMetrics::page_margin(&p.look))
-                    .pb(p.space(Space::Xs))
-                    .typeset(p, Type::Fine, p.ink)
                     .child(title.clone())
                     .into_any_element();
             }
@@ -388,45 +390,41 @@ impl AlbumPage {
             }
         }
         let title = album.as_ref().map(|a| a.title.clone()).unwrap_or_default();
-        div()
-            .px(RowMetrics::page_margin(&p.look))
-            .pt(RowMetrics::page_top(&p.look))
-            .pb(RowMetrics::header_gap(&p.look))
-            .child(
-                super::header::playable_header(&self.lib, item, title.clone(), window, cx)
-                    .art(
-                        div()
-                            .id("album-sleeve")
-                            .cursor_pointer()
-                            .tooltip(|window, cx| {
-                                crate::components::Tooltip::view("show artwork".into(), window, cx)
-                            })
-                            .on_click({
-                                let (album_id, credit) = (
-                                    self.album_id,
-                                    album.as_ref().map(|a| {
-                                        SharedString::from(
-                                            a.artist_credit
-                                                .iter()
-                                                .map(|c| c.text.as_str())
-                                                .collect::<String>(),
-                                        )
-                                    }),
-                                );
-                                move |_, window, cx| {
-                                    crate::artwork::show(
-                                        album_id,
-                                        title.clone(),
-                                        credit.clone(),
-                                        window,
-                                        cx,
+        Stack::block().page_margins().page_head().child(
+            super::header::playable_header(&self.lib, item, title.clone(), window, cx)
+                .art(
+                    div()
+                        .id("album-sleeve")
+                        .cursor_pointer()
+                        .tooltip(|window, cx| {
+                            crate::components::Tooltip::view("show artwork".into(), window, cx)
+                        })
+                        .on_click({
+                            let (album_id, credit) = (
+                                self.album_id,
+                                album.as_ref().map(|a| {
+                                    SharedString::from(
+                                        a.artist_credit
+                                            .iter()
+                                            .map(|c| c.text.as_str())
+                                            .collect::<String>(),
                                     )
-                                }
-                            })
-                            .child(Cover::new(CoverArt::from(sleeve), side)),
-                    )
-                    .detail(details),
-            )
+                                }),
+                            );
+                            move |_, window, cx| {
+                                crate::artwork::show(
+                                    album_id,
+                                    title.clone(),
+                                    credit.clone(),
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
+                        .child(Cover::new(CoverArt::from(sleeve), side)),
+                )
+                .detail(details),
+        )
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -510,16 +508,14 @@ impl Render for AlbumPage {
         let entity = cx.entity_id();
         let measure = crate::components::width_probe(width, entity);
         let content = match (self.width.get(), self.gone) {
-            (_, Some(failed)) => div()
+            (_, Some(failed)) => Stack::column()
+                .space(Space::M)
                 .size_full()
-                .flex()
-                .flex_col()
                 .items_center()
                 .justify_center()
-                .gap(p.space(Space::M))
                 .child(
-                    div()
-                        .typeset(p, Type::TitleSmall, p.muted)
+                    Text::new(Type::TitleSmall)
+                        .tone(Tone::Muted)
                         .child(if failed {
                             "couldn't read this album"
                         } else {

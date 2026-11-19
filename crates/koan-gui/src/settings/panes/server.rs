@@ -725,9 +725,8 @@ impl ServerPane {
             rows.push(
                 Row::new("Limit in GB")
                     .control(
-                        div()
-                            .w(look.sized(120.0))
-                            .child(TextField::new(&self.cache_limit)),
+                        TextField::new(&self.cache_limit)
+                            .width(crate::components::FieldWidth::Number),
                     )
                     .into_any_element(),
             );

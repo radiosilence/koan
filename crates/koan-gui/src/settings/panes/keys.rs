@@ -12,6 +12,7 @@ use koan_kit::app::input::InputState;
 use koan_kit::app::*;
 use koan_runtime::{KoanEngine, KoanError};
 
+use crate::components::Stack;
 use crate::settings::Ctx;
 use crate::settings::form::{day, item, section, text};
 use crate::settings::model::describe;
@@ -206,10 +207,7 @@ fn shown_once(kind: Kind, name: String, secret: String) -> Sheet {
         .kept()
         .message("This is the only time it is shown. Copy it into the app now; if it is lost, revoke it and make another.")
         .content(move |look, _, _| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(look.space(Space::S))
+            Stack::column().space(Space::S)
                 .child(text(secret.clone(), TypeRole::Control, Tone::Strong, look))
                 .child(CopyButton::new(
                     "copy-secret",
