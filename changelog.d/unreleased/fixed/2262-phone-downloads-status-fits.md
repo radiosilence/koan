@@ -1,0 +1,1 @@
+- **The downloads page's status on a phone is never cut off.** The column beside each track grows to fit what it says at large text sizes, and a queued download says "waiting", the header saying what for.
