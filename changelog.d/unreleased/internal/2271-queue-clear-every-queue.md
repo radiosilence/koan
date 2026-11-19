@@ -1,0 +1,1 @@
+- **A download-cache clear reaches every download queue in the process.** Each queue reads the tracks still owed instead of the first to wake taking them, which also fixes an intermittently failing test.
