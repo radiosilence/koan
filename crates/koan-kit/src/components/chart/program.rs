@@ -7,7 +7,10 @@
 //! stored as share `s` of its box stands at `A * s + B` of the plot's width
 //! (x) or height (y, from the foot). Tracks 1 to 4 are `Ax`, `Bx`, `Ay` and
 //! `By`; track 0, where a program has data, is the phase between the
-//! keyframe's `from` and `to` rows.
+//! keyframe's `from` and `to` rows. A line or area that scrolls reads
+//! track 5 as a shift added to `Bx`, the share of the plot's width its
+//! samples stand right of their places, and draws a smooth curve through
+//! them rather than straight pieces.
 //!
 //! A mark's quad covers only the part of its frame (the plot, or the plot
 //! grown by the points' reach) the mark can touch until it is laid out
@@ -69,6 +72,37 @@ float koan_chart_find(texture2d<float> image, float4 tile, float n, float4 m, fl
     }
     return lo;
 }
+
+// A monotone cubic's tangent at `b` (Fritsch and Butland): flat at a peak
+// or a trough, so the curve rounds them off without passing beyond them.
+float koan_chart_tangent(float a, float b, float c) {
+    float d0 = b - a;
+    float d1 = c - b;
+    return d0 * d1 <= 0.0 ? 0.0 : 2.0 * d0 * d1 / (d0 + d1);
+}
+
+// Rows `row` and `row + 1` at sample `i`, held at the ends, as drawn.
+float koan_chart_mixed(texture2d<float> image, float4 tile, float n, float i, float phase, float row) {
+    i = clamp(i, 0.0, n - 1.0);
+    float a = koan_chart_read(image, tile, n, 5.0, i, row);
+    float b = koan_chart_read(image, tile, n, 5.0, i, row + 1.0);
+    return a + (b - a) * phase;
+}
+
+// The smooth curve through rows `row` and `row + 1`, `t` of the way from
+// sample `i` to the next: a cubic Hermite piece on monotone tangents.
+float koan_chart_smooth(texture2d<float> image, float4 tile, float n, float i, float t, float phase, float row) {
+    float a = koan_chart_mixed(image, tile, n, i - 1.0, phase, row);
+    float b = koan_chart_mixed(image, tile, n, i, phase, row);
+    float c = koan_chart_mixed(image, tile, n, i + 1.0, phase, row);
+    float d = koan_chart_mixed(image, tile, n, i + 2.0, phase, row);
+    float m1 = koan_chart_tangent(a, b, c);
+    float m2 = koan_chart_tangent(b, c, d);
+    float t2 = t * t;
+    float t3 = t2 * t;
+    return (2.0 * t3 - 3.0 * t2 + 1.0) * b + (t3 - 2.0 * t2 + t) * m1
+        + (3.0 * t2 - 2.0 * t3) * c + (t3 - t2) * m2;
+}
 "#
     };
 }
@@ -123,6 +157,35 @@ fn koan_chart_find(tile: vec4<f32>, n: f32, m: vec4<f32>, size: vec2<f32>, x: f3
 fn koan_chart_axes(u: array<vec4<f32>, 20>, time: f32) -> vec4<f32> {
     return vec4<f32>(koan_track(u, 1u, time), koan_track(u, 2u, time), koan_track(u, 3u, time), koan_track(u, 4u, time));
 }
+
+fn koan_chart_tangent(a: f32, b: f32, c: f32) -> f32 {
+    let d0 = b - a;
+    let d1 = c - b;
+    if (d0 * d1 <= 0.0) {
+        return 0.0;
+    }
+    return 2.0 * d0 * d1 / (d0 + d1);
+}
+
+fn koan_chart_mixed(tile: vec4<f32>, n: f32, i: f32, phase: f32, row: f32) -> f32 {
+    let j = clamp(i, 0.0, n - 1.0);
+    let a = koan_chart_read(tile, n, 5.0, j, row);
+    let b = koan_chart_read(tile, n, 5.0, j, row + 1.0);
+    return a + (b - a) * phase;
+}
+
+fn koan_chart_smooth(tile: vec4<f32>, n: f32, i: f32, t: f32, phase: f32, row: f32) -> f32 {
+    let a = koan_chart_mixed(tile, n, i - 1.0, phase, row);
+    let b = koan_chart_mixed(tile, n, i, phase, row);
+    let c = koan_chart_mixed(tile, n, i + 1.0, phase, row);
+    let d = koan_chart_mixed(tile, n, i + 2.0, phase, row);
+    let m1 = koan_chart_tangent(a, b, c);
+    let m2 = koan_chart_tangent(b, c, d);
+    let t2 = t * t;
+    let t3 = t2 * t;
+    return (2.0 * t3 - 3.0 * t2 + 1.0) * b + (t3 - 2.0 * t2 + t) * m1
+        + (3.0 * t2 - 2.0 * t3) * c + (t3 - t2) * m2;
+}
 "#
     };
 }
@@ -162,7 +225,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 /// A series' line. Uniforms: 0..4 the colour, 4 half the stroke's width
 /// and 6 the line's whole length, both in device pixels, 5 the samples;
 /// 8..12 the dash, on and off lengths in device pixels (all zero for a
-/// solid line). Rows 3 and 4 hold how far along the line each sample is,
+/// solid line), 7 whether it is drawn smooth. Rows 3 and 4 hold how far along the line each sample is,
 /// as a share of its whole length.
 pub static LINE: ShaderProgram = ShaderProgram {
     name: "koan-chart-line",
@@ -175,7 +238,7 @@ float4 koan_chart_mark(float2 position, float2 size, float time, constant float 
         return float4(0.0);
     }
     float phase = koan_track(u, 0, time);
-    float4 m = float4(koan_track(u, 1, time), koan_track(u, 2, time), koan_track(u, 3, time), koan_track(u, 4, time));
+    float4 m = float4(koan_track(u, 1, time), koan_track(u, 2, time) + koan_track(u, 5, time), koan_track(u, 3, time), koan_track(u, 4, time));
     float half_width = u[4];
     float reach = half_width + 1.0;
     if (koan_chart_x(image, tile, n, 0.0, m, size) > position.x + reach
@@ -195,13 +258,25 @@ float4 koan_chart_mark(float2 position, float2 size, float time, constant float 
         }
         float2 b = koan_chart_at(image, tile, n, j, phase, m, size);
         float arc_b = period > 0.0 ? koan_chart_aux(image, tile, n, j, phase) * u[6] : 0.0;
-        float2 ab = b - a;
-        float len2 = dot(ab, ab);
-        float t = len2 > 0.0 ? clamp(dot(position - a, ab) / len2, 0.0, 1.0) : 0.0;
-        float d = length(position - (a + ab * t));
-        if (d < best) {
-            best = d;
-            along = arc_a + (arc_b - arc_a) * t;
+        // A smooth line is followed in four straight pieces a sample.
+        int pieces = u[7] > 0.5 ? 4 : 1;
+        float2 p = a;
+        for (int piece = 1; piece <= pieces; piece++) {
+            float2 q = b;
+            if (pieces > 1) {
+                float tt = float(piece) / float(pieces);
+                float y = koan_chart_smooth(image, tile, n, j - 1.0, tt, phase, 1.0);
+                q = float2(a.x + (b.x - a.x) * tt, (1.0 - (m.z * y + m.w)) * size.y);
+            }
+            float2 pq = q - p;
+            float len2 = dot(pq, pq);
+            float t = len2 > 0.0 ? clamp(dot(position - p, pq) / len2, 0.0, 1.0) : 0.0;
+            float d = length(position - (p + pq * t));
+            if (d < best) {
+                best = d;
+                along = arc_a + (arc_b - arc_a) * (float(piece - 1) + t) / float(pieces);
+            }
+            p = q;
         }
         a = b;
         arc_a = arc_b;
@@ -231,7 +306,8 @@ fn koan_chart_mark(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec
         return vec4<f32>(0.0);
     }
     let phase = koan_track(u, 0u, time);
-    let m = koan_chart_axes(u, time);
+    var m = koan_chart_axes(u, time);
+    m.y = m.y + koan_track(u, 5u, time);
     let half_width = u[1].x;
     let reach = half_width + 1.0;
     if (koan_chart_x(tile, n, 0.0, m, size) > position.x + reach
@@ -258,16 +334,30 @@ fn koan_chart_mark(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec
         if (period > 0.0) {
             arc_b = koan_chart_aux(tile, n, j, phase) * u[1].z;
         }
-        let ab = b - a;
-        let len2 = dot(ab, ab);
-        var t = 0.0;
-        if (len2 > 0.0) {
-            t = clamp(dot(position - a, ab) / len2, 0.0, 1.0);
+        var pieces = 1;
+        if (u[1].w > 0.5) {
+            pieces = 4;
         }
-        let d = length(position - (a + ab * t));
-        if (d < best) {
-            best = d;
-            along = arc_a + (arc_b - arc_a) * t;
+        var p = a;
+        for (var piece = 1; piece <= pieces; piece++) {
+            var q = b;
+            if (pieces > 1) {
+                let tt = f32(piece) / f32(pieces);
+                let y = koan_chart_smooth(tile, n, j - 1.0, tt, phase, 1.0);
+                q = vec2<f32>(a.x + (b.x - a.x) * tt, (1.0 - (m.z * y + m.w)) * size.y);
+            }
+            let pq = q - p;
+            let len2 = dot(pq, pq);
+            var t = 0.0;
+            if (len2 > 0.0) {
+                t = clamp(dot(position - p, pq) / len2, 0.0, 1.0);
+            }
+            let d = length(position - (p + pq * t));
+            if (d < best) {
+                best = d;
+                along = arc_a + (arc_b - arc_a) * (f32(piece - 1) + t) / f32(pieces);
+            }
+            p = q;
         }
         a = b;
         arc_a = arc_b;
@@ -296,7 +386,7 @@ fn koan_chart_mark(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec
 };
 
 /// A series' area, from its line to a baseline. Uniforms: 0..4 the
-/// colour, 5 the samples, 6 whether the baseline is the image's rows 3 and
+/// colour, 4 whether its edges are drawn smooth, 5 the samples, 6 whether the baseline is the image's rows 3 and
 /// 4 (another line) rather than 7, a share of the y box (a level).
 pub static AREA: ShaderProgram = ShaderProgram {
     name: "koan-chart-area",
@@ -309,7 +399,7 @@ float4 koan_chart_mark(float2 position, float2 size, float time, constant float 
         return float4(0.0);
     }
     float phase = koan_track(u, 0, time);
-    float4 m = float4(koan_track(u, 1, time), koan_track(u, 2, time), koan_track(u, 3, time), koan_track(u, 4, time));
+    float4 m = float4(koan_track(u, 1, time), koan_track(u, 2, time) + koan_track(u, 5, time), koan_track(u, 3, time), koan_track(u, 4, time));
     if (position.x < koan_chart_x(image, tile, n, 0.0, m, size)
         || position.x > koan_chart_x(image, tile, n, n - 1.0, m, size)) {
         return float4(0.0);
@@ -319,11 +409,17 @@ float4 koan_chart_mark(float2 position, float2 size, float time, constant float 
     float2 b = koan_chart_at(image, tile, n, i + 1.0, phase, m, size);
     float t = b.x > a.x ? clamp((position.x - a.x) / (b.x - a.x), 0.0, 1.0) : 0.0;
     float line = a.y + (b.y - a.y) * t;
+    if (u[4] > 0.5) {
+        float y = koan_chart_smooth(image, tile, n, i, t, phase, 1.0);
+        line = (1.0 - (m.z * y + m.w)) * size.y;
+    }
     float base_share = u[7];
     if (u[6] > 0.5) {
         float b0 = koan_chart_aux(image, tile, n, i, phase);
         float b1 = koan_chart_aux(image, tile, n, i + 1.0, phase);
-        base_share = b0 + (b1 - b0) * t;
+        base_share = u[4] > 0.5
+            ? koan_chart_smooth(image, tile, n, i, t, phase, 3.0)
+            : b0 + (b1 - b0) * t;
     }
     float base = (1.0 - (m.z * base_share + m.w)) * size.y;
     float top = min(line, base);
@@ -346,7 +442,8 @@ fn koan_chart_mark(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec
         return vec4<f32>(0.0);
     }
     let phase = koan_track(u, 0u, time);
-    let m = koan_chart_axes(u, time);
+    var m = koan_chart_axes(u, time);
+    m.y = m.y + koan_track(u, 5u, time);
     if (position.x < koan_chart_x(tile, n, 0.0, m, size)
         || position.x > koan_chart_x(tile, n, n - 1.0, m, size)) {
         return vec4<f32>(0.0);
@@ -358,12 +455,20 @@ fn koan_chart_mark(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec
     if (b.x > a.x) {
         t = clamp((position.x - a.x) / (b.x - a.x), 0.0, 1.0);
     }
-    let line = a.y + (b.y - a.y) * t;
+    var line = a.y + (b.y - a.y) * t;
+    if (u[1].x > 0.5) {
+        let y = koan_chart_smooth(tile, n, i, t, phase, 1.0);
+        line = (1.0 - (m.z * y + m.w)) * size.y;
+    }
     var base_share = u[1].w;
     if (u[1].z > 0.5) {
-        let b0 = koan_chart_aux(tile, n, i, phase);
-        let b1 = koan_chart_aux(tile, n, i + 1.0, phase);
-        base_share = b0 + (b1 - b0) * t;
+        if (u[1].x > 0.5) {
+            base_share = koan_chart_smooth(tile, n, i, t, phase, 3.0);
+        } else {
+            let b0 = koan_chart_aux(tile, n, i, phase);
+            let b1 = koan_chart_aux(tile, n, i + 1.0, phase);
+            base_share = b0 + (b1 - b0) * t;
+        }
     }
     let base = (1.0 - (m.z * base_share + m.w)) * size.y;
     let top = min(line, base);

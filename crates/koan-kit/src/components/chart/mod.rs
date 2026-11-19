@@ -13,8 +13,11 @@
 //!   from one to the other: eased (`DataMotion::Ease`), interpolated over a
 //!   sample interval and so drawn one sample behind (`DataMotion::Interpolate`),
 //!   or drawn current and carried on along its last rate until the next
-//!   sample corrects it (`DataMotion::Extrapolate`). Samples arriving at their
-//!   own rate are drawn at the display's.
+//!   sample corrects it (`DataMotion::Extrapolate`), or, for a series that
+//!   takes one new sample at its right and drops its oldest, slid left by a
+//!   sample over the interval as the newest enters from the right edge
+//!   (`DataMotion::Scroll`). Samples arriving at their own rate are drawn at
+//!   the display's.
 //! - **Axes.** A range change eases each axis's affine map; every mark
 //!   reads it as tracks, so the series, the grid, the points and the labels
 //!   move together with no frame drawn.
@@ -67,6 +70,15 @@ pub enum DataMotion {
     /// A sample every interval, drawn as it lands and carried on along the
     /// rate of the last two for one more interval; the next corrects it.
     Extrapolate(Duration),
+    /// A sample every interval, evenly spaced in x, the newest at the right
+    /// and the oldest dropped off the left, against an x axis that stays
+    /// put: each new set slides the whole series left by one sample,
+    /// linearly over the interval, as the newest enters from the right
+    /// edge, rather than easing each value to its neighbour's. A series
+    /// shorter than the axis stands at its right. Drawn as a smooth curve
+    /// through the samples that rounds peaks off without passing beyond
+    /// them.
+    Scroll(Duration),
 }
 
 impl Default for DataMotion {
@@ -1063,9 +1075,9 @@ impl State {
             if changed {
                 let n = series.xs.len().min(series.ys.len());
                 let picked = decimated(n, w * scale);
-                let xs: Vec<f64> = picked.iter().map(|&i| xt(series.xs[i])).collect();
-                let ys: Vec<f64> = picked.iter().map(|&i| yt(series.ys[i])).collect();
-                let base: Vec<f64> = match &base_line {
+                let mut xs: Vec<f64> = picked.iter().map(|&i| xt(series.xs[i])).collect();
+                let mut ys: Vec<f64> = picked.iter().map(|&i| yt(series.ys[i])).collect();
+                let mut base: Vec<f64> = match &base_line {
                     Some(b) => picked
                         .iter()
                         .map(|&i| yt(b.get(i).copied().unwrap_or(0.0)))
@@ -1083,11 +1095,31 @@ impl State {
                     _ if first || !motion => (DataMotion::Instant, Duration::ZERO),
                     m @ (DataMotion::Ease(d)
                     | DataMotion::Interpolate(d)
-                    | DataMotion::Extrapolate(d)) => (m, d),
+                    | DataMotion::Extrapolate(d)
+                    | DataMotion::Scroll(d)) => (m, d),
                     DataMotion::Instant => (DataMotion::Instant, Duration::ZERO),
                 };
+                // A scrolling series stands a sample right of its places and
+                // slides back to them. The oldest sample the last set drew, if
+                // this one dropped it, stands a sample left of its first and
+                // slides out past the plot's left edge.
+                let mut shift = 0.0;
+                if matches!(motion_kind, DataMotion::Scroll(_))
+                    && xs.len() >= 2
+                    && let (Some(&ox), Some(&oy)) = (s.source.0.first(), s.source.1.first())
+                {
+                    let step = xs[1] - xs[0];
+                    let ox = xt(ox);
+                    if ox - step < xs[0] - step * 0.5 {
+                        let ob = s.source.2.as_ref().and_then(|b| b.first().copied());
+                        xs.insert(0, ox - step);
+                        ys.insert(0, yt(oy));
+                        base.insert(0, ob.map_or(0.0, yt));
+                    }
+                    shift = (xmap.unit(xs[0] + step) - xmap.unit(xs[0])) as f32;
+                }
                 let from: Vec<f64> = match motion_kind {
-                    DataMotion::Instant => ys.clone(),
+                    DataMotion::Instant | DataMotion::Scroll(_) => ys.clone(),
                     DataMotion::Extrapolate(_) => {
                         xs.iter().map(|x| sample(&old.xs, &old.to, *x)).collect()
                     }
@@ -1098,7 +1130,7 @@ impl State {
                 };
                 let base_from: Vec<f64> = match motion_kind {
                     _ if base_line.is_none() => base.clone(),
-                    DataMotion::Instant => base.clone(),
+                    DataMotion::Instant | DataMotion::Scroll(_) => base.clone(),
                     DataMotion::Extrapolate(_) => xs
                         .iter()
                         .map(|x| sample(&old.xs, &old.aux_to, *x))
@@ -1128,6 +1160,18 @@ impl State {
                     DataMotion::Extrapolate(_) => {
                         s.animated
                             .segment(0, 1.0, 2.0, now, interval, Ease::Linear, Repeat::Once)
+                    }
+                    DataMotion::Scroll(_) => {
+                        s.animated.hold(0, 1.0);
+                        s.animated.segment(
+                            5,
+                            shift,
+                            0.0,
+                            now,
+                            interval,
+                            Ease::Linear,
+                            Repeat::Once,
+                        );
                     }
                 }
                 s.source = (series.xs.clone(), series.ys.clone(), base_line.clone());
@@ -1208,24 +1252,35 @@ impl State {
             s.animated.set_color(0, color);
             let n = s.keyframe.len() as f32;
             let k = &s.keyframe;
-            let resting: Vec<Point<Pixels>> =
-                k.xs.iter()
-                    .zip(&k.to)
-                    .map(|(x, y)| {
-                        point(
-                            plot.origin.x + px(xmap.unit(*x) as f32 * w),
-                            plot.origin.y + px((1.0 - ymap.unit(*y) as f32) * h),
-                        )
-                    })
-                    .collect();
+            let smooth = matches!(series.motion, DataMotion::Scroll(_));
+            let at = |(x, y): (f64, f64)| {
+                point(
+                    plot.origin.x + px(xmap.unit(x) as f32 * w),
+                    plot.origin.y + px((1.0 - ymap.unit(y) as f32) * h),
+                )
+            };
+            let path = |ys: &[f64]| -> Vec<Point<Pixels>> {
+                if smooth {
+                    data::smooth(&k.xs, ys, 4).into_iter().map(at).collect()
+                } else {
+                    k.xs.iter()
+                        .copied()
+                        .zip(ys.iter().copied())
+                        .map(at)
+                        .collect()
+                }
+            };
+            let resting = path(&k.to);
             let fallback = match &series.mark {
                 Mark::Line { width, dash } => {
                     let mut d = [0.0f32; 4];
                     for (slot, v) in d.iter_mut().zip(dash) {
                         *slot = v * scale;
                     }
-                    s.animated
-                        .set_all(4, &[width * scale / 2.0, n, total as f32]);
+                    s.animated.set_all(
+                        4,
+                        &[width * scale / 2.0, n, total as f32, smooth as u8 as f32],
+                    );
                     s.animated.set_all(8, &d);
                     Fallback::Line(
                         resting,
@@ -1239,7 +1294,7 @@ impl State {
                         Base::Level(v) => (0.0, yspan.share(yt(*v)) as f32),
                         Base::Line(_) => (1.0, 0.0),
                     };
-                    s.animated.set_all(5, &[n, row, level]);
+                    s.animated.set_all(4, &[smooth as u8 as f32, n, row, level]);
                     let mut polygon = resting.clone();
                     match base {
                         Base::Level(v) => {
@@ -1249,14 +1304,7 @@ impl State {
                                 polygon.push(point(first.x, y));
                             }
                         }
-                        Base::Line(_) => {
-                            for (x, y) in k.xs.iter().zip(&k.aux_to).rev() {
-                                polygon.push(point(
-                                    plot.origin.x + px(xmap.unit(*x) as f32 * w),
-                                    plot.origin.y + px((1.0 - ymap.unit(*y) as f32) * h),
-                                ));
-                            }
-                        }
+                        Base::Line(_) => polygon.extend(path(&k.aux_to).into_iter().rev()),
                     }
                     Fallback::Area(polygon, color)
                 }
@@ -1264,8 +1312,12 @@ impl State {
             // Until it is laid out again the mark stays within its spans
             // under every map the axes pass through, and an area to a level
             // only where it leaves the level. A series carried on past its
-            // samples can go anywhere.
-            let bounds = if matches!(series.motion, DataMotion::Extrapolate(_)) {
+            // samples can go anywhere, and a scrolling one stands partly past
+            // the plot's edges.
+            let bounds = if matches!(
+                series.motion,
+                DataMotion::Extrapolate(_) | DataMotion::Scroll(_)
+            ) {
                 plot
             } else {
                 let grow = match &series.mark {

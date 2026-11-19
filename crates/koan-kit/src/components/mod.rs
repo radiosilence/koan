@@ -53,6 +53,7 @@ mod list_keys;
 mod lists;
 mod lyrics;
 mod menu;
+mod meter;
 mod metrics;
 mod page;
 mod panel;
@@ -163,6 +164,7 @@ pub use lists::{
 };
 pub use lyrics::{LYRICS, SyncedLines};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot, on_menu_focus_lost};
+pub use meter::Meter;
 pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
