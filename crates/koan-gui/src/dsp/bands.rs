@@ -423,20 +423,14 @@ pub fn table<V: 'static>(
     }
     for (position, (index, band)) in shown.into_iter().enumerate() {
         let kind = kinds.iter().find(|k| k.id == band.kind);
-        let number = div()
-            .text_color(look.text_color(Tone::Muted))
-            .child(format!("{}", position + 1));
+        let number = Text::in_tone(Tone::Muted).child(format!("{}", position + 1));
         let summary = || {
             div()
                 .w_full()
                 .flex()
                 .justify_between()
                 .child(kind_name(band, &kinds))
-                .child(
-                    div()
-                        .text_color(look.text_color(Tone::Muted))
-                        .child(values(band)),
-                )
+                .child(Text::in_tone(Tone::Muted).child(values(band)))
         };
         let row = DenseRow::new().cell(number);
         let row = match (kind, read_only) {
@@ -536,11 +530,7 @@ pub fn points<V: 'static>(
             .enumerate()
             .map(|(i, _): (usize, &DspPoint)| {
                 DenseRow::new()
-                    .cell(
-                        div()
-                            .text_color(look.text_color(Tone::Muted))
-                            .child(format!("{}", i + 1)),
-                    )
+                    .cell(Text::in_tone(Tone::Muted).child(format!("{}", i + 1)))
                     .cell(div())
                     .cell(fields.field(index, Part::PointHz(i), band, stamp, window, cx))
                     .cell(fields.field(index, Part::PointDb(i), band, stamp, window, cx))

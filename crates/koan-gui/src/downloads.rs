@@ -27,7 +27,7 @@ use crate::mirror::{Mirror, Slice};
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::theme::Tone;
-use crate::theme::{Icon, KoanStyled, TypeRole};
+use crate::theme::{Icon, TypeRole};
 use crate::time::bytes;
 
 /// The status column's width, in points: "12.3 MB/s · 45.6 MB of 78.9 MB".

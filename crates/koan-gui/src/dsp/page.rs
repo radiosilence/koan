@@ -535,7 +535,7 @@ impl Render for EqBody {
                 // The page's width, at most the column's: narrower content,
                 // a phone's, wraps and cuts to it rather than running off.
                 .measure(Measure::Page)
-                .inset(Space::Xl)
+                .inset_all(Space::Xl)
                 .child(content)
                 .child(foot),
         )

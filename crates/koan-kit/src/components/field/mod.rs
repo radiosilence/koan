@@ -56,6 +56,29 @@ pub struct TextField {
     disabled: bool,
     role: TypeRole,
     label: Option<SharedString>,
+    width: Option<FieldWidth>,
+}
+
+/// How wide a field is drawn for what it takes, on the size scale so it
+/// grows with the text; without one it takes the width it is given.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldWidth {
+    /// A short figure: a year. 64 points.
+    Figure,
+    /// A number of a few digits: a port, a size. 120 points.
+    Number,
+    /// A name: a username. 200 points.
+    Name,
+}
+
+impl FieldWidth {
+    fn points(self) -> f32 {
+        match self {
+            FieldWidth::Figure => 64.0,
+            FieldWidth::Number => 120.0,
+            FieldWidth::Name => 200.0,
+        }
+    }
 }
 
 impl TextField {
@@ -67,7 +90,14 @@ impl TextField {
             disabled: false,
             role: TypeRole::Control,
             label: None,
+            width: None,
         }
+    }
+
+    /// Drawn as wide as what it takes (`FieldWidth`).
+    pub fn width(mut self, width: FieldWidth) -> Self {
+        self.width = Some(width);
+        self
     }
 
     /// What a screen reader names it, where no visible label beside it
@@ -127,6 +157,9 @@ impl RenderOnce for TextField {
             .flex()
             .items_center()
             .min_w_0()
+            .when_some(self.width, |field, width| {
+                field.w(look.sized(width.points())).flex_none()
+            })
             .when(self.ground, |field| {
                 field
                     .px(look.space(Space::M))

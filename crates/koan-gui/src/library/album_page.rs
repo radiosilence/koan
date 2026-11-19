@@ -390,45 +390,41 @@ impl AlbumPage {
             }
         }
         let title = album.as_ref().map(|a| a.title.clone()).unwrap_or_default();
-        div()
-            .px(RowMetrics::page_margin(&p.look))
-            .pt(RowMetrics::page_top(&p.look))
-            .pb(RowMetrics::header_gap(&p.look))
-            .child(
-                super::header::playable_header(&self.lib, item, title.clone(), window, cx)
-                    .art(
-                        div()
-                            .id("album-sleeve")
-                            .cursor_pointer()
-                            .tooltip(|window, cx| {
-                                crate::components::Tooltip::view("show artwork".into(), window, cx)
-                            })
-                            .on_click({
-                                let (album_id, credit) = (
-                                    self.album_id,
-                                    album.as_ref().map(|a| {
-                                        SharedString::from(
-                                            a.artist_credit
-                                                .iter()
-                                                .map(|c| c.text.as_str())
-                                                .collect::<String>(),
-                                        )
-                                    }),
-                                );
-                                move |_, window, cx| {
-                                    crate::artwork::show(
-                                        album_id,
-                                        title.clone(),
-                                        credit.clone(),
-                                        window,
-                                        cx,
+        Stack::block().page_margins().page_head().child(
+            super::header::playable_header(&self.lib, item, title.clone(), window, cx)
+                .art(
+                    div()
+                        .id("album-sleeve")
+                        .cursor_pointer()
+                        .tooltip(|window, cx| {
+                            crate::components::Tooltip::view("show artwork".into(), window, cx)
+                        })
+                        .on_click({
+                            let (album_id, credit) = (
+                                self.album_id,
+                                album.as_ref().map(|a| {
+                                    SharedString::from(
+                                        a.artist_credit
+                                            .iter()
+                                            .map(|c| c.text.as_str())
+                                            .collect::<String>(),
                                     )
-                                }
-                            })
-                            .child(Cover::new(CoverArt::from(sleeve), side)),
-                    )
-                    .detail(details),
-            )
+                                }),
+                            );
+                            move |_, window, cx| {
+                                crate::artwork::show(
+                                    album_id,
+                                    title.clone(),
+                                    credit.clone(),
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
+                        .child(Cover::new(CoverArt::from(sleeve), side)),
+                )
+                .detail(details),
+        )
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {

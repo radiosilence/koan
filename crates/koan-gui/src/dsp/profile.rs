@@ -22,12 +22,10 @@ use super::page::thumb;
 use super::sheet::{Confirm, Sheets, body, content, head, head_data, note, section};
 use super::stage::target_label;
 use crate::components::{
-    Badge, Button, ButtonKind, Clear, FormRow, Inset, ScrollArea, SectionHeader, Segmented, Stack,
-    Text, TextField, Toggle, system_insets,
+    Badge, Button, ButtonKind, Clear, FormRow, Inset, SectionHeader, Segmented, Stack, Text,
+    TextField, Toggle, system_insets,
 };
-use crate::theme::{
-    Icon, KoanIcon, KoanStyled, KoanTheme, Look, Motion, Space, Tone, TypeRole, label,
-};
+use crate::theme::{Icon, KoanIcon, KoanTheme, Look, Motion, Space, Tone, TypeRole, label};
 
 /// A profile's sheet: its name and Done, the graph, which stays in view
 /// while the bands scroll under it, and the body, drawn by `ProfileBody` as
@@ -1840,7 +1838,7 @@ pub fn target_groups(
 
 /// What a profile is for, in a line each: the headphone the chain corrects
 /// and how, and the tuning on top.
-fn summary(d: &DspProfileDetail, look: &Look) -> AnyElement {
+fn summary(d: &DspProfileDetail, _look: &Look) -> AnyElement {
     let line = |role: DspRole, text: String, muted: bool| {
         Stack::row()
             .items_baseline()

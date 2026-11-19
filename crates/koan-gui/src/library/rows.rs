@@ -23,7 +23,7 @@ use crate::components::Text;
 use crate::components::{
     AvailabilityMark, Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow,
 };
-use crate::theme::{KoanStyled, TypeRole};
+use crate::theme::TypeRole;
 
 /// A row of one line: the title alone.
 pub fn height(p: &Paint) -> Pixels {

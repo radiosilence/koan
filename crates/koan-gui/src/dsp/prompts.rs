@@ -16,7 +16,7 @@ use super::sheet::{body, choice_row, content, head, note, panel, section};
 use crate::components::sheet::scrim;
 use crate::components::{Button, ButtonKind, Rise, SectionHeader, TextField};
 use crate::components::{Stack, Text};
-use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Look, Space, Tone, TypeRole, label};
 
 pub fn render(dsp: &Entity<Dsp>, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let d = dsp.read(cx);

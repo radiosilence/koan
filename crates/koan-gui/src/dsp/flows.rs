@@ -18,7 +18,7 @@ use super::sheet::{Confirm, Sheets, body, choice_row, content, head, head_data, 
 use super::stage::target_label;
 use crate::components::{Button, ButtonKind, EmptyState, FormRow, Segmented, TextField};
 use crate::components::{Stack, Text};
-use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Icon, KoanIcon, Look, Space, Tone, TypeRole, label};
 
 /// The output in use, recognised by its name as a headphone AutoEQ has
 /// measured, or roughly so: its profile, or a search for its model. Offered

@@ -339,9 +339,8 @@ impl Render for PeoplePane {
         let role = self.role;
         rows.push(buttons(
             vec![
-                div()
-                    .w(look.sized(200.0))
-                    .child(TextField::new(&self.username))
+                TextField::new(&self.username)
+                    .width(crate::components::FieldWidth::Name)
                     .into_any_element(),
                 Picker::new(
                     "new-role",

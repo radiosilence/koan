@@ -25,7 +25,7 @@ use crate::components::{
 use crate::components::{Stack, Text};
 use crate::engine::engine;
 use crate::paint::Paint;
-use crate::theme::{KoanStyled, Tone, TypeRole};
+use crate::theme::{Tone, TypeRole};
 
 /// How long typing rests before the plan is checked against the disk.
 const SETTLE: Duration = Duration::from_millis(300);

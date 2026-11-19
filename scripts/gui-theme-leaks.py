@@ -39,9 +39,9 @@ KINDS = {
     # their spacing; a page that needs another says so through an option.
     "spacing": re.compile(r"\.(gap|gap_x|gap_y|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr)\("),
     # A size or a place set by the page.
-    "size": re.compile(r"\.(w|h|min_w|min_h|max_w|max_h|size|top|left|right|bottom)\("),
+    "size": re.compile(r"\.(w|h|min_w|min_h|max_w|max_h|size|top|left|right|bottom)\((?!\))"),
     # A colour or a type role applied by the page rather than a component.
-    "style": re.compile(r"\.(text_color|bg|border_color|text_role)\("),
+    "style": re.compile(r"\.(text_color|bg|border_color|text_role|typeset)\("),
     # Containers built from parts: a page's title, a toolbar's button.
     "container": re.compile(r"\b(TypeRole|Type)::Title\b|ButtonKind::Toolbar\b"),
     # GPUI named directly rather than through koan-kit.

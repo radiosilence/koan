@@ -8,7 +8,7 @@ use std::rc::Rc;
 use crate::components::{Button, ButtonKind, TextField};
 use crate::components::{Inset, Stack, Text};
 use crate::theme::Tone;
-use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
+use crate::theme::{Look, Space, TypeRole, label};
 use koan_kit::app::input::{InputEvent, InputState, TextContentType};
 use koan_kit::app::*;
 

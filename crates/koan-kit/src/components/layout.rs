@@ -21,10 +21,39 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Measure, Space, Tone, TypeR
 pub struct Spacing {
     gap: Option<Space>,
     measure: Option<Measure>,
-    top: Option<Space>,
-    right: Option<Space>,
-    bottom: Option<Space>,
-    left: Option<Space>,
+    top: Option<Step>,
+    right: Option<Step>,
+    bottom: Option<Step>,
+    left: Option<Step>,
+}
+
+/// An inset: a step of the scale, or one of a page's metrics.
+#[derive(Clone, Copy)]
+enum Step {
+    Space(Space),
+    /// `RowMetrics::page_margin`.
+    PageMargin,
+    /// `RowMetrics::page_top`.
+    PageTop,
+    /// `RowMetrics::header_gap`.
+    HeaderGap,
+}
+
+impl Step {
+    fn of(self, look: &Look) -> Pixels {
+        match self {
+            Step::Space(space) => look.space(space),
+            Step::PageMargin => super::RowMetrics::page_margin(look),
+            Step::PageTop => super::RowMetrics::page_top(look),
+            Step::HeaderGap => super::RowMetrics::header_gap(look),
+        }
+    }
+}
+
+impl From<Space> for Step {
+    fn from(space: Space) -> Self {
+        Step::Space(space)
+    }
 }
 
 impl Spacing {
@@ -36,16 +65,16 @@ impl Spacing {
             div = div.w_full().min_w_0().max_w(look.measure(measure));
         }
         if let Some(top) = self.top {
-            div = div.pt(look.space(top));
+            div = div.pt(top.of(look));
         }
         if let Some(right) = self.right {
-            div = div.pr(look.space(right));
+            div = div.pr(right.of(look));
         }
         if let Some(bottom) = self.bottom {
-            div = div.pb(look.space(bottom));
+            div = div.pb(bottom.of(look));
         }
         if let Some(left) = self.left {
-            div = div.pl(look.space(left));
+            div = div.pl(left.of(look));
         }
         div
     }
@@ -58,47 +87,65 @@ pub trait Inset: Sized {
     fn spacing(&mut self) -> &mut Spacing;
 
     /// The same inset on every edge.
-    fn inset(mut self, space: Space) -> Self {
+    fn inset_all(mut self, space: Space) -> Self {
         let s = self.spacing();
-        (s.top, s.right, s.bottom, s.left) = (Some(space), Some(space), Some(space), Some(space));
+        let step = Some(space.into());
+        (s.top, s.right, s.bottom, s.left) = (step, step, step, step);
         self
     }
 
     /// The same inset on the leading and trailing edges.
     fn inset_x(mut self, space: Space) -> Self {
         let s = self.spacing();
-        (s.left, s.right) = (Some(space), Some(space));
+        (s.left, s.right) = (Some(space.into()), Some(space.into()));
         self
     }
 
     /// The same inset on the top and bottom edges.
     fn inset_y(mut self, space: Space) -> Self {
         let s = self.spacing();
-        (s.top, s.bottom) = (Some(space), Some(space));
+        (s.top, s.bottom) = (Some(space.into()), Some(space.into()));
         self
     }
 
     /// The inset on the top edge.
     fn inset_top(mut self, space: Space) -> Self {
-        self.spacing().top = Some(space);
+        self.spacing().top = Some(space.into());
         self
     }
 
     /// The inset on the bottom edge.
     fn inset_bottom(mut self, space: Space) -> Self {
-        self.spacing().bottom = Some(space);
+        self.spacing().bottom = Some(space.into());
         self
     }
 
     /// The inset on the left edge.
     fn inset_left(mut self, space: Space) -> Self {
-        self.spacing().left = Some(space);
+        self.spacing().left = Some(space.into());
         self
     }
 
     /// The inset on the right edge.
     fn inset_right(mut self, space: Space) -> Self {
-        self.spacing().right = Some(space);
+        self.spacing().right = Some(space.into());
+        self
+    }
+
+    /// The page's margin either side (`RowMetrics::page_margin`): what a
+    /// page's content keeps to.
+    fn page_margins(mut self) -> Self {
+        let s = self.spacing();
+        (s.left, s.right) = (Some(Step::PageMargin), Some(Step::PageMargin));
+        self
+    }
+
+    /// A page header's insets above and below (`RowMetrics::page_top`,
+    /// `RowMetrics::header_gap`): clear of the page's top, and a step off
+    /// what follows it.
+    fn page_head(mut self) -> Self {
+        let s = self.spacing();
+        (s.top, s.bottom) = (Some(Step::PageTop), Some(Step::HeaderGap));
         self
     }
 }
@@ -116,6 +163,13 @@ impl Stack {
     /// Children one under another.
     pub fn column() -> Self {
         Self::of(div().flex().flex_col())
+    }
+
+    /// Children laid out as a plain `div` lays them out, one under another
+    /// at their own heights: for insets around content that is not a list
+    /// of parts.
+    pub fn block() -> Self {
+        Self::of(div())
     }
 
     /// Children side by side.
@@ -177,7 +231,7 @@ pub struct Text {
     div: Div,
     children: Vec<AnyElement>,
     spacing: Spacing,
-    role: TypeRole,
+    role: Option<TypeRole>,
     tone: Option<Tone>,
     picked: bool,
     icon: Option<Icon>,
@@ -190,11 +244,20 @@ impl Text {
             div: div(),
             children: Vec::new(),
             spacing: Spacing::default(),
-            role,
+            role: Some(role),
             tone: None,
             picked: false,
             icon: None,
         }
+    }
+
+    /// Text in the role of what it sits in (a table's cell), in `tone`.
+    pub fn in_tone(tone: Tone) -> Self {
+        Self {
+            role: None,
+            ..Self::new(TypeRole::Body)
+        }
+        .tone(tone)
     }
 
     /// The tone it is drawn in.
@@ -226,6 +289,33 @@ impl Text {
 impl Inset for Text {
     fn spacing(&mut self) -> &mut Spacing {
         &mut self.spacing
+    }
+}
+
+/// A hairline in `rule` between two parts of a page: across it
+/// (`horizontal`) or down it (`vertical`). Placed as a `div` is.
+pub struct Divider {
+    div: Div,
+    children: Vec<AnyElement>,
+    vertical: bool,
+}
+
+impl Divider {
+    /// A rule across: the hairline's height, its parent's width.
+    pub fn horizontal() -> Self {
+        Self {
+            div: div(),
+            children: Vec::new(),
+            vertical: false,
+        }
+    }
+
+    /// A rule down: the hairline's width, as tall as it is placed.
+    pub fn vertical() -> Self {
+        Self {
+            vertical: true,
+            ..Self::horizontal()
+        }
     }
 }
 
@@ -371,21 +461,32 @@ themed_div!(Text, |this, look| {
     let div = std::mem::replace(&mut this.div, div());
     let div = typeset(
         this.spacing.apply(div, &look),
-        Some(this.role),
+        this.role,
         this.tone,
         this.picked,
         &look,
     );
     match this.icon.filter(|_| look.icons) {
         Some(icon) => div.flex().items_center().gap(look.space(Space::Xs)).child(
-            KoanIcon::new(icon).role(this.role).map(|glyph| {
-                if this.picked {
-                    glyph.color(look.palette.on_selection.hsla())
-                } else {
-                    glyph.tone(this.tone.unwrap_or(Tone::Ink))
-                }
-            }),
+            KoanIcon::new(icon)
+                .role(this.role.unwrap_or(TypeRole::Body))
+                .map(|glyph| {
+                    if this.picked {
+                        glyph.color(look.palette.on_selection.hsla())
+                    } else {
+                        glyph.tone(this.tone.unwrap_or(Tone::Ink))
+                    }
+                }),
         ),
         None => div,
+    }
+});
+
+themed_div!(Divider, |this, look| {
+    let div = std::mem::replace(&mut this.div, div()).bg(look.palette.rule.hsla());
+    if this.vertical {
+        div.w(look.hairline)
+    } else {
+        div.h(look.hairline)
     }
 });

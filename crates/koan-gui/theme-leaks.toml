@@ -2,10 +2,173 @@
 # scripts/gui-theme-leaks.py. Counts only fall: a file moved onto
 # koan-kit's components drops its entry. See docs/design/koan-kit.md.
 
+["downloads.rs"]
+style = 2
+
+["dsp/flows.rs"]
+size = 1
+style = 2
+
 ["dsp/graph.rs"]
 number = 1
+size = 1
+style = 2
 raw = 2
+
+["dsp/page.rs"]
+size = 1
+
+["dsp/profile.rs"]
+points = 1
+spacing = 3
+size = 4
+style = 1
+
+["library/activity.rs"]
+spacing = 1
+
+["library/album_page.rs"]
+spacing = 1
+size = 2
+style = 2
+
+["library/albums.rs"]
+spacing = 4
+size = 2
+style = 1
+
+["library/artist_page.rs"]
+points = 1
+spacing = 5
+size = 2
+style = 1
+
+["library/artists.rs"]
+spacing = 1
+size = 2
+style = 1
+
+["library/chrome.rs"]
+spacing = 2
+
+["library/covers.rs"]
+size = 2
+
+["library/drag.rs"]
+spacing = 2
+
+["library/history.rs"]
+spacing = 1
+
+["library/info.rs"]
+spacing = 1
+
+["library/playlist.rs"]
+style = 2
+
+["library/rows.rs"]
+style = 4
+
+["library/tile.rs"]
+spacing = 1
+size = 3
+style = 1
+
+["library/tokens.rs"]
+style = 2
+
+["library/tracks.rs"]
+spacing = 1
+size = 2
+style = 1
 
 ["measure.rs"]
 number = 3
 raw = 8
+
+["mobile/tablet.rs"]
+spacing = 4
+size = 2
+style = 2
+
+["mobile.rs"]
+spacing = 3
+size = 1
+style = 2
+
+["organize.rs"]
+spacing = 1
+style = 1
+
+["paint.rs"]
+style = 1
+
+["platform/about.rs"]
+size = 1
+style = 3
+
+["platform/shortcuts_sheet.rs"]
+points = 2
+spacing = 2
+size = 3
+
+["platform/startup_error.rs"]
+size = 1
+style = 1
+
+["queue/mod.rs"]
+style = 9
+
+["root.rs"]
+size = 3
+style = 1
+
+["search/bar.rs"]
+size = 1
+
+["search/field.rs"]
+spacing = 2
+
+["settings/mod.rs"]
+size = 1
+style = 1
+
+["settings/panes/keys.rs"]
+spacing = 1
+
+["settings/panes/link.rs"]
+points = 3
+
+["settings/panes/people.rs"]
+points = 2
+
+["settings/sheet.rs"]
+points = 1
+spacing = 2
+size = 1
+
+["setup.rs"]
+size = 1
+style = 2
+
+["shell.rs"]
+spacing = 3
+size = 3
+style = 2
+
+["sidebar.rs"]
+size = 1
+style = 1
+
+["transport.rs"]
+points = 1
+spacing = 3
+size = 8
+style = 2
+
+["transport_phone.rs"]
+spacing = 1
+size = 4
+
+["tv_wake.rs"]
+spacing = 1

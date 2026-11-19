@@ -705,7 +705,7 @@ impl ArtistPage {
         scale: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stack {
         let id = self.artist_id;
         let item = Playable::Artist(id);
         let name = record
@@ -754,11 +754,7 @@ impl ArtistPage {
         if let Some(photo) = photo {
             header = header.art(photo);
         }
-        div()
-            .w_full()
-            .pt(RowMetrics::page_top(&p.look))
-            .pb(RowMetrics::header_gap(&p.look))
-            .child(header)
+        Stack::block().page_head().w_full().child(header)
     }
 
     /// The article's opening, under "about" after the records, as the Mac's
@@ -1175,19 +1171,16 @@ impl Render for ArtistPage {
         let view = cx.weak_entity();
         // The page's margin is the list's parent's: a list lays its items out
         // across its own bounds and ignores padding of its own.
-        let body = div()
+        let body = Stack::block().page_margins().size_full().child(
+            list(self.list.clone(), move |ix, window, cx| {
+                view.update(cx, |this, cx| this.item(ix, window, cx))
+                    .unwrap_or_else(|_| div().into_any_element())
+            })
             .size_full()
-            .px(RowMetrics::page_margin(&p.look))
-            .child(
-                list(self.list.clone(), move |ix, window, cx| {
-                    view.update(cx, |this, cx| this.item(ix, window, cx))
-                        .unwrap_or_else(|_| div().into_any_element())
-                })
-                .size_full()
-                // Rows are laid out over the bottom padding as the list
-                // scrolls: the last ends clear of a phone's foot.
-                .pb(crate::components::foot_inset(window, cx)),
-            );
+            // Rows are laid out over the bottom padding as the list
+            // scrolls: the last ends clear of a phone's foot.
+            .pb(crate::components::foot_inset(window, cx)),
+        );
 
         self.keyed = self.focus.is_focused(window);
         let len = super::keys::KeyedList::len(self);

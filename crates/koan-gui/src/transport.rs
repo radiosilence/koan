@@ -21,14 +21,14 @@ use crate::links;
 use crate::mirror::{Devices, Mirror, Outputs, Playback, Playhead, Renderers, Slice};
 use crate::paint::Paint;
 use crate::platform::actions::{Next, Previous, ShowEq, help};
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
+use crate::theme::{self, Icon, KoanIcon, Space, Tone, TypeRole};
 use crate::time::clock;
 
 pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
 
 #[path = "transport_phone.rs"]
 mod phone;
-pub use phone::{Collapse, Expand, Flight, Form, MINI_HEIGHT, SLEEVE, ShowInfo};
+pub use phone::{Collapse, Expand, Flight, Form, ShowInfo};
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
@@ -863,25 +863,7 @@ const CENTRE_LEAST: f32 = 300.0;
 /// to click: padding taken back by an equal negative margin, so the item's
 /// own bounds grow and nothing moves.
 fn trailing_item(base: Stateful<Div>, p: &Paint, glyph_only: bool) -> Stateful<Div> {
-    let gap = TransportMetrics::trailing_gap(&p.look) / 2.;
-    let glyph = Pixels::from(TransportMetrics::trailing_icon(&p.look));
-    let reach = if glyph_only {
-        gap.max((theme::HIT - glyph) / 2.)
-    } else {
-        gap
-    };
-    // A glyph's reach can pass its neighbour's at small gaps: each item
-    // blocks the ones drawn before it, so a press in the overlap goes to
-    // one item, never two.
-    base.flex()
-        .items_center()
-        .justify_center()
-        .h(theme::HIT)
-        .px(reach)
-        .mx(-reach)
-        .occlude()
-        .cursor_pointer()
-        .text_role(TypeRole::Meta, &p.look)
+    crate::components::transport_item(base, glyph_only, &p.look)
 }
 
 /// A transport control's tooltip.

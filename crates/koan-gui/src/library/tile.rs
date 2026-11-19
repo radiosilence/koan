@@ -16,7 +16,7 @@ use koan_runtime::{Album, AlbumOnDevice};
 use super::actions;
 use super::covers::Sleeve;
 use super::drag::PlayableDrag;
-use super::tokens::{Paint, Type, Typeset};
+use super::tokens::{Paint, Type};
 use crate::components::{
     Arrival, TileArt, TileGrid, TileMark, TileSleeve, origin_probe, text_widths,
 };

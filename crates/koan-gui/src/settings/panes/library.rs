@@ -1,7 +1,7 @@
 //! Library: the folders scanned, scanning them, and clearing the index.
 
 use crate::components::{Button, ButtonKind};
-use crate::theme::{Icon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
 use koan_kit::app::*;
 
 use crate::components::{Inset, Stack, Text};

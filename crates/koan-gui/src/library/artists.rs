@@ -17,8 +17,8 @@ use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
 use crate::components::Text;
 use crate::components::{ROW_GROUP, RowKind, RowNumber, TableRow};
 use crate::navigator::{Listing, Shelf};
+use crate::theme::Icon;
 use crate::theme::Tone;
-use crate::theme::{Icon, KoanStyled};
 
 #[derive(Clone, PartialEq)]
 struct Query {
@@ -475,12 +475,14 @@ impl Render for ArtistBrowser {
         // phone's filter field a step further down.
         let bar = crate::components::bar_inset(window, cx);
         let above = if phone {
-            bar + p.look.spaced(10.0)
+            bar + crate::components::RowMetrics::below_bar(&p.look)
         } else {
             bar
         };
         let lead = if away {
-            self.header_height.get().unwrap_or_default() + bar + p.look.spaced(10.0)
+            self.header_height.get().unwrap_or_default()
+                + bar
+                + crate::components::RowMetrics::below_bar(&p.look)
         } else {
             Pixels::ZERO
         };

@@ -13,7 +13,6 @@ use koan_kit::app::*;
 
 mod tablet;
 
-use crate::components::Inset;
 use crate::components::sheet::{self as ask, Layer};
 use crate::components::{
     Clear, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,
@@ -357,7 +356,7 @@ impl TouchShell {
     }
 
     fn search_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let p = Paint::of(window, cx);
+        let _p = Paint::of(window, cx);
         if self.search.is_none()
             && let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib())
         {
@@ -401,15 +400,12 @@ impl TouchShell {
             .flex()
             .flex_col()
             .child(
-                div()
-                    .mt(crate::components::bar_inset(window, cx))
-                    .px(p.space(crate::theme::Space::L))
-                    .py(p.space(crate::theme::Space::M))
-                    .child(
-                        crate::components::FilterField::new(&page.field)
-                            .label("search")
-                            .fill(),
-                    ),
+                crate::components::FieldLead::new(
+                    crate::components::FilterField::new(&page.field)
+                        .label("search")
+                        .fill(),
+                )
+                .under_bar(),
             )
             // An empty field finds nothing: the last query's results go with
             // its text.
@@ -1120,8 +1116,8 @@ impl TouchShell {
         let Some(album) = album else { return };
         let look = crate::theme::Look::of(window, cx);
         let (side, height) = (
-            look.spaced(transport::SLEEVE),
-            look.spaced(transport::MINI_HEIGHT),
+            crate::components::TransportMetrics::mini_sleeve(&look),
+            crate::components::TransportMetrics::mini_height(&look),
         );
         let insets = crate::components::system_insets(Clear::System, window);
         let viewport = window.viewport_size();
@@ -1335,13 +1331,11 @@ impl Render for TouchShell {
                                 // Over the page, taking no room: the page
                                 // stands where it will land.
                                 .child(
-                                    div()
+                                    crate::components::Divider::vertical()
                                         .absolute()
                                         .left_0()
                                         .top_0()
-                                        .bottom_0()
-                                        .w(p.look.hairline)
-                                        .bg(p.rule),
+                                        .bottom_0(),
                                 ),
                         ),
                     ),
@@ -1350,56 +1344,19 @@ impl Render for TouchShell {
             // every page while anything runs, as the iOS app has it:
             // the sidebar foot that holds it on the desktop is gone.
             .children(activity_card.then(|| {
-                let card = crate::components::Shifted::new(
-                    "activity-card",
-                    Point::new(Pixels::ZERO, p.look.space(crate::theme::Space::Xl)),
-                    // Even on every side, as the iOS app's card.
-                    div()
-                        .p(p.space(crate::theme::Space::M))
-                        .bg(p.look.palette.surface.hsla())
-                        .child(activity.clone()),
-                );
-                div()
-                    .absolute()
-                    .left(p.space(crate::theme::Space::M))
-                    .right(p.space(crate::theme::Space::M))
-                    .bottom(
-                        crate::components::foot_inset(window, cx) + p.space(crate::theme::Space::S),
-                    )
-                    .child(
-                        crate::components::FadeIn::new("activity-card-in", card).leaving(leaving),
-                    )
+                crate::components::FootCard::new("activity-card", activity.clone()).leaving(leaving)
             }))
             .into_any_element();
         let (body, phone_foot) = if compact {
             // The foot over the page: the mini player, its playhead along the
             // foot's edge, over the tabs under a rule; solid, running on under
             // the home indicator.
-            let foot = div()
-                .id("phone-foot")
-                .absolute()
-                .bottom_0()
-                .left_0()
-                .right_0()
-                .occlude()
-                .pb(insets.bottom)
-                // Solid: only the bar at the top is frosted.
-                .bg(p.look.palette.bg.hsla())
-                .child(crate::components::foot_probe())
-                .child(
-                    self.transport.clone().cached(
-                        StyleRefinement::default()
-                            .w_full()
-                            .h(p.look.spaced(transport::MINI_HEIGHT))
-                            .flex_shrink_0(),
-                    ),
-                )
-                .child(
-                    div()
-                        .border_t(p.look.hairline)
-                        .border_color(p.rule)
-                        .child(self.tabs(cx)),
-                );
+            let foot = crate::components::ShellFoot::phone(
+                self.transport
+                    .clone()
+                    .cached(StyleRefinement::default().size_full()),
+                self.tabs(cx),
+            );
             (pages, Some(foot))
         } else {
             (self.regular(pages, window, cx), None)

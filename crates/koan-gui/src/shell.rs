@@ -22,14 +22,14 @@ use crate::platform::actions::{
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
-use crate::components::{Inset, Stack};
+use crate::components::Stack;
 use crate::library::{self, stage::LibraryStage};
 use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::session::Session;
 use crate::sidebar::Sidebar;
 use crate::theme::Tone;
-use crate::theme::{self, Icon, KoanStyled, TypeRole};
+use crate::theme::{self, Icon, TypeRole};
 use crate::transport::{self, Transport};
 use crate::window_state;
 

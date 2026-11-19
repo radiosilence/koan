@@ -12,7 +12,7 @@ use koan_kit::app::platform::OperatingSystem;
 use koan_kit::app::*;
 
 use crate::components::{Badge, Button, ButtonKind, Rise, sheet};
-use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Look, Space, Tone, TypeRole, label};
 
 use super::actions::{APPLICATION, Group, HOTKEYS, LISTS, MENU, Shortcut, caption};
 use crate::components::{Stack, Text};
@@ -87,7 +87,7 @@ fn with_modifier(os: OperatingSystem) -> Vec<&'static Shortcut> {
 }
 
 /// One group's column: its title, then each line's keys and what they do.
-fn group_column(group: Group, lines: Vec<Line>, look: &Look) -> Div {
+fn group_column(group: Group, lines: Vec<Line>, look: &Look) -> Stack {
     Stack::column()
         .space(Space::S)
         .min_w(look.spaced(210.0))
@@ -152,7 +152,7 @@ impl Render for ShortcutsSheet {
                     .pt(look.space(Space::L))
                     .gap(look.space(Space::L))
                     .child(columns(&HOTKEYS.iter().chain(LISTS).collect::<Vec<_>>()))
-                    .child(div().h(look.hairline).bg(look.palette.rule.hsla()))
+                    .child(crate::components::Divider::horizontal())
                     .child(sheet::note(modifier, Tone::Muted, &look))
                     .child(columns(&with_modifier(os)))
                     .child(sheet::note(

@@ -18,7 +18,7 @@ use super::profile::ProfilePage;
 use super::sheet::{Confirm, Sheets, body, content, head, note, section};
 use crate::components::{Button, ButtonKind, SectionHeader, TextField};
 use crate::components::{Inset, Stack, Text};
-use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Look, Space, Tone, TypeRole, label};
 
 pub struct ManageEq {
     dsp: Entity<Dsp>,
@@ -470,7 +470,7 @@ impl ManageEq {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let look = Look::of(window, cx);
+        let _look = Look::of(window, cx);
         let members: Vec<&DspProfileSummary> = group
             .members
             .iter()

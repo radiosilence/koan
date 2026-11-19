@@ -186,3 +186,28 @@ impl RenderOnce for TransportControl {
         .children(ring(&handle, &look, window))
     }
 }
+
+/// One of a transport bar's trailing items (a format badge, sleep, play on,
+/// output, EQ) around `base`: centred across a finger's height, in `meta`,
+/// reaching half `TransportMetrics::trailing_gap` either side, and a glyph
+/// alone further, to `HIT`. A glyph's reach can pass its neighbour's at
+/// small gaps: each item blocks the ones drawn before it, so a press in the
+/// overlap goes to one item, never two.
+pub fn transport_item(base: Stateful<Div>, glyph_only: bool, look: &Look) -> Stateful<Div> {
+    let gap = super::TransportMetrics::trailing_gap(look) / 2.;
+    let glyph = Pixels::from(super::TransportMetrics::trailing_icon(look));
+    let reach = if glyph_only {
+        gap.max((HIT - glyph) / 2.)
+    } else {
+        gap
+    };
+    base.flex()
+        .items_center()
+        .justify_center()
+        .h(HIT)
+        .px(reach)
+        .mx(-reach)
+        .occlude()
+        .cursor_pointer()
+        .text_role(TypeRole::Meta, look)
+}

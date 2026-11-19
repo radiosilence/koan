@@ -66,12 +66,6 @@ impl EventEmitter<Expand> for Transport {}
 impl EventEmitter<Collapse> for Transport {}
 impl EventEmitter<ShowInfo> for Transport {}
 
-/// The mini player's height, the playhead's line included, in points at the
-/// theme's size.
-pub const MINI_HEIGHT: f32 = 56.0;
-/// The mini player's sleeve.
-pub const SLEEVE: f32 = 30.0;
-
 impl Transport {
     /// Draws the transport as `form` from now on. The phone's forms follow
     /// the playhead themselves: the mini player's line and Now Playing's
@@ -101,7 +95,7 @@ impl Transport {
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
         self.scale = window.scale_factor();
-        let sleeve = p.look.spaced(SLEEVE);
+        let sleeve = crate::components::TransportMetrics::mini_sleeve(&p.look);
         self.cover = covers::art(entry.and_then(|e| e.album_id), sleeve, self.scale, cx);
         let playing =
             now.state == PlayState::Playing || (now.state == PlayState::Stopped && now.waiting);
@@ -144,7 +138,7 @@ impl Transport {
             .id("mini-player")
             .relative()
             .w_full()
-            .h(p.look.spaced(MINI_HEIGHT))
+            .h(crate::components::TransportMetrics::mini_height(&p.look))
             .flex_shrink_0()
             .items_center()
             // The playhead, along the top: where the track is, at a glance.
@@ -251,7 +245,7 @@ impl Transport {
             Point::new(
                 Pixels::ZERO,
                 if has_entry {
-                    p.look.spaced(MINI_HEIGHT)
+                    crate::components::TransportMetrics::mini_height(&p.look)
                 } else {
                     Pixels::ZERO
                 },

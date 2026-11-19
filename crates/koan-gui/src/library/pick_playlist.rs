@@ -21,6 +21,7 @@ use crate::components::{
     Button, ButtonKind, EmptyState, FieldState, FilterField, InputEvent, Mosaic, NavRow,
     RowMetrics, Scrollbar, UniformListScrollHandle, uniform_list,
 };
+use crate::components::{Inset, Stack};
 use crate::paint::Paint;
 use crate::theme::{Icon, Space, Tone};
 
@@ -341,10 +342,10 @@ impl Render for PickPlaylist {
                 look,
             ))
             .child(
-                div()
+                Stack::block()
+                    .inset_x(Space::L)
+                    .inset_y(Space::M)
                     .flex_none()
-                    .px(look.space(Space::L))
-                    .py(look.space(Space::M))
                     .child(
                         FilterField::new(&self.filter)
                             .label("filter playlists")
@@ -354,11 +355,11 @@ impl Render for PickPlaylist {
             .child(new)
             .when(total > 0, |d| {
                 d.child(
-                    div()
+                    Stack::block()
+                        .inset_x(Space::L)
+                        .inset_top(Space::S)
+                        .inset_bottom(Space::Xs)
                         .flex_none()
-                        .px(look.space(Space::L))
-                        .pt(look.space(Space::S))
-                        .pb(look.space(Space::Xs))
                         .child(ask::note(
                             count(self.shown.len() as u64, "playlist", "playlists"),
                             Tone::Muted,

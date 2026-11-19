@@ -5,8 +5,6 @@
 use koan_kit::app::App;
 
 use super::actions::About;
-use crate::components::{Stack, Text};
-use crate::theme::{Space, Tone};
 
 /// The version, and the commit it was built from.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

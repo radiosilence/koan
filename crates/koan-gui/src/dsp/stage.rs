@@ -14,7 +14,7 @@ use super::page::EqPage;
 use super::sheet::{Sheets, body, choice_row, content, head, note, section};
 use crate::components::{Badge, Button, ButtonKind, FormRow, Segmented, TextField};
 use crate::components::{Stack, Text};
-use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Icon, KoanIcon, Look, Space, Tone, TypeRole, label};
 
 /// What fills a stage, chosen: a correction, with the target it aims at and
 /// a group's member, or an EQ to add to the filters. Add… at the foot brings

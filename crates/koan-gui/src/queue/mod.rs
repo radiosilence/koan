@@ -14,13 +14,13 @@ use std::collections::{HashMap, HashSet};
 use koan_kit::app::*;
 use koan_runtime::{CreditPart, EntryStatus, QueueItem, QueueLock};
 
+use crate::components::Text;
 use crate::components::{
     Availability, AvailabilityMark, Button, ButtonKind, Cover, DragChip, EmptyState, INSERTION,
     IconToggle, KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind,
     RowList, RowListState, RowMetrics, RowOffset, SelectionBar, TableRow, ToolbarButton,
     ToolbarGroup, ToolbarMenu, ToolbarSelection,
 };
-use crate::components::{Inset, Text};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::library::drag::{Playable, PlayableDrag, PlaylistDrag};

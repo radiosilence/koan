@@ -6,7 +6,7 @@ use gpui::prelude::*;
 use gpui::*;
 
 use super::ToolbarButton;
-use crate::theme::Icon;
+use crate::theme::{Icon, Look, Space};
 
 /// What a window's content sits in (`Root`): Tab and Shift-Tab kept inside
 /// an open sheet or menu. Every window and offscreen render goes through
@@ -86,6 +86,22 @@ impl SecondaryWindow {
 
     /// The strip a window with a transparent title bar keeps along its top:
     /// the height of the title bar it replaces.
+    /// The strip itself, under `id`: as tall as `strip_height`, a step in
+    /// from either side, its contents (a close button where the app draws
+    /// its decorations) at its trailing end, and dragging it moves the
+    /// window.
+    pub fn top_strip(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+        let look = Look::of(window, cx);
+        let strip = div()
+            .id(id.into())
+            .flex()
+            .justify_end()
+            .items_center()
+            .px(look.space(Space::S))
+            .h(Self::strip_height());
+        moves_window(strip, window, cx)
+    }
+
     pub fn strip_height() -> Pixels {
         px(if cfg!(target_os = "macos") {
             30.0

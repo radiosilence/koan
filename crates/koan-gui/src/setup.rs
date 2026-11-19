@@ -17,7 +17,7 @@ use koan_runtime::InviteTo;
 
 use crate::components::{
     Badge, Button, ButtonKind, Check, CheckItem, ChoiceCards, Steps, close_button,
-    draws_decorations, moves_window,
+    draws_decorations,
 };
 use crate::components::{Inset, Stack};
 use crate::mirror::Mirror;
@@ -550,10 +550,10 @@ impl SetupWindow {
                 .flex()
                 .flex_col()
                 .child(
-                    div()
+                    Stack::block()
+                        .inset_x(Space::Xl)
+                        .inset_top(Space::Xl)
                         .flex_none()
-                        .px(look.space(Space::Xl))
-                        .pt(look.space(Space::Xl))
                         .child(self.share_question(look, cx)),
                 )
                 .child(div().flex_1().min_h_0().child(pane))
@@ -890,19 +890,15 @@ impl SetupWindow {
     /// and holds a close button where the app draws its decorations.
     fn top_strip(&self, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let client = draws_decorations(window);
-        let look = Look::of(window, cx);
-        let strip = Stack::row()
-            .inset_x(Space::S)
-            .id("setup-top")
-            .justify_end()
-            .items_center()
-            .h(crate::components::SecondaryWindow::strip_height());
         let entity = cx.entity();
-        moves_window(strip, window, cx).when(client, |strip| {
-            strip.child(close_button(move |window, cx| {
-                entity.update(cx, |this, cx| this.finish(window, cx))
-            }))
-        })
+        crate::components::SecondaryWindow::top_strip("setup-top", window, cx).when(
+            client,
+            |strip| {
+                strip.child(close_button(move |window, cx| {
+                    entity.update(cx, |this, cx| this.finish(window, cx))
+                }))
+            },
+        )
     }
 
     /// Whether going on is what the step is for: not while its own action,
@@ -917,7 +913,7 @@ impl SetupWindow {
         }
     }
 
-    fn footer(&self, look: &Look, cx: &mut Context<Self>) -> Div {
+    fn footer(&self, look: &Look, cx: &mut Context<Self>) -> Stack {
         let steps = self.steps();
         let at = steps.iter().position(|s| *s == self.step).unwrap_or(0);
         let last = at + 1 == steps.len();
@@ -990,8 +986,8 @@ impl Render for SetupWindow {
                 at,
             ))
             .child(
-                div()
-                    .pt(look.space(Space::M))
+                Stack::block()
+                    .inset_top(Space::M)
                     .child(crate::components::title_text(
                         label(self.step.title()),
                         &look,

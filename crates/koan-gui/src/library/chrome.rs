@@ -211,11 +211,8 @@ pub fn browser_controls(
 /// scrolled away with the list as an iOS list's search field is. The bar
 /// names the page, so it draws no heading of its own.
 pub fn with_filter(search: &Entity<SearchField>, p: &Paint) -> AnyElement {
-    div()
-        .px(crate::components::RowMetrics::page_margin(&p.look))
-        .pt(p.space(Space::S))
-        .child(search.clone())
-        .into_any_element()
+    let _ = p;
+    crate::components::FieldLead::new(search.clone()).into_any_element()
 }
 
 pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
@@ -496,11 +493,13 @@ impl Render for FilterPanel {
                     Stack::row()
                         .space(Space::S)
                         .child(
-                            div()
-                                .w(p.sized(64.0))
-                                .child(TextField::new(&self.year_from)),
+                            TextField::new(&self.year_from)
+                                .width(crate::components::FieldWidth::Figure),
                         )
-                        .child(div().w(p.sized(64.0)).child(TextField::new(&self.year_to))),
+                        .child(
+                            TextField::new(&self.year_to)
+                                .width(crate::components::FieldWidth::Figure),
+                        ),
                 ),
             )
             .child(MenuSeparator)
