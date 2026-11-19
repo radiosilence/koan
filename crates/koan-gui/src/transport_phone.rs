@@ -95,7 +95,7 @@ impl Transport {
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
         self.scale = window.scale_factor();
-        let sleeve = crate::components::TransportMetrics::mini_sleeve(&p.look);
+        let sleeve = crate::components::AccessoryBar::picture(&p.look);
         self.cover = covers::art(entry.and_then(|e| e.album_id), sleeve, self.scale, cx);
         let playing =
             now.state == PlayState::Playing || (now.state == PlayState::Stopped && now.waiting);
@@ -131,26 +131,34 @@ impl Transport {
         let has_entry = entry.is_some();
         let album_id = entry.and_then(|e| e.album_id).unwrap_or(0) as u64;
         let track_id = entry.and_then(|e| e.track_id).unwrap_or(0) as u64;
-        let bar = Stack::row()
-            .space(Space::M)
-            .inset_left(Space::L)
-            .inset_right(Space::S)
-            .id("mini-player")
-            .relative()
-            .w_full()
-            .h(crate::components::TransportMetrics::mini_height(&p.look))
-            .flex_shrink_0()
-            .items_center()
-            // The playhead, along the top: where the track is, at a glance.
-            .child(
-                div().absolute().top_0().left_0().right_0().child(
-                    crate::components::ProgressBar::new("mini-playhead", Some(share))
-                        .thin()
-                        .glide(&self.mini_glide),
-                ),
+        let weak = cx.entity().downgrade();
+        let controls = crate::components::ControlGroup::new()
+            // Where the music plays, a thumb away on every page, as on iOS.
+            .control(self.control_button(&p, window, cx))
+            .control(
+                Button::icon_only(
+                    "mini-play-pause",
+                    if playing { Icon::Pause } else { Icon::Play },
+                    if playing { "pause" } else { "play" },
+                )
+                .disabled(!has_entry)
+                .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause())),
             )
-            // A new record's sleeve and a new track's names fade in over
-            // what they replace, as Now Playing's do.
+            .control(
+                Button::icon_only("mini-next", Icon::Next, "next")
+                    .disabled(!has_entry)
+                    .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
+            );
+        // The bar opens Now Playing, by a tap or pushed up by a finger, as
+        // iOS players open. A new record's sleeve and a new track's names
+        // fade in over what they replace, as Now Playing's do.
+        let bar = crate::components::AccessoryBar::new("mini-player")
+            .progress(share, Some(&self.mini_glide))
+            .when(has_entry, |bar| {
+                bar.on_open(move |_, cx| {
+                    weak.update(cx, |_, cx| cx.emit(Expand)).ok();
+                })
+            })
             .child(crate::components::FadeIn::new(
                 ElementId::NamedInteger("mini-sleeve".into(), album_id),
                 Cover::new(self.cover.clone(), sleeve),
@@ -159,93 +167,20 @@ impl Transport {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .flex()
-                    .flex_col()
                     .child(crate::components::FadeIn::new(
                         ElementId::NamedInteger("mini-titles".into(), track_id),
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                Text::new(TypeRole::Meta)
-                                    .tone(Tone::Strong)
-                                    .truncate()
-                                    .child(title),
-                            )
-                            .children(detail.map(|detail| {
-                                Text::new(TypeRole::Fine)
-                                    .tone(Tone::Muted)
-                                    .truncate()
-                                    .child(detail)
-                            })),
+                        crate::components::TwoLines::new(title)
+                            .when_some(detail, |lines, detail| lines.subtitle(detail)),
                     )),
             )
-            // Where the music plays, a thumb away on every page, as on iOS.
-            .child(
-                div()
-                    .id("mini-devices")
-                    .on_click(|_, _, cx| cx.stop_propagation())
-                    .child(self.control_button(&p, window, cx)),
-            )
-            .child(
-                Button::icon_only(
-                    "mini-play-pause",
-                    if playing { Icon::Pause } else { Icon::Play },
-                    if playing { "pause" } else { "play" },
-                )
-                .disabled(!has_entry)
-                .on_click(|_, _, cx| {
-                    cx.stop_propagation();
-                    command(cx, "play/pause", |e| e.toggle_play_pause())
-                }),
-            )
-            .child(
-                Button::icon_only("mini-next", Icon::Next, "next")
-                    .disabled(!has_entry)
-                    .on_click(|_, _, cx| {
-                        cx.stop_propagation();
-                        command(cx, "next", |e| e.next())
-                    }),
-            )
-            // The bar opens Now Playing, by a tap or pushed up by a finger,
-            // as iOS players open; its buttons keep their own taps.
-            .when(has_entry, |bar| {
-                bar.on_click(cx.listener(|_, _, _, cx| cx.emit(Expand)))
-                    .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
-                        if event.source != ScrollSource::Touch {
-                            return;
-                        }
-                        let dy = event.delta.pixel_delta(Pixels::from(16.)).y;
-                        match event.touch_phase {
-                            koan_kit::app::platform::TouchPhase::Started => this.lift = Some(dy),
-                            koan_kit::app::platform::TouchPhase::Moved => {
-                                let Some(lift) = this.lift else { return };
-                                let lift = lift + dy;
-                                if lift < -Pixels::from(24.) {
-                                    this.lift = None;
-                                    // The rest of the swipe, and its fling,
-                                    // are spent on opening: none of it
-                                    // reaches Now Playing, where a touch
-                                    // catching the fling would be a scroll
-                                    // rather than the seek bar's drag.
-                                    window.end_touch_scroll();
-                                    cx.emit(Expand);
-                                } else {
-                                    this.lift = Some(lift);
-                                }
-                            }
-                            _ => this.lift = None,
-                        }
-                        cx.stop_propagation();
-                    }))
-            });
+            .child(controls);
         // A first track's bar rises into the foot over "nothing playing".
         crate::components::Shifted::new(
             ElementId::NamedInteger("mini-arrives".into(), has_entry as u64),
             Point::new(
                 Pixels::ZERO,
                 if has_entry {
-                    crate::components::TransportMetrics::mini_height(&p.look)
+                    crate::components::AccessoryBar::height(&p.look)
                 } else {
                     Pixels::ZERO
                 },

@@ -8,7 +8,9 @@ use gpui::{
     SharedString, Styled, Window, div,
 };
 
-use super::{Clear, FadeIn, Shifted, TransportMetrics, foot_inset, foot_probe, system_insets};
+use super::{
+    AccessoryBar, Clear, FadeIn, Shifted, TransportMetrics, foot_inset, foot_probe, system_insets,
+};
 use crate::theme::{Look, Space};
 
 /// A card over the foot of the pages, a step above what the shell draws
@@ -76,7 +78,7 @@ pub struct ShellFoot {
 }
 
 impl ShellFoot {
-    /// A phone's foot: `player` at `TransportMetrics::mini_height`, over
+    /// A phone's foot: `player` at `AccessoryBar::height`, over
     /// `tabs`.
     pub fn phone(player: impl IntoElement, tabs: impl IntoElement) -> Self {
         Self {
@@ -119,7 +121,7 @@ impl RenderOnce for ShellFoot {
                 div()
                     .w_full()
                     .h(if phone {
-                        TransportMetrics::mini_height(&look)
+                        AccessoryBar::height(&look)
                     } else {
                         TransportMetrics::HEIGHT
                     })

@@ -1,8 +1,8 @@
-//! A transport control (shuffle, previous, next, repeat): the glyph in
-//! `body`, or its word where the look hides icons, 44 points wide to hit
-//! and as tall as the controls' row, but only the glyph's width in the
-//! layout, so the controls sit as far apart as the
-//! Mac's while the hit area reaches into the gaps. One that toggles is `ink`
+//! A control in a bar of glyphs, such as a player's shuffle, previous,
+//! next and repeat: the glyph in `body`, or its word where the look hides
+//! icons, 44 points wide to hit and as tall as the controls' row, but only
+//! the glyph's width in the layout, so the bar sets the gaps between the
+//! glyphs while the hit area reaches into them. One that toggles is `ink`
 //! underlined in the accent while on and `muted` off. A press is answered
 //! with a ring.
 
@@ -14,10 +14,10 @@ use gpui::*;
 use super::{Answer, Answerer, Handler, Tooltip, accessible, answers_click, focus, ring, toggled};
 use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, TypeRole, label};
 
-/// A transport control (shuffle, previous, next, repeat): a glyph, or its
-/// word where icons are hidden, with a finger's target.
+/// A control in a bar of glyphs: a glyph, or its word where icons are
+/// hidden, with a finger's target.
 #[derive(IntoElement)]
-pub struct TransportControl {
+pub struct BarControl {
     id: ElementId,
     icon: Icon,
     label: SharedString,
@@ -27,7 +27,7 @@ pub struct TransportControl {
     on_click: Option<Handler<ClickEvent>>,
 }
 
-impl TransportControl {
+impl BarControl {
     /// `text` is its word where the look hides icons; `help` what its
     /// tooltip says, its shortcut included.
     pub fn new(
@@ -69,7 +69,7 @@ impl TransportControl {
     }
 }
 
-impl RenderOnce for TransportControl {
+impl RenderOnce for BarControl {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let p = look.palette;
@@ -190,13 +190,13 @@ impl RenderOnce for TransportControl {
     }
 }
 
-/// One of a transport bar's trailing items (a format badge, sleep, play on,
-/// output, EQ) around `base`: centred across a finger's height, in `meta`,
+/// An item in a bar's trailing group (a badge, a menu's glyph) around
+/// `base`: centred across a finger's height, in `meta`,
 /// reaching half `TransportMetrics::trailing_gap` either side, and a glyph
 /// alone further, to `HIT`. A glyph's reach can pass its neighbour's at
 /// small gaps: each item blocks the ones drawn before it, so a press in the
 /// overlap goes to one item, never two.
-pub fn transport_item(base: Stateful<Div>, glyph_only: bool, look: &Look) -> Stateful<Div> {
+pub fn bar_item(base: Stateful<Div>, glyph_only: bool, look: &Look) -> Stateful<Div> {
     let gap = super::TransportMetrics::trailing_gap(look) / 2.;
     let glyph = Pixels::from(super::TransportMetrics::trailing_icon(look));
     let reach = if glyph_only {

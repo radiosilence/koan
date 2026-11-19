@@ -15,6 +15,8 @@ GPUI gives a page `div()`s, and each one accepts any padding, size and colour. A
 - **The system's settings.** Reduce Motion, Increase Contrast, Reduce Transparency and the system text size are read where the platform provides them and applied by every component.
 - **Touch.** On a touch screen every control keeps a 44-point target, a long press opens the context menu, and a window narrower than 660 points takes the compact layout (`Look::touch`, `Look::compact`).
 
+The kit is compositional, in the manner of atomic design. Atoms are the indivisible parts (`Text`, `KoanIcon`, `Button`, `Divider`, the spacing steps); molecules put a few atoms together for one job (`TwoLines`, a title over a subtitle; `ControlGroup`, touch-sized controls on one rhythm; a `TableRow`); and a few generic organisms lay molecules out (bars, sheets, the page). Something specific to one app, such as kōan's mini player, is the app's composition of these parts, not a component of the kit.
+
 ![The storybook's buttons page: each kind, and the destructive, disabled and toolbar states](../../site/public/kit/buttons.jpg)
 
 ## Depending on it
@@ -148,6 +150,7 @@ A page chooses its content, its order, which verbs a header or menu offers, whic
 | Nothing yet | `EmptyState` |
 | A question before a write | `sheet::present` and its question host |
 | A window's top bar | `Toolbar`, `ToolbarButton`, `ToolbarGroup` |
+| A bar over a touch window's tabs | `AccessoryBar` holding a picture, `TwoLines` and a `ControlGroup` |
 | A list of choices under a control | `Menu`, `KoanContextMenu`, `opens_panel` |
 | A step-by-step flow | `Steps`, `ChoiceCards`, `CheckItem` |
 

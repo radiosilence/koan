@@ -52,16 +52,6 @@ impl TransportMetrics {
     /// The seek bar's height: a compact slider's.
     pub const SEEK: Pixels = px(20.0);
 
-    /// A phone's mini player over the tabs, the iOS app's: 56 points.
-    pub fn mini_height(look: &Look) -> Pixels {
-        look.spaced(56.0)
-    }
-
-    /// The mini player's sleeve, 30 points.
-    pub fn mini_sleeve(look: &Look) -> Pixels {
-        look.spaced(30.0)
-    }
-
     /// Between the controls' glyphs, as the Mac spaces them.
     pub fn control_gap(look: &Look) -> Pixels {
         look.spaced(22.0)
