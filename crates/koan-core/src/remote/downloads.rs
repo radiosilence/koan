@@ -286,6 +286,10 @@ pub struct DownloadStore {
     /// a transfer's progress is news only to what draws it, and the engine's
     /// wakes every link, subscription and watcher in the process.
     moved: crate::signal::Wake,
+    /// Tracks whose last transfer failed for want of a network: cut short,
+    /// out of attempts against a server that would not answer. What a way
+    /// back to the server fetches again; any other failure stands.
+    lost: parking_lot::Mutex<HashSet<i64>>,
 }
 
 /// Nanoseconds since the first time this was asked, never 0.
@@ -432,6 +436,16 @@ impl DownloadStore {
             .read()
             .iter()
             .any(|e| e.download.track_id == track_id && e.is_live())
+    }
+
+    /// The tracks whose bytes are arriving now.
+    pub fn running_tracks(&self) -> HashSet<i64> {
+        self.entries
+            .read()
+            .iter()
+            .filter(|e| e.download.state == DownloadState::Running)
+            .map(|e| e.download.track_id)
+            .collect()
     }
 
     /// The queue entries waiting on the live transfer for `track_id`.
@@ -663,6 +677,49 @@ impl DownloadStore {
         pinned
     }
 
+    /// Live transfers kept for their own sake whose tracks are not in
+    /// `owed` are no longer kept: downloads were cleared. One nothing else
+    /// waits on stops when it next asks.
+    pub fn unkeep_unless(&self, owed: &HashSet<i64>) {
+        let mut entries = self.entries.write();
+        let mut abandoned = false;
+        for entry in entries.iter_mut().filter(|e| e.is_live() && e.keep) {
+            if !owed.contains(&entry.download.track_id) {
+                entry.keep = false;
+                abandoned |= entry.waiters.is_empty();
+            }
+        }
+        drop(entries);
+        if abandoned {
+            crate::signal::engine_changed().bump();
+        }
+    }
+
+    /// End `track_id`'s transfer as finished, for tests of what follows.
+    #[cfg(test)]
+    pub fn end_for_test(&self, track_id: i64) -> Option<Vec<QueueItemId>> {
+        self.end(track_id, Outcome::Done).map(|(w, _)| w)
+    }
+
+    /// `track_id`'s transfer failed for want of a network.
+    pub fn lost(&self, track_id: i64) {
+        self.lost.lock().insert(track_id);
+    }
+
+    /// The tracks whose transfers failed for want of a network, forgotten
+    /// as they are fetched again.
+    pub fn take_lost(&self) -> Vec<i64> {
+        self.lost.lock().drain().collect()
+    }
+
+    /// Whether `track_id`'s file arrived: a finished row, still listed.
+    pub fn arrived(&self, track_id: i64) -> bool {
+        self.entries
+            .read()
+            .iter()
+            .any(|e| e.download.track_id == track_id && e.download.state == DownloadState::Done)
+    }
+
     /// Drop the finished rows whose file is gone: cleared or evicted from
     /// the cache. A finished row says its track is on this device, which
     /// every client shows at once, ahead of the library catching up; once the
@@ -773,9 +830,12 @@ pub fn settle(
         Err(reason) => Outcome::Failed(reason.clone()),
     };
     let feed = store.end(track_id, outcome).map(|(_, feed)| feed);
+    // Out of reach, a file landing anywhere in the queue may be what a
+    // player waiting with nothing here can play: it hears of every one.
+    let everyone = result.is_ok() && state.here_only();
     let tell = waiters
         .into_iter()
-        .filter(|id| state.is_cursor(*id))
+        .filter(|id| everyone || state.is_cursor(*id))
         .map(|id| match result {
             Ok(_) => PlayerCommand::TrackReady(id),
             Err(_) => PlayerCommand::TrackFailed(id),

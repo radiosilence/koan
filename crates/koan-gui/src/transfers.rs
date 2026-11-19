@@ -287,17 +287,24 @@ impl Report {
 /// finished means the file is here, from the moment it settles: the library
 /// says so too a little later, and the store forgets a finished transfer
 /// whose file is cleared or evicted.
+///
+/// With the server out of reach, a track whose file is not here is not on
+/// this device, whether a download of it waits or not: nothing will arrive
+/// until the server is back, and a mark saying it is on its way would be
+/// read as the track being kept.
 pub fn of_track(
     track: i64,
     on_server: bool,
     on_disk: bool,
     transfer: Option<TransferState>,
+    out_of_reach: bool,
 ) -> Option<Availability> {
     match transfer {
-        Some(TransferState::Queued) => Some(Availability::Queued),
         Some(TransferState::Running) => Some(Availability::Transferring(ring_for(track))),
-        Some(TransferState::Failed) => Some(Availability::Failed),
         Some(TransferState::Done) => stored(on_server, true),
+        _ if out_of_reach && !on_disk && on_server => Some(Availability::NotHere),
+        Some(TransferState::Queued) => Some(Availability::Queued),
+        Some(TransferState::Failed) => Some(Availability::Failed),
         None => stored(on_server, on_disk),
     }
 }
@@ -312,12 +319,23 @@ pub fn of_queue_row(
     on_server: bool,
     on_disk: bool,
     transfer: Option<TransferState>,
+    out_of_reach: bool,
 ) -> Option<Availability> {
     let waiting = matches!(transfer, None | Some(TransferState::Queued));
     match (status, track) {
-        (EntryStatus::PriorityPending, _) if waiting && !on_disk => Some(Availability::Pending),
+        (EntryStatus::PriorityPending, _) if waiting && !on_disk && !out_of_reach => {
+            Some(Availability::Pending)
+        }
+        _ if out_of_reach
+            && !on_disk
+            && on_server
+            && transfer != Some(TransferState::Running)
+            && transfer != Some(TransferState::Done) =>
+        {
+            Some(Availability::NotHere)
+        }
         (EntryStatus::Failed, _) if transfer.is_none() => Some(Availability::Failed),
-        (_, Some(track)) => of_track(track, on_server, on_disk, transfer),
+        (_, Some(track)) => of_track(track, on_server, on_disk, transfer, out_of_reach),
         _ => stored(on_server, on_disk),
     }
 }
@@ -342,7 +360,8 @@ mod tests {
             1,
             true,
             false,
-            Some(TransferState::Done)
+            Some(TransferState::Done),
+            false,
         )));
         assert!(stored_here(of_queue_row(
             EntryStatus::Queued,
@@ -350,6 +369,7 @@ mod tests {
             true,
             false,
             Some(TransferState::Done),
+            false,
         )));
     }
 
@@ -362,7 +382,14 @@ mod tests {
             EntryStatus::Queued,
             EntryStatus::Downloading,
         ] {
-            let mark = of_queue_row(status, Some(1), true, false, Some(TransferState::Running));
+            let mark = of_queue_row(
+                status,
+                Some(1),
+                true,
+                false,
+                Some(TransferState::Running),
+                false,
+            );
             assert!(matches!(mark, Some(Availability::Transferring(_))));
         }
     }
@@ -371,10 +398,73 @@ mod tests {
     /// wanted; on disk already, it does not.
     #[test]
     fn a_wanted_track_waits_only_while_it_is_not_here() {
-        let waiting = of_queue_row(EntryStatus::PriorityPending, Some(1), true, false, None);
+        let waiting = of_queue_row(
+            EntryStatus::PriorityPending,
+            Some(1),
+            true,
+            false,
+            None,
+            false,
+        );
         assert!(matches!(waiting, Some(Availability::Pending)));
-        let here = of_queue_row(EntryStatus::PriorityPending, Some(1), true, true, None);
+        let here = of_queue_row(
+            EntryStatus::PriorityPending,
+            Some(1),
+            true,
+            true,
+            None,
+            false,
+        );
         assert!(stored_here(here));
+    }
+
+    /// Out of reach, a track not here reads as not on this device, queued
+    /// for download or not, so a queue of waiting downloads is never taken
+    /// for a kept album; what is here, or arriving, reads as before.
+    #[test]
+    fn out_of_reach_a_track_not_here_is_not_on_this_device() {
+        let not_here = |mark: Option<Availability>| matches!(mark, Some(Availability::NotHere));
+        assert!(not_here(of_track(
+            1,
+            true,
+            false,
+            Some(TransferState::Queued),
+            true
+        )));
+        assert!(not_here(of_track(1, true, false, None, true)));
+        assert!(not_here(of_track(
+            1,
+            true,
+            false,
+            Some(TransferState::Failed),
+            true
+        )));
+        for status in [EntryStatus::PriorityPending, EntryStatus::Failed] {
+            assert!(not_here(of_queue_row(
+                status,
+                Some(1),
+                true,
+                false,
+                None,
+                true
+            )));
+        }
+        assert!(stored_here(of_track(1, true, true, None, true)));
+        assert!(stored_here(of_track(
+            1,
+            true,
+            false,
+            Some(TransferState::Done),
+            true
+        )));
+        assert!(matches!(
+            of_track(1, true, false, Some(TransferState::Running), true),
+            Some(Availability::Transferring(_))
+        ));
+        assert!(matches!(
+            of_track(1, true, false, Some(TransferState::Queued), false),
+            Some(Availability::Queued)
+        ));
     }
 
     /// The seek bar's reach while the playing track downloads again after

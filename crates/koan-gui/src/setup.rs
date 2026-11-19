@@ -278,7 +278,7 @@ fn keys_worth_knowing() -> &'static [(&'static str, Vec<&'static str>)] {
     KEYS.get_or_init(|| {
         let actions: [(&'static str, Box<dyn Action>); 10] = [
             ("Search", Box::new(Search)),
-            ("Find and play", Box::new(AddMusic)),
+            ("Find", Box::new(AddMusic)),
             ("Play or pause", Box::new(bare::TogglePlayPause)),
             ("Next track", Box::new(Next)),
             ("Previous track", Box::new(Previous)),

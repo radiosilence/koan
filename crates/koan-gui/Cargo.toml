@@ -88,14 +88,14 @@ objc2-app-kit = { version = "0.3.2", features = [
   "NSStatusBar",
   "NSStatusItem",
 ] }
-objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSGeometry", "NSString"] }
+objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSGeometry", "NSString", "NSURL"] }
 
 # The audio session the engine plays through on iOS.
 [target.'cfg(target_os = "ios")'.dependencies]
 # The app's Swift (push, App Attest) drives the same engine, through the
 # uniffi bindings linked into this library.
 koan-ffi = { path = "../koan-ffi" }
-gpui_ios = { package = "gpui-koan-ios", git = "https://github.com/radiosilence/zed", rev = "6d00c3ebf108aeec498394e3a52e220014f29309" }
+gpui_ios = { package = "gpui-koan-ios", git = "https://github.com/radiosilence/zed", rev = "be8db535bac465333448ec87099ba5faa7fd37aa" }
 objc2 = "0.6"
 objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "UIApplication", "UIDevice", "UIResponder"] }
 objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
@@ -103,6 +103,16 @@ objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
   "AVAudioSession",
   "AVAudioSessionRoute",
   "AVAudioSessionTypes",
+] }
+# Now Playing's playback rate and repeat control, which souvlaki does not reach.
+objc2-media-player = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "block2",
+  "MPNowPlayingInfoCenter",
+  "MPRemoteCommand",
+  "MPRemoteCommandCenter",
+  "MPRemoteCommandEvent",
+  "MPRemoteControlTypes",
 ] }
 # Its interruptions and route changes, heard as notifications.
 block2 = "0.6"

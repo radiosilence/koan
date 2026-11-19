@@ -46,12 +46,17 @@ pub struct Feed {
     /// Bumped whenever the connection to the server changes: artwork that
     /// failed to arrive is worth asking for again.
     pub connection_epoch: u64,
+    /// Nothing can be fetched now (`ConnectionInfo::out_of_reach`): a track
+    /// not here reads as not on this device.
+    pub out_of_reach: bool,
     /// Which server, and whether the link to it is up: what the epoch
     /// follows. The rest of the connection report (sharing, devices) moves
     /// for reasons artwork does not care about.
     reach: Option<(Option<String>, bool, Option<String>)>,
     /// The playlists a pick can be added to: every one not read-only.
     pub playlists: Vec<(i64, SharedString)>,
+    /// Every playlist, read-only ones included: what a list of them shows.
+    pub all_playlists: Vec<(i64, SharedString)>,
     /// The newest read of the playlists asked for: an older one landing
     /// after it is dropped.
     playlists_read: u64,
@@ -85,7 +90,13 @@ impl Feed {
                 feed.transfers(derived, cx);
             }),
             cx.observe(&mirror.connection, |feed, connection, cx| {
-                let reach = Self::reach(&connection.read(cx).0);
+                let connection = &connection.read(cx).0;
+                let out = connection.as_ref().is_some_and(|c| c.out_of_reach);
+                let reach = Self::reach(connection);
+                if out != feed.out_of_reach {
+                    feed.out_of_reach = out;
+                    cx.notify();
+                }
                 feed.connection(reach, cx);
             }),
             // A favourite toggled anywhere in the app: the Dock's menu, or
@@ -109,8 +120,10 @@ impl Feed {
             arriving: HashMap::new(),
             transfers: HashMap::new(),
             connection_epoch: 0,
+            out_of_reach: false,
             reach: None,
             playlists: Vec::new(),
+            all_playlists: Vec::new(),
             playlists_read: 0,
             favourites: Favourites::default(),
             favourites_reading: false,
@@ -132,6 +145,12 @@ impl Feed {
         // The connection as it stands is where artwork starts from, not a
         // change to retry failures for.
         feed.reach = Self::reach(&mirror.connection.read(cx).0);
+        feed.out_of_reach = mirror
+            .connection
+            .read(cx)
+            .0
+            .as_ref()
+            .is_some_and(|c| c.out_of_reach);
         feed
     }
 
@@ -255,8 +274,12 @@ impl Feed {
                     return;
                 }
                 feed.playlists = playlists
-                    .into_iter()
+                    .iter()
                     .filter(|p| !p.readonly)
+                    .map(|p| (p.id, p.name.clone().into()))
+                    .collect();
+                feed.all_playlists = playlists
+                    .into_iter()
                     .map(|p| (p.id, p.name.into()))
                     .collect();
                 cx.notify();

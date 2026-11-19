@@ -27,7 +27,7 @@ pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
 
 #[path = "transport_phone.rs"]
 mod phone;
-pub use phone::{Collapse, Expand, Form, MINI_HEIGHT, ShowInfo};
+pub use phone::{Collapse, Expand, Flight, Form, MINI_HEIGHT, SLEEVE, ShowInfo};
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
@@ -93,6 +93,8 @@ pub struct Transport {
     returning: Option<Task<()>>,
     /// How far a finger has pushed the mini player up, while it does.
     lift: Option<Pixels>,
+    /// Now Playing's art, while the mini player's sleeve grows into it.
+    pub(crate) flight: Option<phone::Flight>,
     _subscriptions: [Subscription; 8],
 }
 
@@ -212,20 +214,27 @@ impl Transport {
                         cx.notify();
                     }
                 }),
-                // Redrawn when its own sleeve lands, not for every sleeve the
-                // queue fetches as it scrolls.
+                // Redrawn when its own sleeve lands, or when the cache has
+                // dropped the one shown from the GPU, not for every sleeve
+                // the queue fetches as it scrolls.
                 cx.observe(&covers, |this, _, cx| {
-                    if !matches!(this.cover, CoverArt::Image(_)) {
-                        let album = this
-                            .playback
-                            .read(cx)
-                            .0
-                            .entry
-                            .as_ref()
-                            .and_then(|e| e.album_id);
-                        if covers::image(album, COVER, this.scale, cx).is_some() {
-                            cx.notify();
+                    let album = this
+                        .playback
+                        .read(cx)
+                        .0
+                        .entry
+                        .as_ref()
+                        .and_then(|e| e.album_id);
+                    let held = covers::image(album, COVER, this.scale, cx);
+                    let moved = match (&this.cover, &held) {
+                        (CoverArt::Image(shown), Some(held)) => {
+                            !std::sync::Arc::ptr_eq(shown, held)
                         }
+                        (CoverArt::Image(_), None) => true,
+                        (_, held) => held.is_some(),
+                    };
+                    if moved {
+                        cx.notify();
                     }
                 }),
                 // Shuffle and repeat are underlined in the accent.
@@ -271,6 +280,7 @@ impl Transport {
             pulled: crate::components::Follow::new(),
             returning: None,
             lift: None,
+            flight: None,
         };
         this.reload_eq(cx);
         this
@@ -840,6 +850,8 @@ impl Trailing {
 /// The least the record's side keeps beside its sleeve, at 100 %: a few
 /// letters of its title and its credit.
 const LEFT_TEXT_LEAST: f32 = 56.0;
+/// The same under a finger, where no tooltip reads out what was cut.
+const LEFT_TEXT_LEAST_TOUCH: f32 = 140.0;
 /// The least the centre gives way to, at 100 %: the controls, and a seek bar
 /// with its times either side.
 const CENTRE_LEAST: f32 = 300.0;
@@ -1196,7 +1208,11 @@ impl Render for Transport {
         // The sleeve, a line's start and the heart beside it.
         let left_least = COVER
             + p.space(Space::M)
-            + p.look.sized(LEFT_TEXT_LEAST)
+            + p.look.sized(if p.look.touch {
+                LEFT_TEXT_LEAST_TOUCH
+            } else {
+                LEFT_TEXT_LEAST
+            })
             + Pixels::from(crate::theme::icons::side(p.look.points(TypeRole::Meta)))
             + p.space(Space::Xs);
         let centre_least = p.look.sized(CENTRE_LEAST);
@@ -1464,6 +1480,17 @@ fn answer_after(waiting: Option<u64>, count: u64) -> u64 {
     waiting.map_or(count, |earlier| count.max(earlier + 1))
 }
 
+/// How long what is playing is: the stream's own figure, or, while it has
+/// none yet (the output still opening, a download not yet probed), the
+/// library's for the entry, so neither the seek bar nor the mini player's
+/// line is left empty.
+pub(super) fn known_duration(stream_ms: u64, library_ms: Option<u64>) -> u64 {
+    match stream_ms {
+        0 => library_ms.unwrap_or(0),
+        known => known,
+    }
+}
+
 /// The seek slider and the times either side of it.
 ///
 /// The position is reckoned from the engine's playhead anchor, the one source
@@ -1561,7 +1588,11 @@ impl Seek {
     }
 
     fn duration_ms(&self, cx: &App) -> u64 {
-        self.playback.read(cx).0.duration_ms
+        let now = &self.playback.read(cx).0;
+        known_duration(
+            now.duration_ms,
+            now.entry.as_ref().and_then(|e| e.duration_ms),
+        )
     }
 
     fn schedule(&mut self, cx: &mut Context<Self>) {
@@ -1731,8 +1762,17 @@ fn controlled_shown(view: &Devices) -> ControlledShown {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{Thumb, answer_after, shown_position, thumb_after};
+    use super::{Thumb, answer_after, known_duration, shown_position, thumb_after};
     use crate::mirror::Playhead;
+
+    /// A stream that has not said how long it is yet leaves the seek bar
+    /// the library's figure, not a disabled bar; once it says, it wins.
+    #[test]
+    fn the_seek_bar_has_a_duration_before_the_stream_states_one() {
+        assert_eq!(known_duration(0, Some(240_000)), 240_000);
+        assert_eq!(known_duration(241_500, Some(240_000)), 241_500);
+        assert_eq!(known_duration(0, None), 0);
+    }
 
     fn playhead(position_ms: u64, seek: u64) -> Playhead {
         Playhead {

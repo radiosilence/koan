@@ -2454,33 +2454,53 @@ pub fn db_path() -> PathBuf {
 /// Above this, `koan.log` is moved aside to `koan.log.1`, replacing the one
 /// before, so the log never holds more than twice it.
 const LOG_LIMIT: u64 = 16 * 1024 * 1024;
-/// How many lines go by between looks at the file's size: the app stays open
-/// for days, so checking only when the file is opened is not enough.
-const LOG_CHECK_EVERY: u32 = 4096;
 
 /// `koan.log`, kept to a size. Every logger writes through one of these.
 #[derive(Default)]
 pub struct LogFile {
     file: Option<fs::File>,
-    lines: u32,
+    /// The file's size when opened and what this writer has added since. The
+    /// app stays open for days, so checking only when the file is opened is
+    /// not enough, and lines are of no fixed length.
+    written: u64,
+}
+
+struct Counted<'a>(&'a mut fs::File, &'a mut u64);
+
+impl std::io::Write for Counted<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = std::io::Write::write(&mut *self.0, buf)?;
+        *self.1 += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::Write::flush(&mut *self.0)
+    }
 }
 
 impl LogFile {
     pub fn write(&mut self, line: std::fmt::Arguments) {
         use std::io::Write as _;
         if self.file.is_none() {
-            self.file = open_log();
+            self.open();
         }
         let Some(file) = self.file.as_mut() else {
             return;
         };
-        let _ = writeln!(file, "{line}");
-        self.lines = self.lines.wrapping_add(1);
-        if self.lines.is_multiple_of(LOG_CHECK_EVERY)
-            && file.metadata().is_ok_and(|m| m.len() > LOG_LIMIT)
-        {
-            self.file = open_log();
+        let _ = writeln!(Counted(file, &mut self.written), "{line}");
+        if self.written > LOG_LIMIT {
+            self.open();
         }
+    }
+
+    fn open(&mut self) {
+        self.file = open_log();
+        self.written = self
+            .file
+            .as_ref()
+            .and_then(|f| f.metadata().ok())
+            .map_or(0, |m| m.len());
     }
 
     pub fn flush(&mut self) {

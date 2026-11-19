@@ -56,6 +56,7 @@ pub fn sanitise_filename(s: &str) -> String {
         .chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
             _ => c,
         })
         .collect::<String>()

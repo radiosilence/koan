@@ -153,4 +153,4 @@ If you're modifying config programmatically (e.g. a new CLI command that writes 
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions will be licensed under the [GNU AGPL, version 3 or later](LICENSE), with the additional permission in [NOTICE](NOTICE).

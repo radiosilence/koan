@@ -56,11 +56,12 @@ impl StatusBlock {
 impl RenderOnce for StatusBlock {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let truncated = |d: Div| {
+        // Nothing under a finger shows what an ellipsis cut off.
+        let touch = look.touch;
+        let truncated = move |d: Div| {
             d.min_w_0()
                 .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
+                .when(!touch, |d| d.whitespace_nowrap().text_ellipsis())
         };
         div()
             .w_full()

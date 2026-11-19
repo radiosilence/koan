@@ -191,8 +191,12 @@ impl Render for SearchField {
 /// A browser's controls in the window's toolbar: the filter field first, then
 /// what the caller adds. On a phone the field is the list's (`with_filter`)
 /// and the bar holds the buttons alone.
-pub fn browser_controls(search: &Entity<SearchField>) -> crate::components::ToolbarGroup {
-    if crate::mobile::phone() {
+pub fn browser_controls(
+    search: &Entity<SearchField>,
+    window: &Window,
+    cx: &App,
+) -> crate::components::ToolbarGroup {
+    if crate::theme::Look::of(window, cx).compact {
         crate::components::ToolbarGroup::new()
     } else {
         crate::components::ToolbarGroup::new()
@@ -572,6 +576,55 @@ pub fn selection_bar<V: Picking>(
             end(cx);
         }
     };
+    // On a phone the verbs are icons over their words, sharing the width;
+    // five written out in full would not fit along it.
+    if cx.global::<crate::theme::KoanTheme>().touch {
+        let fav_all =
+            !picked.is_empty() && picked.iter().all(|i| lib.feed.read(cx).is_favourite(*i));
+        let none = picked.is_empty();
+        return SelectionBar::new(count(n as u64, "picked", "picked"))
+            .icon_verb(
+                "sel-play",
+                Icon::Play,
+                "play",
+                none,
+                verb(|lib, p, cx| actions::play(lib, p, false, cx).detach()),
+            )
+            .icon_verb(
+                "sel-next",
+                Icon::Next,
+                "next",
+                none,
+                verb(|lib, p, cx| {
+                    actions::queue(lib, p, koan_runtime::Placement::Next, cx).detach()
+                }),
+            )
+            .icon_verb(
+                "sel-queue",
+                Icon::QueueSection,
+                "queue",
+                none,
+                verb(|lib, p, cx| {
+                    actions::queue(lib, p, koan_runtime::Placement::Append, cx).detach()
+                }),
+            )
+            .icon_verb(
+                "sel-playlist",
+                Icon::Playlist,
+                "playlist",
+                none,
+                to_playlist,
+            )
+            .icon_verb(
+                "sel-fav",
+                Icon::Favourite,
+                if fav_all { "unlike" } else { "like" },
+                none,
+                verb(actions::favourite),
+            )
+            .on_done(move |_, _, cx| end(cx))
+            .done_help("stop selecting");
+    }
     SelectionBar::new(count(n as u64, "picked", "picked"))
         .verb_help(
             "sel-play",
@@ -602,7 +655,7 @@ pub fn selection_bar<V: Picking>(
             },
             verb(actions::favourite),
         )
-        .when(!crate::mobile::phone(), |bar| {
+        .when(!crate::mobile::handheld(), |bar| {
             bar.verb("sel-organise", "organise…", organise)
         })
         .on_done(move |_, _, cx| end(cx))

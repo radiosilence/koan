@@ -120,7 +120,7 @@ impl RenderOnce for Picker {
         // On a phone it gives way to the row's edge, cutting what is chosen
         // short inside its box rather than running past the margin.
         .map(|d| {
-            if look.touch {
+            if look.compact {
                 d.flex_shrink(1.).min_w_0()
             } else {
                 d.flex_none()

@@ -146,7 +146,7 @@ impl Render for PlaybackPane {
         let mut sections = Vec::new();
         // On a phone the route is the only device, and choosing it is the
         // system's, as in the iOS app.
-        if !crate::mobile::phone() {
+        if !crate::mobile::handheld() {
             sections.push(section(
                 Some("Device"),
                 vec![device.into_any_element()],

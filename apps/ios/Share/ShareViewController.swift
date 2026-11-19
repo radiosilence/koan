@@ -77,7 +77,11 @@ final class ShareViewController: UIViewController {
             _ = provider.loadFileRepresentation(for: type, openInPlace: false) { url, _, _ in
                 // The file is only there for the length of this handler.
                 guard let url else { return done.resume(returning: false) }
-                let dest = inbox.appending(path: url.lastPathComponent)
+                // Two attachments of one name are both kept.
+                var dest = inbox.appending(path: url.lastPathComponent)
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    dest = inbox.appending(path: "\(index) \(url.lastPathComponent)")
+                }
                 done.resume(returning: (try? FileManager.default.copyItem(at: url, to: dest)) != nil)
             }
         }

@@ -27,6 +27,15 @@ down for more than a few seconds. Until then the server reports the device as
 unreachable and refuses commands sent to it. Offline mode turned on by hand
 shows no banner.
 
+While the device cannot reach its server at all (no network, no route, the
+connection refused) or offline mode is on, playback moving on by itself
+passes over tracks whose files are not on the device and plays the next one
+that is, in every app and the terminal UI. A downloaded album plays from a
+cold launch with no network. A track you choose that is not on the device
+is not swapped for another: playback waits on it, says why, and plays it
+once the server answers. A server that answers with an error, such as a
+proxy's 503, is still reachable, and tracks still wait for their downloads.
+
 ## Staying in sync
 
 Every sync walks the whole library, which is what lets it notice a track the server deleted or gave a new id. The apps sync on their own, and only when the server's library has changed:
@@ -37,6 +46,8 @@ Every sync walks the whole library, which is what lets it notice a track the ser
 ```bash
 koan remote sync          # sync now
 ```
+
+To sync now from an app, pull a library listing (the library's sections, Albums, Artists, Tracks, Favourites, Recently played, Downloaded) down past its top and let go: on a phone or tablet with a finger, and in the kōan app on a Mac with two fingers on the trackpad. The gap shows how far to pull, then a spinner until the sync ends. The pull is offered only while the device is signed in to a server; a mouse wheel does not pull. Settings → Server → Sync and the Library menu's Sync do the same.
 
 Signing out stops a sync from that server where it is, including one waiting for another to finish, and any that starts before this device signs in to it again. What it wrote stays, and nothing is recorded as synced, so the next sync from that server walks the library again.
 

@@ -89,6 +89,13 @@ pub struct Shell {
     /// Watches the artwork viewer, and while it shows, the sleeve it waits
     /// for.
     _artwork: [Subscription; 2],
+    /// The library page's ends, giving under a trackpad; its top pulled
+    /// syncs with the server.
+    elastic: crate::components::Elastic,
+    /// Whether there is a server to sync with and a sync runs, as last
+    /// drawn, and what redraws the page when either changes.
+    sync_standing: (bool, bool),
+    _sync_standing: [Subscription; 2],
 }
 
 impl Shell {
@@ -178,10 +185,7 @@ impl Shell {
             downloads: None,
             koan_menu: crate::components::MenuSlot::default(),
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
-            sidebar_width: f32::from_bits(
-                window_state::SIDEBAR_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
-            )
-            .into(),
+            sidebar_width: window_state::sidebar_width(),
             arrived_at: Route::Queue,
             _arrivals: arrivals,
             _activation: activation,
@@ -192,11 +196,7 @@ impl Shell {
             lyrics: None,
             lyrics_shown: false,
             lyrics_slide: Default::default(),
-            lyrics_width: Some(f32::from_bits(
-                window_state::LYRICS_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
-            ))
-            .filter(|w| *w > 0.0)
-            .map(Pixels::from),
+            lyrics_width: window_state::lyrics_width(),
             _asking: {
                 let asking = ask::asking(cx);
                 cx.observe(&asking, |_, _, cx| cx.notify())
@@ -217,6 +217,22 @@ impl Shell {
                             cx.notify();
                         }
                     }),
+                ]
+            },
+            elastic: crate::components::Elastic::new(),
+            sync_standing: (false, false),
+            _sync_standing: {
+                fn moved(this: &mut Shell, cx: &mut Context<Shell>) {
+                    let standing = library::activity::sync_standing(cx);
+                    if std::mem::replace(&mut this.sync_standing, standing) != standing {
+                        cx.notify();
+                    }
+                }
+                let activity = cx.global::<library::activity::ActivityHandle>().0.clone();
+                let connection = cx.global::<crate::mirror::Mirror>().connection.clone();
+                [
+                    cx.observe(&activity, |this, _, cx| moved(this, cx)),
+                    cx.observe(&connection, |this, _, cx| moved(this, cx)),
                 ]
             },
         }
@@ -684,6 +700,10 @@ impl Render for Shell {
         if route != Route::Downloads {
             self.downloads = None;
         }
+        // Given on every page, so one left while held open closes there.
+        let pull =
+            library::activity::pull_to_sync(route, bar_inset, p.look.palette.muted.hsla(), cx);
+        self.elastic.refresh(route.key(), pull, window, cx);
         let stage = match route {
             Route::Downloads => self
                 .downloads(cx)
@@ -695,10 +715,12 @@ impl Render for Shell {
                 .cached(StyleRefinement::default().size_full())
                 .into_any_element(),
             route if LibraryStage::draws(route) => match &self.library {
-                Some(library) => library
-                    .clone()
-                    .cached(StyleRefinement::default().size_full())
-                    .into_any_element(),
+                Some(library) => {
+                    let page = library
+                        .clone()
+                        .cached(StyleRefinement::default().size_full());
+                    self.elastic.wrap(page, window, cx)
+                }
                 None => div().size_full().into_any_element(),
             },
             _ => div()
@@ -864,18 +886,10 @@ impl Render for Shell {
                                             ))
                                             .on_commit(cx.listener(
                                                 move |this, width: &Pixels, window, cx| {
-                                                    // The reset width is no
-                                                    // width of the person's: it
-                                                    // follows the text size.
                                                     this.lyrics_width =
-                                                        (*width != inspector).then_some(*width);
-                                                    window_state::LYRICS_WIDTH.store(
-                                                        this.lyrics_width
-                                                            .map_or(0.0, f32::from)
-                                                            .to_bits(),
-                                                        std::sync::atomic::Ordering::Relaxed,
-                                                    );
-                                                    window_state::save(window.window_bounds(), cx);
+                                                        window_state::keep_lyrics_width(
+                                                            *width, inspector, window, cx,
+                                                        );
                                                 },
                                             ))
                                             .when_some(self.lyrics.clone(), |slide, lyrics| {
@@ -917,11 +931,7 @@ impl Render for Shell {
                         cx.notify();
                     }))
                     .on_commit(|width: &Pixels, window, cx| {
-                        window_state::SIDEBAR_WIDTH.store(
-                            f32::from(*width).to_bits(),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        window_state::save(window.window_bounds(), cx);
+                        window_state::keep_sidebar_width(*width, window, cx)
                     }),
                 ),
             )

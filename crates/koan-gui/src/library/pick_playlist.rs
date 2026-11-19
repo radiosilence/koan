@@ -33,6 +33,13 @@ pub fn open(lib: &Lib, items: Arc<[Playable]>, after: After, window: &mut Window
     ask::present(sheet, window, cx);
 }
 
+/// Opens the sheet for `tracks`, nothing to do after: for tools that walk
+/// the pages.
+pub fn open_tracks(lib: &Lib, tracks: Vec<i64>, window: &mut Window, cx: &mut App) {
+    let items: Arc<[Playable]> = tracks.into_iter().map(Playable::Track).collect();
+    open(lib, items, None, window, cx);
+}
+
 pub struct PickPlaylist {
     lib: Lib,
     items: Arc<[Playable]>,
@@ -152,8 +159,8 @@ impl PickPlaylist {
         self.shown.first().map(|i| playlists[*i].id)
     }
 
-    fn choose(&mut self, id: i64, _: &mut Window, cx: &mut Context<Self>) {
-        add_to_playlist(&self.lib, id, &self.items, cx);
+    fn choose(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        add_to_playlist(&self.lib, id, &self.items, window.window_handle(), cx);
         self.done(cx);
     }
 
@@ -262,13 +269,20 @@ impl PickPlaylist {
             .zip(sleeves)
             .map(|(playlist, sleeve)| {
                 let id = playlist.id;
-                NavRow::data(("pick-playlist", id as u64), playlist.name.clone())
-                    .art(Mosaic::new(
-                        sleeve.into_iter().map(Into::into).collect(),
-                        side,
-                    ))
-                    .detail(count(playlist.track_count.into(), "track", "tracks"))
-                    .on_click(cx.listener(move |this, _, window, cx| this.choose(id, window, cx)))
+                // As wide as the list: a list's items size to their content.
+                div()
+                    .w_full()
+                    .child(
+                        NavRow::data(("pick-playlist", id as u64), playlist.name.clone())
+                            .art(Mosaic::new(
+                                sleeve.into_iter().map(Into::into).collect(),
+                                side,
+                            ))
+                            .detail(count(playlist.track_count.into(), "track", "tracks"))
+                            .on_click(
+                                cx.listener(move |this, _, window, cx| this.choose(id, window, cx)),
+                            ),
+                    )
                     .into_any_element()
             })
             .collect();

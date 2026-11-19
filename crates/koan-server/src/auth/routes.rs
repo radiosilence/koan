@@ -770,11 +770,15 @@ pub(crate) fn rotate(
 async fn refresh(
     State(state): State<AuthRouteState>,
     ClientIp(from): ClientIp,
-    headers: axum::http::HeaderMap,
     body: Option<Json<RefreshRequest>>,
 ) -> Response {
-    let supplied = body.and_then(|Json(req)| req.refresh_token);
-    let Some(supplied) = refresh_token_from(supplied.as_deref(), &headers) else {
+    // From the body alone: this answers with the tokens, and one read from
+    // the cookie would hand page script what `HttpOnly` keeps from it. A
+    // browser renews through `/auth/renew`, which answers with cookies.
+    let supplied = body
+        .and_then(|Json(req)| req.refresh_token)
+        .filter(|t| !t.is_empty());
+    let Some(supplied) = supplied else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(MessageResponse {

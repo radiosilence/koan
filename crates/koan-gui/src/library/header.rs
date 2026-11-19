@@ -49,7 +49,7 @@ pub fn playable_header(
         );
     // A phone's header keeps the heart and puts the rest under "more", as
     // the iOS app's does: four verbs in a row do not fit its width.
-    if crate::mobile::phone() {
+    if crate::theme::Look::of(window, cx).compact {
         let more = lib.clone();
         return header
             // The heart itself, so it pops and deflates as everywhere else.

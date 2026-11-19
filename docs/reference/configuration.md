@@ -43,35 +43,9 @@ polluted by an older kōan cleans itself up as you use the app.
 
 The desktop app's own view state -- the window's bounds, whether the sidebar
 shows, whether the queue is grouped -- lives in `desktop-window` in its state
-directory, and the SwiftUI apps' -- whether the lyrics panel is open, how much
-the app draws -- in their defaults (`defaults read cc.blit.koan` for the Mac
-app released before 0.70), not in `config.toml`. None of it means anything
-to the CLI or the TUI, and a setting that travels between machines in a
-committed dotfile should be one that makes sense on all of them.
-
-The SwiftUI apps' graphics level is the one worth knowing about. Settings -> Appearance, or:
-
-```bash
-defaults write cc.blit.koan graphics -int 0   # 3 bare, 0 plain, 1 reduced, 2 full
-```
-
-| | Wash | Chrome | Window | Cost |
-|---|---|---|---|---|
-| `2` Full (default) | drifts | glass | glass toolbar | 15-18% of a core |
-| `1` Reduced | held still | glass | glass toolbar | ~9% |
-| `0` Plain | none | flat materials | glass toolbar | ~6% |
-| `3` Bare | none | flat materials | opaque toolbar | |
-
-The playing indicators move at every level; only Reduce Motion holds them
-still. The Chrome column is the system look's: the kōan theme draws its own
-flat chrome, with no Liquid Glass, at every level. Bare also stands down the
-window's own glass, the toolbar floating over the page and the soft edge under
-the transport, which macOS redraws whenever anything behind them moves.
-
-Measured on an M1 Pro, playing, window frontmost. The wash's blur is close to
-free -- it is rasterised once and magnified as a texture -- so holding it still
-costs about what not drawing it costs. It is the drift that is expensive, which
-is why `Reduced` keeps the record's colour and only stops it moving.
+directory, not in `config.toml`. None of it means anything to the CLI or the
+TUI, and a setting that travels between machines in a committed dotfile should
+be one that makes sense on all of them.
 
 ## Environment variable overrides
 

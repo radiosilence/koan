@@ -604,6 +604,7 @@ impl ArtistPage {
                     selected,
                     gathered: true,
                     transfer: feed.transfers.get(&track.id).copied(),
+                    out_of_reach: feed.out_of_reach,
                     drag,
                     kind: crate::components::RowKind::Art,
                     note: None,
@@ -980,10 +981,10 @@ impl TileHost for ArtistPage {
 }
 
 impl TrackList for ArtistPage {
-    fn row_tracks(&self) -> Vec<i64> {
+    fn row_tracks(&self) -> Vec<&koan_runtime::Track> {
         self.record
             .as_ref()
-            .map(|r| r.appearances.iter().map(|t| t.id).collect())
+            .map(|r| r.appearances.iter().collect())
             .unwrap_or_default()
     }
 
@@ -1023,7 +1024,7 @@ impl TrackList for ArtistPage {
                     rows::select(&mut self.selection, item, event, order, cx)
                 };
                 if plays {
-                    actions::play_list(&self.lib, ids, index, cx);
+                    actions::play_list(&self.lib, self.row_tracks(), index, cx);
                 }
                 cx.notify();
             }
@@ -1093,9 +1094,8 @@ impl super::keys::KeyedList for ArtistPage {
                 .nav
                 .update(cx, |nav, cx| nav.open(Page::Album(album), cx)),
             _ => {
-                let ids = r.appearances.iter().map(|t| t.id).collect();
                 let from = ix - r.albums.len() - r.features.len();
-                actions::play_list(&self.lib, ids, from, cx);
+                actions::play_list(&self.lib, &r.appearances, from, cx);
             }
         }
     }
@@ -1145,7 +1145,7 @@ impl Render for ArtistPage {
         // Cut again when the record or the columns change; the scroll goes
         // back to where it was left once there is content under it.
         if let (Some(width), Some(record)) = (self.width.get(), self.record.clone()) {
-            let grid = Grid::for_width(width, &p.look.scale);
+            let grid = Grid::for_look(width, &p.look);
             // Only the room between tiles moved: the rows are cut as they were.
             if self.grid.is_some_and(|g| g.same_rows(&grid)) {
                 self.grid = Some(grid);
@@ -1248,6 +1248,7 @@ mod tests {
     fn album(id: i64, section: ReleaseSection) -> Album {
         Album {
             id,
+            uid: None,
             title: String::new(),
             artist_id: 1,
             artist_name: String::new(),

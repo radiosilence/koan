@@ -87,6 +87,10 @@ pub fn cmd_auth_setup(tty: Tty, save_to_1password: bool) {
             }
             u
         });
+    let username = match koan_core::invite::valid_username(&username) {
+        Ok(username) => username.to_owned(),
+        Err(e) => fail(&e.to_string()),
+    };
 
     let password = new_password(tty);
 
@@ -126,6 +130,8 @@ pub fn cmd_auth_create_user(tty: Tty, username: &str, role_str: &str, save_to_1p
         );
         std::process::exit(1);
     });
+    let username =
+        koan_core::invite::valid_username(username).unwrap_or_else(|e| fail(&e.to_string()));
 
     let password = new_password(tty);
 

@@ -1026,8 +1026,16 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
                     anchored()
                         .position(at)
                         .snap_to_window_with_margin(px(8.))
-                        // Fading in a step below where it lands, on the GPU.
-                        .child(super::Rise::in_place(menu)),
+                        // Under touch it opens out of the press that held it;
+                        // otherwise it fades in a step below where it lands,
+                        // on the GPU.
+                        .map(|a| {
+                            if Look::of(window, cx).touch {
+                                a.child(super::ZoomIn::new(at, menu)).into_any_element()
+                            } else {
+                                a.child(super::Rise::in_place(menu)).into_any_element()
+                            }
+                        }),
                 )
                 .with_priority(1),
             );

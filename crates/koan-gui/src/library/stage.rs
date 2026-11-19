@@ -47,6 +47,16 @@ impl LibraryStage {
             }
             cx.notify();
         })];
+        subscriptions.push(cx.subscribe(
+            &lib.nav,
+            |this: &mut Self, _, moved: &super::nav::Relinked, _| {
+                for made in this.page.iter_mut().chain(this.under.iter_mut()) {
+                    if made.page == moved.from {
+                        made.page = moved.to;
+                    }
+                }
+            },
+        ));
         // Gone with its window (closed, the app kept running): no record's
         // page shows, and the windows left follow the playing record.
         subscriptions.push(cx.on_release(|_, cx| crate::root::ShownRecord::show(None, cx)));
@@ -311,7 +321,7 @@ impl Render for LibraryStage {
             .nav
             .read(cx)
             .info
-            .filter(|_| !crate::mobile::phone());
+            .filter(|_| !crate::mobile::handheld());
         if self.info.as_ref().map(|(id, _)| *id) != wanted {
             let lib = self.lib.clone();
             self.info = wanted.map(|id| {

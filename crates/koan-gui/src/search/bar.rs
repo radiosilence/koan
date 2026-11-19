@@ -6,7 +6,7 @@
 //! | Key | Does |
 //! |---|---|
 //! | ↑ ↓ | light a row, or "All results…" after the last |
-//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, go to it: a record or an artist to its page, a track to its record's, picked |
+//! | Return | with no row lit, or "All results…", every result on the results page; on a lit row, go to it: a record or an artist to its page, a track to its record's |
 //! | ⌘Return | play next |
 //! | ⌥Return | add to the queue |
 //! | ⇧⌘Return | replace the queue, asking first when it holds anything |
@@ -62,6 +62,17 @@ impl Item {
             Kind::Track => Playable::Track(self.id),
             Kind::Album => Playable::Album(self.id),
             Kind::Artist => Playable::Artist(self.id),
+        }
+    }
+
+    /// Where Return takes the row: a record's or an artist's page, and a
+    /// track's record's. A track on no record has nowhere to go.
+    fn page(&self) -> Option<Page> {
+        match (self.kind, self.art) {
+            (Kind::Album, _) => Some(Page::Album(self.id)),
+            (Kind::Artist, _) => Some(Page::Artist(self.id)),
+            (Kind::Track, Some(Art::Album(album))) => Some(Page::Album(album)),
+            (Kind::Track, _) => None,
         }
     }
 
@@ -135,7 +146,7 @@ fn relit(item: Option<&Item>, rows: &[Item]) -> Option<usize> {
 /// What a key asks of the lit row, or of everything ticked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verb {
-    /// Play a track, open a record or an artist.
+    /// Go to the row's page: a record's, an artist's, a track's record's.
     Take,
     Next,
     Append,
@@ -409,22 +420,13 @@ impl Found {
             crate::library::actions::queue(&lib, &items, placement, cx).detach()
         };
         match verb {
-            // Choosing goes to the thing and plays nothing: a record or an
-            // artist to its page, a track to its record's with the track
-            // picked.
+            // Return navigates and never touches playback: the verbs that
+            // play say so.
             Verb::Take if !picking => {
-                let (page, pick) = match first.kind {
-                    Kind::Album => (Page::Album(first.id), None),
-                    Kind::Artist => (Page::Artist(first.id), None),
-                    Kind::Track => match first.art {
-                        Some(Art::Album(album)) => (Page::Album(album), Some((album, first.id))),
-                        _ => return,
-                    },
+                let Some(page) = first.page() else {
+                    return;
                 };
-                // The pick is announced whether or not the page moves: a
-                // record already showing takes it at once.
                 self.lib.nav.update(cx, |nav, cx| {
-                    nav.pick = pick;
                     nav.open(page, cx);
                     cx.notify();
                 });
@@ -629,10 +631,11 @@ impl Render for Found {
         } else if !chosen {
             bar.key("↩", "all results").key("↑↓", "choose")
         } else {
-            let bar = if picking {
-                bar
-            } else {
+            let lit = self.lit.and_then(|i| rows.get(i));
+            let bar = if !picking && lit.and_then(Item::page).is_some() {
                 bar.key("↩", "go to")
+            } else {
+                bar
             };
             bar.key("⌘↩", "play next")
                 .key("⌥↩", "add to queue")
@@ -720,6 +723,18 @@ mod tests {
             detail: None,
             length: None,
         }
+    }
+
+    #[test]
+    fn return_goes_to_a_page_and_a_track_to_its_record() {
+        assert_eq!(item(Kind::Album, 3).page(), Some(Page::Album(3)));
+        assert_eq!(item(Kind::Artist, 4).page(), Some(Page::Artist(4)));
+        let track = Item {
+            art: Some(Art::Album(9)),
+            ..item(Kind::Track, 5)
+        };
+        assert_eq!(track.page(), Some(Page::Album(9)));
+        assert_eq!(item(Kind::Track, 5).page(), None);
     }
 
     #[test]

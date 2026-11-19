@@ -7,7 +7,11 @@ pub mod about;
 pub mod actions;
 pub mod dock;
 pub mod drop;
+#[cfg(any(target_os = "ios", test))]
+mod inbox;
 pub mod instance;
+#[cfg(any(target_os = "ios", test))]
+mod interruption;
 #[cfg(target_os = "ios")]
 pub mod ios;
 pub mod logging;

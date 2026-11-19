@@ -63,6 +63,38 @@ pub enum Listing {
 }
 
 impl Route {
+    /// The route names a row by id, which the library can delete and reuse.
+    pub fn names_row(self) -> bool {
+        matches!(
+            self,
+            Route::Album(_) | Route::Artist(_) | Route::Playlist(_)
+        )
+    }
+
+    /// A listing of the library, which a pull from its top syncs with the
+    /// server.
+    pub fn syncs_on_pull(self) -> bool {
+        matches!(
+            self,
+            Route::Albums
+                | Route::Artists
+                | Route::Tracks
+                | Route::Favourites
+                | Route::RecentlyPlayed
+                | Route::OnDevice
+                | Route::Shelved(..)
+                | Route::Library
+        )
+    }
+
+    /// The route as a key that changes when the page showing does.
+    pub fn key(self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// A route by name, for tools that open the app somewhere: `albums`,
     /// `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`,
     /// `playlist:<id>`.
@@ -85,6 +117,11 @@ impl Route {
         }
     }
 }
+
+/// How many pages a history keeps. Older visits than this are dropped from
+/// behind the root, so Back walks the most recent ones and a long session's
+/// history does not outgrow what anyone walks back through.
+const HISTORY_LIMIT: usize = 50;
 
 /// What choosing a route did.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -153,8 +190,57 @@ impl Navigator {
         }
         self.history.truncate(self.cursor + 1);
         self.history.push(route);
+        if self.history.len() > HISTORY_LIMIT {
+            // The root stays: a phone's tab is its root's.
+            self.history.remove(1);
+        }
         self.cursor = self.history.len() - 1;
         true
+    }
+
+    /// Whether any tab's history holds `route`.
+    pub fn holds(&self, route: Route) -> bool {
+        self.history.contains(&route) || self.stashed.values().any(|(h, _)| h.contains(&route))
+    }
+
+    /// A record's row went and came back as another row, as a sync can make
+    /// it: every visit of `from` becomes one of `to`, the cursor staying on
+    /// the same visit.
+    pub fn relink(&mut self, from: Route, to: Route) {
+        for (history, _) in self.stashed.values_mut() {
+            for route in history.iter_mut().filter(|r| **r == from) {
+                *route = to;
+            }
+        }
+        for route in self.history.iter_mut().filter(|r| **r == from) {
+            *route = to;
+        }
+    }
+
+    /// The library lost the row `route` names, and the id may come back as
+    /// another record's: Back must not lead there. The page showing is left
+    /// to find its record again by uid, or to say it has gone; its other
+    /// visits go.
+    pub fn forget_lost(&mut self, route: Route) {
+        for (history, cursor) in self.stashed.values_mut() {
+            Self::forget_here(history, cursor, route);
+        }
+        if self.current() != route {
+            Self::forget_here(&mut self.history, &mut self.cursor, route);
+            return;
+        }
+        let showing = self.cursor;
+        let before = self.history[..showing]
+            .iter()
+            .filter(|r| **r != route)
+            .count();
+        let mut ix = 0;
+        self.history.retain(|r| {
+            let keep = ix == showing || *r != route;
+            ix += 1;
+            keep
+        });
+        self.collapse(before);
     }
 
     /// A route chosen where it is listed (the sidebar): a move, or for the
@@ -202,6 +288,31 @@ impl Navigator {
         self.cursor = cursor;
         self.tab = tab;
         Chosen::Moved
+    }
+
+    /// The page showing given to a phone's `tab`, over its `root`, as a
+    /// window narrows from a tablet's single history to a phone's tabs. The
+    /// other tabs start again from their roots.
+    pub fn adopt(&mut self, tab: usize, root: Route) {
+        let showing = self.current();
+        self.history = if showing == root {
+            vec![root]
+        } else {
+            vec![root, showing]
+        };
+        self.cursor = self.history.len() - 1;
+        self.tab = tab;
+        self.stashed.clear();
+    }
+
+    /// Leaves only the tab's root behind the page showing, so that going
+    /// back from it lands on the root.
+    pub fn skip_to_root(&mut self) {
+        if self.cursor > 0 {
+            self.history.drain(1..self.cursor);
+            self.cursor = 1;
+            self.history.truncate(2);
+        }
     }
 
     pub fn back(&mut self) -> bool {
@@ -264,8 +375,13 @@ impl Navigator {
             surviving
         }
         .min(self.history.len() - 1);
-        // The pages either side of a forgotten one can be the same page, and
-        // the same page twice in a row is not a step Back can take.
+        self.collapse(landing);
+    }
+
+    /// The pages either side of a forgotten one can be the same page, and the
+    /// same page twice in a row is not a step Back can take: runs become one
+    /// visit, the cursor on the run holding `landing`.
+    fn collapse(&mut self, landing: usize) {
         let mut collapsed: Vec<Route> = Vec::with_capacity(self.history.len());
         let mut cursor = 0;
         for (ix, route) in self.history.iter().enumerate() {
@@ -289,6 +405,87 @@ mod tests {
     const ALBUMS: Route = Route::Albums;
     const TRACKS: Route = Route::Tracks;
     const PLAYLIST: Route = Route::Playlist(7);
+
+    #[test]
+    fn a_long_history_keeps_its_root_and_its_latest_pages() {
+        let mut nav = Navigator::default();
+        for id in 0..200 {
+            nav.go(Route::Album(id));
+        }
+        assert_eq!(nav.history.len(), HISTORY_LIMIT);
+        assert_eq!(nav.history[0], QUEUE);
+        assert_eq!(nav.current(), Route::Album(199));
+        assert_eq!(nav.behind(), Some(Route::Album(198)));
+        while nav.back() {}
+        assert_eq!(nav.current(), QUEUE);
+    }
+
+    #[test]
+    fn a_relinked_record_stays_where_it_was_in_every_tab() {
+        let mut nav = Navigator::default();
+        nav.go(Route::Album(3));
+        nav.go(TRACKS);
+        nav.switch(1, Route::Library);
+        nav.go(Route::Album(3));
+        nav.relink(Route::Album(3), Route::Album(9));
+        assert_eq!(nav.current(), Route::Album(9));
+        assert!(!nav.holds(Route::Album(3)));
+        nav.switch(0, QUEUE);
+        assert_eq!(nav.current(), TRACKS);
+        assert_eq!(nav.behind(), Some(Route::Album(9)));
+    }
+
+    #[test]
+    fn a_lost_record_leaves_history_but_not_the_screen() {
+        let mut nav = Navigator::default();
+        nav.go(Route::Album(3));
+        nav.go(TRACKS);
+        nav.forget_lost(Route::Album(3));
+        assert_eq!(nav.current(), TRACKS);
+        assert_eq!(nav.behind(), Some(QUEUE));
+
+        // The page showing finds its record again itself; its earlier
+        // visits go, so Back cannot lead to the id once it is another's.
+        nav.go(Route::Album(4));
+        nav.go(ALBUMS);
+        nav.go(Route::Album(4));
+        nav.forget_lost(Route::Album(4));
+        assert_eq!(nav.current(), Route::Album(4));
+        assert_eq!(nav.behind(), Some(ALBUMS));
+        assert_eq!(
+            nav.history
+                .iter()
+                .filter(|r| **r == Route::Album(4))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn adopting_puts_the_page_over_its_tabs_root() {
+        let mut nav = Navigator::default();
+        nav.go(ALBUMS);
+        nav.go(Route::Settings);
+        nav.go(Route::SettingsSection(crate::settings::Tab::Playback));
+        nav.adopt(2, Route::Settings);
+        assert_eq!(nav.tab(), 2);
+        assert_eq!(
+            nav.current(),
+            Route::SettingsSection(crate::settings::Tab::Playback)
+        );
+        assert_eq!(nav.behind(), Some(Route::Settings));
+        assert!(!nav.can_go_forward());
+        // The tab the history was kept under starts again from its root.
+        nav.switch(0, QUEUE);
+        assert_eq!(nav.current(), QUEUE);
+        assert!(nav.at_root());
+
+        let mut nav = Navigator::default();
+        nav.go(Route::Settings);
+        nav.adopt(2, Route::Settings);
+        assert!(nav.at_root());
+        assert_eq!(nav.current(), Route::Settings);
+    }
 
     #[test]
     fn going_somewhere_new_drops_what_was_ahead() {
@@ -445,6 +642,22 @@ mod tests {
         assert_eq!(nav.rewinds(QUEUE), 0);
         nav.switch(0, QUEUE);
         assert_eq!(nav.rewinds(QUEUE), 1);
+    }
+
+    #[test]
+    fn skipping_to_the_root_puts_the_root_behind_the_page_showing() {
+        let mut nav = Navigator::default();
+        nav.go(ALBUMS);
+        nav.go(TRACKS);
+        nav.go(PLAYLIST);
+        nav.back();
+        nav.skip_to_root();
+        assert_eq!(nav.behind(), Some(QUEUE));
+        assert_eq!(nav.current(), TRACKS);
+        assert!(!nav.can_go_forward());
+        nav.back();
+        assert_eq!(nav.current(), QUEUE);
+        assert!(nav.at_root());
     }
 
     #[test]

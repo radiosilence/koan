@@ -330,7 +330,7 @@ impl ArtistBrowser {
         let play = cx.weak_entity();
         let count = self.artists.len();
         let scroll = self.scroll.clone();
-        let phone = crate::mobile::phone();
+        let phone = p.look.compact;
         let albums = chrome::count(artist.album_count.max(0) as u64, "album", "albums");
         // A phone's row is the name over its record count, and the heart: no
         // glyph to play from, no columns to read across.
@@ -435,8 +435,8 @@ impl actions::Menus for ArtistBrowser {
 
 impl ArtistBrowser {
     /// The browser's controls, in the window's toolbar.
-    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        chrome::browser_controls(&self.search)
+    pub fn controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        chrome::browser_controls(&self.search, window, cx)
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .into_any_element()
     }
@@ -473,7 +473,7 @@ impl Render for ArtistBrowser {
         // The list scrolls its header away with the rows, as the iOS app's
         // does, and passes under the toolbar.
         let away = !held;
-        let phone = crate::mobile::phone();
+        let phone = p.look.compact;
         // The header starts below the bar, which the list scrolls under; a
         // phone's filter field a step further down.
         let bar = crate::components::bar_inset(window, cx);

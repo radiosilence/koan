@@ -35,7 +35,7 @@ pub fn panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
     .w(px(560.0))
     .max_w_full()
     // On a phone the room above the keyboard holds it instead (`Rise`).
-    .when(!look.touch, |panel| panel.max_h(relative(TALLEST)))
+    .when(!look.compact, |panel| panel.max_h(relative(TALLEST)))
     // Shrinks within what holds it, its body scrolling.
     .min_h_0()
     .bg(look.palette.bg.hsla())
@@ -71,7 +71,7 @@ pub fn screen(
     window: &Window,
     cx: &App,
 ) -> Stateful<Div> {
-    if !look.touch {
+    if !look.compact {
         return scrim(id, look, window).child(Rise::new(panel(name, look).child(content)));
     }
     let insets = super::system_insets(super::Clear::Keyboard, window);
@@ -134,7 +134,7 @@ pub fn wide_panel(name: impl AsRef<str>, look: &Look) -> Stateful<Div> {
 /// `TALLEST` of the window on the desktop.
 pub fn tall_panel(name: impl AsRef<str>, look: &Look, window: &Window) -> Stateful<Div> {
     let panel = panel(name, look);
-    if look.touch {
+    if look.compact {
         panel.h(room(look, window))
     } else {
         panel.h(relative(TALLEST))
@@ -209,7 +209,19 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
 /// keyboard while it is up, as an iOS sheet does; its `Rise` brings it up
 /// from there.
 pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful<Div> {
-    if !look.touch {
+    scrim_leaving(id, false, look, window)
+}
+
+/// `scrim`, its veil lifting while what it holds goes back down.
+fn scrim_leaving(
+    id: impl Into<ElementId>,
+    leaving: bool,
+    look: &Look,
+    window: &Window,
+) -> Stateful<Div> {
+    if !look.compact {
+        // A tablet's safe area and keyboard, nothing on the desktop.
+        let insets = super::system_insets(super::Clear::Keyboard, window);
         return div()
             .id(id.into())
             .absolute()
@@ -217,7 +229,10 @@ pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful
             .flex()
             .justify_center()
             .items_center()
-            .p(look.space(Space::L))
+            .pl(insets.left + look.space(Space::L))
+            .pr(insets.right + look.space(Space::L))
+            .pt(insets.top + look.space(Space::L))
+            .pb(insets.bottom + look.space(Space::L))
             .occlude()
             .child(Veil::new(look.veil(0.6)));
     }
@@ -234,7 +249,7 @@ pub fn scrim(id: impl Into<ElementId>, look: &Look, window: &Window) -> Stateful
         .pt(insets.top + look.space(Space::L))
         .pb(insets.bottom + look.space(Space::L))
         .occlude()
-        .child(Veil::new(look.veil(0.6)))
+        .child(Veil::new(look.veil(0.6)).leaving(leaving))
 }
 
 /// A scrim with the panel hung near the top on every platform: the search
@@ -250,7 +265,7 @@ pub fn scrim_top(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .pt(look.space(Space::Xxl))
         // On a phone the panel takes the width less a margin, under the
         // status bar.
-        .when(look.touch, |scrim| {
+        .when(look.compact, |scrim| {
             scrim
                 .px(look.space(Space::S))
                 .pt(look.space(Space::Xxl) * 2.)
@@ -306,6 +321,8 @@ pub fn note(text: impl Into<SharedString>, tone: Tone, look: &Look) -> Div {
 type Preview = Rc<dyn Fn(&str) -> Vec<SharedString>>;
 /// What a question does once answered, with what was typed.
 type Run = Rc<dyn Fn(String, &mut App)>;
+/// Whether the question's verb can be answered yet.
+type Ready = Rc<dyn Fn() -> bool>;
 
 /// A question asked before a write: what will change, and the verb that
 /// changes it. With a name field, the preview follows what is typed.
@@ -313,12 +330,16 @@ struct Ask {
     title: SharedString,
     verb: SharedString,
     destructive: bool,
+    /// Whether it can be put away without its verb: a question can, news
+    /// (`tell`) has only the one answer.
+    cancel: bool,
     /// What the write will change, a line each.
     preview: Preview,
     /// Said under the preview: what the write leaves alone, or how to undo
     /// it.
     note: Option<SharedString>,
     name: Option<Entity<InputState>>,
+    ready: Ready,
     run: Run,
     /// The sheet's own keys, for a question without a field; with one, the
     /// field has them and answers Return itself.
@@ -351,14 +372,18 @@ pub struct Asking {
     /// stood.
     leaving_sheet: Option<(AnyView, Fading)>,
     leaving_ask: Option<(Ask, Fading)>,
+    /// News told while a question was open, shown in turn as each is put
+    /// away rather than over what the person was answering.
+    told: std::collections::VecDeque<Ask>,
 }
 
 /// Lets go, once a fade started now has run, of what began fading by then.
 fn let_go(cx: &mut App) {
     let host = asking(cx);
     let started = Instant::now();
+    let length = Fading::length(cx);
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(Fading::LENGTH).await;
+        cx.background_executor().timer(length).await;
         cx.update(|cx| {
             host.update(cx, |a, cx| {
                 let sheet = a.leaving_sheet.take_if(|(_, f)| f.began_by(started));
@@ -489,7 +514,8 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         }
     };
     let look = Look::of(window, cx);
-    let scrim = scrim("sheet", &look, window)
+    let leaving = fading.is_some();
+    let scrim = scrim_leaving("sheet", leaving, &look, window)
         // The window's bare keys are bound outside `Ask`.
         .key_context("Ask")
         .when_some(focus.as_ref(), |d, focus| d.track_focus(focus))
@@ -507,7 +533,7 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             }
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(Rise::new(view));
+        .child(Rise::new(view).leaving(leaving));
     match fading {
         Some(fading) => Some(fading.draw(scrim)),
         None => Some(trapped(scrim, focus.as_ref(), cx)),
@@ -557,9 +583,11 @@ pub fn confirm(c: Confirm, window: &mut Window, cx: &mut App, run: impl Fn(&mut 
             title: c.title,
             verb: c.verb,
             destructive: c.destructive,
+            cancel: true,
             preview: Rc::new(move |_| lines.clone()),
             note: c.note,
             name: None,
+            ready: Rc::new(|| true),
             run: Rc::new(move |_, cx| run(cx)),
             focus: Some(focus),
             before,
@@ -567,6 +595,42 @@ pub fn confirm(c: Confirm, window: &mut Window, cx: &mut App, run: impl Fn(&mut 
         },
         cx,
     );
+}
+
+/// Says why something asked for could not be done, over the window, until
+/// it is put away: what failed is news to answer, not a line to miss.
+pub fn tell(
+    title: impl Into<SharedString>,
+    lines: Vec<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let host = asking(cx);
+    let waits = host.read(cx).ask.is_some();
+    let before = if waits { None } else { window.focused(cx) };
+    let focus = cx.focus_handle();
+    if !waits {
+        window.focus(&focus, cx);
+    }
+    let news = Ask {
+        title: title.into(),
+        verb: "ok".into(),
+        destructive: false,
+        cancel: false,
+        preview: Rc::new(move |_| lines.clone()),
+        note: None,
+        name: None,
+        ready: Rc::new(|| true),
+        run: Rc::new(|_, _| {}),
+        focus: Some(focus),
+        before,
+        _enter: None,
+    };
+    if waits {
+        host.update(cx, |a, _| a.told.push_back(news));
+    } else {
+        show(news, cx);
+    }
 }
 
 /// Asks for a name, saying what it will do with what is typed, before
@@ -580,6 +644,24 @@ pub fn name(
     cx: &mut App,
     run: impl Fn(String, &mut App) + 'static,
 ) {
+    name_when(title, verb, initial, preview, || true, window, cx, run);
+}
+
+/// `name`, its verb held until `ready`: for a question whose answer needs
+/// something still being read, which its preview says. The host is
+/// notified (`asking`) when that changes.
+#[allow(clippy::too_many_arguments)]
+pub fn name_when(
+    title: impl Into<SharedString>,
+    verb: impl Into<SharedString>,
+    initial: &str,
+    preview: impl Fn(&str) -> Vec<SharedString> + 'static,
+    ready: impl Fn() -> bool + 'static,
+    window: &mut Window,
+    cx: &mut App,
+    run: impl Fn(String, &mut App) + 'static,
+) {
+    let ready: Ready = Rc::new(ready);
     let initial = initial.to_owned();
     let before = window.focused(cx);
     let input = cx.new(|cx| InputState::new(window, cx).default_value(initial));
@@ -588,11 +670,11 @@ pub fn name(
     let focus = None;
     let run: Run = Rc::new(run);
     let enter = {
-        let run = run.clone();
+        let (run, ready) = (run.clone(), ready.clone());
         window.subscribe(&input, cx, move |input, event: &InputEvent, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
                 let typed = input.read(cx).value().trim().to_owned();
-                if !typed.is_empty() {
+                if !typed.is_empty() && ready() {
                     dismiss(window, cx);
                     run(typed, cx);
                 }
@@ -604,9 +686,11 @@ pub fn name(
             title: title.into(),
             verb: verb.into(),
             destructive: false,
+            cancel: true,
             preview: Rc::new(preview),
             note: None,
             name: Some(input.clone()),
+            ready,
             run,
             focus,
             before,
@@ -620,8 +704,14 @@ pub fn name(
         .detach();
 }
 
-fn show(ask: Ask, cx: &mut App) {
+fn show(mut ask: Ask, cx: &mut App) {
     asking(cx).update(cx, |a, cx| {
+        // Asked as a sheet closes (the picker's "new playlist…"): the
+        // keyboard goes back, once this is answered, to what had it before
+        // the sheet, not to the sheet going away.
+        if let Some((_, before)) = a.restore.take() {
+            ask.before = before;
+        }
         a.ask = Some(ask);
         a.leaving_ask = None;
         cx.notify();
@@ -635,8 +725,13 @@ fn dismiss(window: &mut Window, cx: &mut App) -> bool {
         cx.notify();
         let mut ask = a.ask.take()?;
         ask._enter = None;
-        let before = ask.before.take();
+        let mut before = ask.before.take();
         a.leaving_ask = Fading::start(cx).map(|f| (ask, f));
+        if let Some(mut next) = a.told.pop_front() {
+            next.before = before.take();
+            before = next.focus.clone();
+            a.ask = Some(next);
+        }
         Some((before, a.leaving_ask.is_some()))
     }) else {
         return false;
@@ -670,15 +765,15 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .as_ref()
         .map(|i| i.read(cx).value().trim().to_owned());
     let lines = (ask.preview)(typed.as_deref().unwrap_or(""));
-    let blocked = typed.as_ref().is_some_and(String::is_empty);
+    let blocked = typed.as_ref().is_some_and(String::is_empty) || !(ask.ready)();
     let go = {
-        let (run, name) = (ask.run.clone(), ask.name.clone());
+        let (run, name, ready) = (ask.run.clone(), ask.name.clone(), ask.ready.clone());
         move |window: &mut Window, cx: &mut App| {
             let typed = name
                 .as_ref()
                 .map(|i| i.read(cx).value().trim().to_owned())
                 .unwrap_or_default();
-            if name.is_some() && typed.is_empty() {
+            if name.is_some() && typed.is_empty() || !ready() {
                 return;
             }
             if dismiss(window, cx) {
@@ -706,7 +801,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .map(|line| note(line, Tone::Ink, &look).into_any_element())
         .collect();
     let focus = ask.focus.clone().filter(|_| live);
-    let scrim = scrim("ask", &look, window)
+    let scrim = scrim_leaving("ask", !live, &look, window)
         .key_context("Ask")
         .when_some(focus.as_ref(), |d, focus| d.track_focus(focus))
         .when(live, |d| {
@@ -721,23 +816,32 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             )
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(Rise::new(
-            panel(ask.title.as_ref(), &look)
-                .child(head(
-                    ask.title.as_ref(),
-                    vec![cancel.into_any_element(), verb.into_any_element()],
-                    &look,
-                ))
-                .child(
-                    body("ask-body", &look)
-                        .pt(look.space(Space::M))
-                        .when_some(ask.name.as_ref(), |d, input| d.child(TextField::new(input)))
-                        .children(rows)
-                        .when_some(ask.note.clone(), |d, n| {
-                            d.child(note(n, Tone::Muted, &look))
-                        }),
-                ),
-        ));
+        .child(
+            Rise::new(
+                panel(ask.title.as_ref(), &look)
+                    .child(head(
+                        ask.title.as_ref(),
+                        if ask.cancel {
+                            vec![cancel.into_any_element(), verb.into_any_element()]
+                        } else {
+                            vec![verb.into_any_element()]
+                        },
+                        &look,
+                    ))
+                    .child(
+                        body("ask-body", &look)
+                            .pt(look.space(Space::M))
+                            .when_some(ask.name.as_ref(), |d, input| {
+                                d.child(TextField::new(input).label("name"))
+                            })
+                            .children(rows)
+                            .when_some(ask.note.clone(), |d, n| {
+                                d.child(note(n, Tone::Muted, &look))
+                            }),
+                    ),
+            )
+            .leaving(!live),
+        );
     match fading {
         Some(fading) => Some(fading.draw(scrim)),
         None => Some(trapped(scrim, focus.as_ref(), cx)),
@@ -749,7 +853,81 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
 
     use super::*;
+    use crate::theme::KoanTheme;
     use core::prelude::v1::test;
+
+    struct Tall {
+        in_place: bool,
+    }
+
+    impl Render for Tall {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let look = Look::of(window, cx);
+            let panel = panel("tall", &look)
+                .debug_selector(|| "panel".into())
+                .child(
+                    body("body", &look)
+                        .debug_selector(|| "body".into())
+                        .child(div().h(px(20_000.0))),
+                );
+            div().size_full().child(if self.in_place {
+                scrim_top("scrim", &look).child(Rise::in_place(panel))
+            } else {
+                scrim("scrim", &look, window).child(Rise::new(panel))
+            })
+        }
+    }
+
+    /// Draws a sheet taller than the window and checks it stops at `tallest`
+    /// of the window's height, its body inside it.
+    fn stays_inside(
+        cx: &mut TestAppContext,
+        touch: bool,
+        reduce_motion: bool,
+        in_place: bool,
+        tallest: f32,
+    ) {
+        cx.update(|cx| {
+            crate::theme::init(cx);
+            cx.global_mut::<KoanTheme>().touch = touch;
+            cx.set_reduce_motion(reduce_motion);
+        });
+        let (_view, cx) = cx.add_window_view(|_, _| Tall { in_place });
+        let cx: &mut VisualTestContext = cx;
+        if touch {
+            cx.simulate_resize(size(px(402.), px(874.)));
+        }
+        cx.run_until_parked();
+        let height = cx.update(|window, _| window.viewport_size().height);
+        let panel = cx.debug_bounds("panel").expect("the panel is drawn");
+        let body = cx.debug_bounds("body").expect("the body is drawn");
+        assert!(
+            panel.size.height <= height * tallest,
+            "{panel:?} in a window {height:?} tall"
+        );
+        assert!(panel.bottom() <= height, "{panel:?} runs past the foot");
+        assert!(body.bottom() <= panel.bottom(), "{body:?} leaves {panel:?}");
+    }
+
+    #[gpui::test]
+    fn a_tall_sheet_stays_inside_the_window(cx: &mut TestAppContext) {
+        stays_inside(cx, false, false, false, TALLEST);
+    }
+
+    #[gpui::test]
+    fn a_tall_sheet_hung_near_the_top_stays_inside_the_window(cx: &mut TestAppContext) {
+        stays_inside(cx, false, false, true, TALLEST);
+    }
+
+    #[gpui::test]
+    fn a_tall_sheet_stays_inside_a_phone(cx: &mut TestAppContext) {
+        stays_inside(cx, true, false, false, 1.0);
+    }
+
+    #[gpui::test]
+    fn a_tall_sheet_stays_inside_a_phone_without_motion(cx: &mut TestAppContext) {
+        stays_inside(cx, true, true, false, 1.0);
+    }
 
     struct Asker {
         focus: FocusHandle,
@@ -910,6 +1088,141 @@ mod tests {
                 "tab entered the fading question"
             );
         }
+    }
+
+    /// News told over the window has only its one answer, and goes with it.
+    #[gpui::test]
+    fn told_news_goes_with_its_one_answer(cx: &mut TestAppContext) {
+        use gpui::accesskit::Action;
+
+        use crate::components::testing::{act, redraw, stage, tree};
+
+        let (_, cx) = stage(cx, |window, cx| {
+            overlay(window, cx)
+                .map(|element| vec![("ask", element)])
+                .unwrap_or_default()
+        });
+        cx.update(|window, cx| {
+            tell(
+                "playlist not made",
+                vec!["the library is busy".into()],
+                window,
+                cx,
+            )
+        });
+        redraw(cx);
+        let labels: Vec<String> = tree(cx)["nodes"]
+            .as_object()
+            .expect("nodes")
+            .values()
+            .filter_map(|n| n["aria"]["label"].as_str().map(str::to_owned))
+            .collect();
+        assert!(labels.iter().any(|l| l == "ok"), "{labels:?}");
+        assert!(!labels.iter().any(|l| l == "cancel"), "{labels:?}");
+        act(cx, "ok", Action::Click);
+        let host = cx.update(|_, cx| asking(cx));
+        assert!(cx.update(|_, cx| host.read(cx).ask.is_none()));
+    }
+
+    /// News told while a question is open waits for it: the question keeps
+    /// what was typed, and the news follows once it is answered.
+    #[gpui::test]
+    fn news_waits_for_the_question_open(cx: &mut TestAppContext) {
+        use gpui::accesskit::Action;
+
+        use crate::components::testing::{act, redraw, stage, tree};
+
+        let labels = |cx: &mut VisualTestContext| -> Vec<String> {
+            tree(cx)["nodes"]
+                .as_object()
+                .expect("nodes")
+                .values()
+                .filter_map(|n| n["aria"]["label"].as_str().map(str::to_owned))
+                .collect()
+        };
+        let (_, cx) = stage(cx, |window, cx| {
+            overlay(window, cx)
+                .map(|element| vec![("ask", element)])
+                .unwrap_or_default()
+        });
+        cx.update(|window, cx| {
+            confirm(
+                Confirm {
+                    title: "delete the playlist".into(),
+                    verb: "delete".into(),
+                    destructive: true,
+                    lines: vec!["It goes.".into()],
+                    note: None,
+                },
+                window,
+                cx,
+                |_| {},
+            );
+            tell("not added", vec!["the library is busy".into()], window, cx);
+        });
+        redraw(cx);
+        let now = labels(cx);
+        assert!(now.iter().any(|l| l == "delete"), "{now:?}");
+        assert!(!now.iter().any(|l| l == "ok"), "{now:?}");
+        act(cx, "cancel", Action::Click);
+        redraw(cx);
+        let now = labels(cx);
+        assert!(now.iter().any(|l| l == "ok"), "{now:?}");
+    }
+
+    struct Both {
+        focus: FocusHandle,
+    }
+
+    impl Render for Both {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .track_focus(&self.focus)
+                .children(presented(window, cx))
+                .children(overlay(window, cx))
+        }
+    }
+
+    /// A question asked as a sheet closes, with nothing drawn between, gives
+    /// the keyboard back to what had it before the sheet.
+    #[gpui::test]
+    fn a_question_from_a_closing_sheet_gives_the_page_its_keys_back(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::theme::init(cx);
+        });
+        let (both, cx) = cx.add_window_view(|_, cx| Both {
+            focus: cx.focus_handle(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        let page = both.read_with(cx, |b, _| b.focus.clone());
+        let redraw = |cx: &mut VisualTestContext| {
+            cx.update(|_, cx| both.update(cx, |_, cx| cx.notify()));
+            cx.run_until_parked();
+        };
+        cx.update(|window, cx| {
+            window.focus(&page, cx);
+            let panel = cx.new(|_| Panel);
+            present(panel, window, cx);
+        });
+        redraw(cx);
+        cx.update(|window, cx| {
+            close(cx);
+            name(
+                "new playlist",
+                "create",
+                "",
+                |_| Vec::new(),
+                window,
+                cx,
+                |_, _| {},
+            );
+        });
+        redraw(cx);
+        assert!(!cx.update(|window, _| page.is_focused(window)));
+        cx.simulate_keystrokes("escape");
+        redraw(cx);
+        assert!(cx.update(|window, _| page.is_focused(window)));
     }
 
     struct Presenter {

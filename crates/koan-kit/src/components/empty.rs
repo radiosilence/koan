@@ -1,6 +1,6 @@
 use gpui::{
-    App, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, SharedString, Size,
-    Styled, Window, canvas, div, px,
+    AnyElement, App, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
+    SharedString, Size, Styled, Window, canvas, div, px,
 };
 
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
@@ -23,6 +23,7 @@ pub struct EmptyState {
     icon: Icon,
     title: SharedString,
     detail: Option<SharedString>,
+    action: Option<AnyElement>,
     tone: Tone,
     inset: bool,
 }
@@ -34,6 +35,7 @@ impl EmptyState {
             icon,
             title: label(title),
             detail: None,
+            action: None,
             tone: Tone::Muted,
             inset: true,
         }
@@ -65,6 +67,12 @@ impl EmptyState {
     /// A sentence, which keeps its case.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    /// Something quiet to do about it, under the words.
+    pub fn action(mut self, action: impl IntoElement) -> Self {
+        self.action = Some(action.into_any_element());
         self
     }
 }
@@ -174,7 +182,8 @@ impl RenderOnce for EmptyState {
                             .text_role(TypeRole::Meta, &look)
                             .text_color(look.palette.muted.hsla())
                             .child(detail)
-                    })),
+                    }))
+                    .children(self.action),
             )
             // After the content, so its height is known here.
             .child(

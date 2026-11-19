@@ -146,6 +146,11 @@ pub enum PlayerCommand {
     /// only thing it listens for, and a track that cannot be fetched never
     /// becomes Ready. That is the offline-library stall.
     TrackFailed(QueueItemId),
+    /// The server came into reach or went out of it
+    /// (`SharedPlayerState::here_only` already says which). A wait on a
+    /// track not on this device moves on to one that is, and the decoder's
+    /// lookahead is taken again under the new rule.
+    ReachChanged,
     /// Fetch these tracks into the cache, with no queue entry to play them.
     CacheTracks(Vec<i64>),
     /// Stop fetching these tracks: see `DownloadQueue::cancel`.

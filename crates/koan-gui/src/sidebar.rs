@@ -10,7 +10,7 @@ use crate::components::{
     Button, ButtonKind, CoverArt, DropTarget, INSERTION, KoanContextMenu, ListCursor, Menu,
     MenuEntry, Mosaic, NavHeading, NavNote, NavRow, RowMetrics, ScrollArea, list_actions,
 };
-use crate::engine::{command, engine};
+use crate::engine::{command, engine, reported};
 use crate::library::chrome::count;
 use crate::library::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use crate::library::drag::{PlayableDrag, PlaylistDrag};
@@ -586,7 +586,7 @@ impl Render for Sidebar {
                                     move |_: &DraggedRows, _, cx: &mut App| {
                                         let ids = cx.global::<QueueDragTracks>().0.clone();
                                         if !ids.is_empty() {
-                                            command(cx, "add to playlist", move |e| {
+                                            reported(cx, "add to playlist", move |e| {
                                                 e.add_to_playlist(
                                                     id,
                                                     vec![TrackSet::Tracks { ids }],
@@ -616,7 +616,7 @@ impl Render for Sidebar {
                                         let id = playlist.id;
                                         move |_, dragged: &PlayableDrag, _, cx| {
                                             let sets = dragged.sets.to_vec();
-                                            command(cx, "add to playlist", move |e| {
+                                            reported(cx, "add to playlist", move |e| {
                                                 e.add_to_playlist(id, sets)
                                             });
                                         }
@@ -713,6 +713,18 @@ impl Render for Sidebar {
                     .min_h_0()
                     .child(ScrollArea::new("sidebar-rows", body).follow(&self.spot)),
             )
+            // A touch window has no menu bar to find Settings in.
+            .when(p.look.touch, |d| {
+                d.child(
+                    NavRow::new("nav-settings", "settings")
+                        .icon(Icon::Settings)
+                        .selected(matches!(
+                            current,
+                            Some(Route::Settings | Route::SettingsSection(_))
+                        ))
+                        .on_click(go(Route::Settings, cx)),
+                )
+            })
             .child(self.status.clone())
             // Scans, rebuilds and syncs running; nothing while idle.
             .child(

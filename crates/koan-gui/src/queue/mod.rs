@@ -9,16 +9,16 @@
 
 pub mod rows;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use koan_kit::app::*;
 use koan_runtime::{CreditPart, EntryStatus, QueueItem, QueueLock};
 
 use crate::components::{
-    Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
-    KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind, RowList,
-    RowListState, RowMetrics, RowOffset, SelectionBar, TableRow, ToolbarButton, ToolbarGroup,
-    ToolbarMenu, ToolbarSelection,
+    Availability, AvailabilityMark, Button, ButtonKind, Cover, DragChip, EmptyState, INSERTION,
+    IconToggle, KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind,
+    RowList, RowListState, RowMetrics, RowOffset, SelectionBar, TableRow, ToolbarButton,
+    ToolbarGroup, ToolbarMenu, ToolbarSelection,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -179,6 +179,18 @@ pub struct QueueView {
     dice: Option<&'static str>,
     /// The queue items as of the last edit, which the next is told against.
     known: HashSet<String>,
+    /// Their order, so rows after a removed one can close up.
+    order: Vec<(String, usize)>,
+    /// Under touch, the rows moved up by an edit that removed rows above
+    /// them: how many went, and how many edits have closed rows up.
+    closing: HashMap<String, [i32; 3]>,
+    closings: u64,
+    /// How many times picking has been entered or left.
+    pick_changes: u64,
+    /// Rows are shifting over for picking starting or ending, by this much.
+    pick_shift: Option<Pixels>,
+    /// Lets go of what rows move by, once they have.
+    _moved: Option<Task<()>>,
     /// Items moved by a drag here, landing with the next edit.
     moved: Vec<String>,
     /// The rows that landed with the last edit, and how many edits have
@@ -186,10 +198,35 @@ pub struct QueueView {
     landed: HashSet<String>,
     landing: u64,
     _settle: Option<Task<()>>,
+    /// On a phone able to sign in to the demonstration server: the empty
+    /// queue offers it, this being the first page such a phone shows.
+    demo_offered: bool,
+    _demo: Vec<Subscription>,
     _subscriptions: [Subscription; 6],
 }
 
 impl QueueView {
+    fn follow_demo(&mut self, cx: &mut Context<Self>) {
+        let offered = crate::settings::demo_offered(cx);
+        if offered != self.demo_offered {
+            self.demo_offered = offered;
+            cx.notify();
+        }
+    }
+
+    fn empty_state(&self) -> EmptyState {
+        let empty = EmptyState::new(Icon::QueueSection, "queue is empty")
+            .detail("Find something to play from albums or artists.");
+        if !self.demo_offered {
+            return empty;
+        }
+        empty.action(
+            Button::new("try-demo", ButtonKind::Link)
+                .label("Try the demo server")
+                .on_click(|_, _, cx| crate::settings::answer(crate::settings::Incoming::Demo, cx)),
+        )
+    }
+
     pub fn new(nav: &Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         let queue = cx.global::<Mirror>().queue.clone();
         let covers = cx.global::<CoversHandle>().0.clone();
@@ -242,7 +279,20 @@ impl QueueView {
         list.on_scroll(move |start, _, cx| {
             weak.update(cx, |this, cx| this.keep_top(start, cx)).ok();
         });
+        let follow_demo = crate::mobile::handheld()
+            .then(|| cx.try_global::<crate::settings::Settings>())
+            .flatten()
+            .map(|settings| (settings.model.clone(), settings.sharing.clone()))
+            .map(|(model, sharing)| {
+                vec![
+                    cx.observe(&model, |this, _, cx| this.follow_demo(cx)),
+                    cx.observe(&sharing, |this, _, cx| this.follow_demo(cx)),
+                ]
+            })
+            .unwrap_or_default();
         let mut view = Self {
+            demo_offered: crate::mobile::handheld() && crate::settings::demo_offered(cx),
+            _demo: follow_demo,
             queue,
             focus: cx.focus_handle().tab_stop(true),
             list,
@@ -270,6 +320,12 @@ impl QueueView {
             moved: Vec::new(),
             landed: HashSet::new(),
             landing: 0,
+            order: Vec::new(),
+            closing: HashMap::new(),
+            closings: 0,
+            pick_changes: 0,
+            pick_shift: None,
+            _moved: None,
             _settle: None,
             _subscriptions: subscriptions,
         };
@@ -293,6 +349,35 @@ impl QueueView {
         if landed.len() == now.len() {
             landed.clear();
         }
+        // Rows after a removed row close up over where it stood, unless
+        // the whole queue was replaced.
+        let gone: HashSet<&String> = self.known.difference(&now).collect();
+        let order = laid_out(&queue.rows, &queue.base);
+        self.closing.clear();
+        if !gone.is_empty() && gone.len() < self.known.len() {
+            let mut above = [0; 3];
+            let mut was: HashMap<&str, [i32; 3]> = HashMap::new();
+            for (key, kind) in &self.order {
+                was.insert(key, above);
+                above[*kind] += 1;
+            }
+            let mut above = [0; 3];
+            for (key, kind) in &order {
+                if let Some(before) = was.get(key.as_str()) {
+                    let closes = std::array::from_fn(|k| before[k] - above[k]);
+                    if closes != [0; 3] {
+                        self.closing.insert(key.clone(), closes);
+                    }
+                }
+                above[*kind] += 1;
+            }
+            self.closings += 1;
+        }
+        let closed = !self.closing.is_empty();
+        self.order = order;
+        if closed {
+            self.let_go_of_moves(cx);
+        }
         landed.extend(
             std::mem::take(&mut self.moved)
                 .into_iter()
@@ -311,6 +396,39 @@ impl QueueView {
                 .await;
             this.update(cx, |this, _| this.landed.clear()).ok();
         }));
+    }
+
+    /// Rows are told how they moved for one settle's length, so a row
+    /// scrolled in later simply stands where it is.
+    fn let_go_of_moves(&mut self, cx: &mut Context<Self>) {
+        self._moved = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(crate::theme::Motion::SETTLE)
+                .await;
+            this.update(cx, |this, _| {
+                this.closing.clear();
+                this.pick_shift = None;
+            })
+            .ok();
+        }));
+    }
+
+    /// Picking started or ended under touch: the rows shift over to make
+    /// room for their ticks, or back.
+    fn set_picking(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.picking == on {
+            return;
+        }
+        self.picking = on;
+        self.pick_changes += 1;
+        self.pick_shift = Some(Pixels::from(if on { -PICK } else { PICK }));
+        self.let_go_of_moves(cx);
+        cx.notify();
+    }
+
+    /// Starts picking, as Select does; for tools that walk the pages.
+    pub fn walk_pick(&mut self, cx: &mut Context<Self>) {
+        self.set_picking(true, cx);
     }
 
     /// The landing a row is part of, while its lift runs.
@@ -427,9 +545,13 @@ impl QueueView {
     }
 
     fn row_items<'a>(&self, row: usize, cx: &'a App) -> impl Iterator<Item = &'a String> {
+        // A click is dispatched against the frame last painted, whose rows
+        // the queue may no longer have.
         let queue = self.queue.read(cx);
-        queue.rows[row]
-            .items()
+        queue
+            .rows
+            .get(row)
+            .map_or(0..0, |row| row.items())
             .map(|ix| &queue.base[ix].queue_item_id)
     }
 
@@ -437,7 +559,9 @@ impl QueueView {
         if self.selected.is_empty() {
             return false;
         }
-        self.row_items(row, cx).all(|id| self.selected.contains(id))
+        // A row the queue no longer has is no part of the pick.
+        let mut items = self.row_items(row, cx).peekable();
+        items.peek().is_some() && items.all(|id| self.selected.contains(id))
     }
 
     /// The picked queue items, in queue order. Ordered by their indexes
@@ -503,6 +627,9 @@ impl QueueView {
     }
 
     fn click(&mut self, row: usize, event: &ClickEvent, cx: &mut Context<Self>) {
+        if row >= self.queue.read(cx).rows.len() {
+            return;
+        }
         let modifiers = event.modifiers();
         // A tap plays the row, or while picking ticks it: a touch screen has
         // no click to pick with.
@@ -676,13 +803,15 @@ impl QueueView {
         let count = if self.is_selected(row, cx) {
             self.selected.len()
         } else {
-            queue.rows[row].items().len()
+            queue.rows.get(row).map_or(0, |row| row.items().len())
         };
-        if count == 1 {
-            queue.base[queue.rows[row].items().start]
-                .title
-                .clone()
-                .into()
+        let only = queue
+            .rows
+            .get(row)
+            .and_then(|row| queue.base.get(row.items().start))
+            .filter(|_| count == 1);
+        if let Some(only) = only {
+            only.title.clone().into()
         } else {
             format!("{count} tracks").into()
         }
@@ -744,18 +873,35 @@ impl QueueView {
             let (status, track, on_server, on_disk) =
                 (item.status, item.track_id, item.on_server, item.on_disk);
             let mut transfer = None;
+            let mut out_of_reach = false;
             if let (Some(track), Some(feed)) = (track, self.feed()) {
                 let feed = feed.read(cx);
                 favourite = Some(feed.is_favourite(Playable::Track(track)));
                 transfer = feed.transfers.get(&track).copied();
+                // This device's reach: another device's queue, shown while
+                // it is controlled, is fetched by that device.
+                out_of_reach = feed.out_of_reach
+                    && cx
+                        .global::<crate::mirror::Mirror>()
+                        .devices
+                        .read(cx)
+                        .0
+                        .target
+                        .is_none();
             }
             // Without the library's feed (an offscreen render), the row's own
             // status is all there is to go on.
             if self.lib.is_none() && status == EntryStatus::Downloading {
                 transfer = Some(koan_runtime::TransferState::Running);
             }
-            availability =
-                crate::transfers::of_queue_row(status, track, on_server, on_disk, transfer);
+            availability = crate::transfers::of_queue_row(
+                status,
+                track,
+                on_server,
+                on_disk,
+                transfer,
+                out_of_reach,
+            );
         }
         let feed = self.feed().cloned();
         let queue = self.queue.read(cx);
@@ -781,6 +927,7 @@ impl QueueView {
                     picked: selected,
                     waiting: true,
                     pick,
+                    pick_in: self.pick_shift.map(|_| self.pick_changes),
                 };
                 let landed = self.landed(&queue.base[first].queue_item_id);
                 let frame = heading(
@@ -804,6 +951,7 @@ impl QueueView {
                     picked: selected,
                     waiting: true,
                     pick,
+                    pick_in: self.pick_shift.map(|_| self.pick_changes),
                 };
                 let item = &queue.items[ix];
                 let numbering = Numbering {
@@ -943,6 +1091,50 @@ impl QueueView {
         // the end of a fling still reaches it once the row has slid away.
         // The row and its bin are layers the GPU offsets while a finger
         // holds the row or it eases back, mounted only then.
+        let shifted = {
+            let queue = self.queue.read(cx);
+            let (id, key) = match r {
+                Row::Heading { first, .. } => {
+                    let id = &queue.base[first].queue_item_id;
+                    (id, heading_key(id))
+                }
+                Row::Track { ix, .. } => {
+                    let id = &queue.base[ix].queue_item_id;
+                    (id, id.clone())
+                }
+            };
+            let closes = self.closing.get(&key).map(|above| {
+                let by = ROW_KINDS
+                    .iter()
+                    .zip(above)
+                    .fold(Pixels::ZERO, |by, (kind, n)| {
+                        by + RowMetrics::height(*kind, &p.look) * *n as f32
+                    });
+                (format!("close:{}:{key}", self.closings), by)
+            });
+            let shifts = self
+                .pick_shift
+                .map(|by| (format!("pick:{}:{id}", self.pick_changes), by));
+            (closes, shifts)
+        };
+        let frame = match shifted.0 {
+            Some((key, by)) => crate::components::Shifted::new(
+                SharedString::from(key),
+                Point::new(Pixels::ZERO, by),
+                frame,
+            )
+            .into_any_element(),
+            None => frame.into_any_element(),
+        };
+        let frame = match shifted.1 {
+            Some((key, by)) => crate::components::Shifted::new(
+                SharedString::from(key),
+                Point::new(by, Pixels::ZERO),
+                frame,
+            )
+            .into_any_element(),
+            None => frame,
+        };
         let place = if swiped {
             crate::components::SwipeAction::new(
                 &self.swiped,
@@ -1115,7 +1307,7 @@ fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut Context<Menu>) -> Men
             .item(actions::playlist_entry(lib, picked, None));
     }
     // A phone keeps no folders of its own to organise, as on iOS.
-    if !crate::mobile::phone() {
+    if !crate::mobile::handheld() {
         menu = menu
             .separator()
             .item(MenuEntry::new("organise…").icon(Icon::Organize).on_click({
@@ -1298,6 +1490,29 @@ pub(crate) struct Look<'a> {
     /// While picking on a phone, whether the row is ticked: drawn as a
     /// checkbox, and its names are not links.
     pub pick: Option<bool>,
+    /// While picking has just changed, how many times it has: its ticks
+    /// fade in. A row scrolled in later has its tick already.
+    pub pick_in: Option<u64>,
+}
+
+/// The kinds of row a queue is laid out in, in the order `laid_out` numbers
+/// them.
+const ROW_KINDS: [RowKind; 3] = [RowKind::Heading, RowKind::Text, RowKind::Art];
+
+fn heading_key(first: &str) -> String {
+    format!("head:{first}")
+}
+
+/// Each row's key and the index in `ROW_KINDS` of its height.
+fn laid_out(rows: &[Row], base: &[QueueItem]) -> Vec<(String, usize)> {
+    rows.iter()
+        .map(|row| match *row {
+            Row::Heading { first, .. } => (heading_key(&base[first].queue_item_id), 0),
+            Row::Track { ix, grouped } => {
+                (base[ix].queue_item_id.clone(), if grouped { 1 } else { 2 })
+            }
+        })
+        .collect()
 }
 
 impl Look<'_> {
@@ -1355,10 +1570,14 @@ fn picked_circle(row: TableRow, look: &Look) -> TableRow {
     };
     row.lead(
         PICK,
-        div()
-            .flex()
-            .items_center()
-            .child(crate::components::CheckBox::new(look.id("pick", 0), ticked)),
+        div().flex().items_center().child(match look.pick_in {
+            Some(changes) => crate::components::FadeIn::new(
+                look.id("pick-in", changes as usize),
+                crate::components::CheckBox::new(look.id("pick", 0), ticked),
+            )
+            .into_any_element(),
+            None => crate::components::CheckBox::new(look.id("pick", 0), ticked).into_any_element(),
+        }),
     )
 }
 
@@ -1530,7 +1749,9 @@ pub(crate) fn track(
                 p,
             )),
             EntryStatus::Queued | EntryStatus::Downloading => d
-                .when(p.look.icons && look.waiting, |d| {
+                // A phone's rows carry the availability mark, and a hollow
+                // square there reads as a tick to be made.
+                .when(p.look.icons && look.waiting && !p.look.touch, |d| {
                     d.child(glyph(Icon::Pending, "", TypeRole::Fine, quiet, p))
                 }),
         });
@@ -1757,14 +1978,16 @@ impl QueueView {
         if let Some((lib, _)) = self.lib.as_ref().filter(|_| !tracks.is_empty()) {
             let lib = lib.clone();
             let end = view.clone();
-            bar = bar.verb(
+            bar = bar.icon_verb(
                 "queue-pick-playlist",
-                "playlist…",
+                Icon::Playlist,
+                "playlist",
+                false,
                 move |_, window, cx| {
                     let end = end.clone();
                     let after: actions::After = Some(std::rc::Rc::new(move |cx: &mut App| {
                         end.update(cx, |this, cx| {
-                            this.picking = false;
+                            this.set_picking(false, cx);
                             this.selected.clear();
                             cx.notify();
                         })
@@ -1774,25 +1997,23 @@ impl QueueView {
             );
         }
         let (remove, done) = (view.clone(), view);
-        bar.element(
-            crate::components::Button::new(
-                "queue-pick-remove",
-                crate::components::ButtonKind::Text,
-            )
-            .label("remove")
-            .disabled(picked == 0)
-            .on_click(move |_, _, cx| {
+        bar.icon_verb(
+            "queue-pick-remove",
+            Icon::Remove,
+            "remove",
+            picked == 0,
+            move |_, _, cx| {
                 remove.update(cx, |this, cx| {
                     let ids = this.selected_ids(cx);
                     this.remove(ids, cx);
-                    this.picking = false;
+                    this.set_picking(false, cx);
                     cx.notify();
                 })
-            }),
+            },
         )
         .on_done(move |_, _, cx| {
             done.update(cx, |this, cx| {
-                this.picking = false;
+                this.set_picking(false, cx);
                 this.selected.clear();
                 cx.notify();
             })
@@ -1825,7 +2046,7 @@ impl QueueView {
                     .on_change(move |on, _, cx| {
                         let on = *on;
                         pick.update(cx, |this, cx| {
-                            this.picking = on;
+                            this.set_picking(on, cx);
                             this.selected.clear();
                             cx.notify();
                         })
@@ -2162,9 +2383,7 @@ impl Render for QueueView {
                     Page::new(self.header(cx))
                 }
                 .body(if count == 0 {
-                    EmptyState::new(Icon::QueueSection, "queue is empty")
-                        .detail("Find something to play from albums or artists.")
-                        .into_any_element()
+                    self.empty_state().into_any_element()
                 } else {
                     let rows = view.clone();
                     let head = view.clone();

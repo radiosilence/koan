@@ -162,6 +162,11 @@ pub const MARK: Pixels = px(2.0);
 /// The smallest a control's hit area is in either direction.
 pub const HIT: Pixels = px(44.0);
 
+/// Under touch, the width below which a window is laid out as a phone is
+/// (`Look::compact`): a phone in either hand, and a tablet's window in Split
+/// View or Stage Manager once a sidebar would leave its page too little.
+pub const COMPACT_WIDTH: Pixels = px(660.0);
+
 /// A toolbar button's cell, the size of the platform's own.
 pub const TOOLBAR_BUTTON: Pixels = px(36.0);
 

@@ -18,6 +18,8 @@ struct Showing {
     album: i64,
     title: SharedString,
     detail: Option<SharedString>,
+    /// Where the sleeve was tapped: the picture opens out of it.
+    from: Option<Point<Pixels>>,
 }
 
 /// What the viewer shows, while it shows.
@@ -58,11 +60,13 @@ pub fn show(
     let focus = cx.focus_handle();
     window.focus(&focus, cx);
     let (title, detail) = (title.into(), detail);
+    let from = Look::of(window, cx).touch.then(|| window.mouse_position());
     artwork(cx).update(cx, |a, cx| {
         a.showing = Some(Showing {
             album,
             title,
             detail,
+            from,
         });
         a.focus = Some(focus);
         // Opened again over itself, it keeps what it first took over.
@@ -99,10 +103,16 @@ pub fn sleeves(cx: &App) -> Entity<covers::Covers> {
 /// The viewer, for the shell to draw over the window while it shows.
 pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let entity = artwork(cx);
-    let (album, title, detail, focus) = {
+    let (album, title, detail, from, focus) = {
         let a = entity.read(cx);
         let s = a.showing.as_ref()?;
-        (s.album, s.title.clone(), s.detail.clone(), a.focus.clone())
+        (
+            s.album,
+            s.title.clone(),
+            s.detail.clone(),
+            s.from,
+            a.focus.clone(),
+        )
     };
     let look = Look::of(window, cx);
     // Decoded in steps of 256 points, so a window being resized asks for a
@@ -110,8 +120,9 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let side = Viewer::side(window.viewport_size(), &look);
     let decoded = Pixels::from((f32::from(side) / 256.0).ceil() * 256.0);
     let art = covers::art(Some(album), decoded, window.scale_factor(), cx);
-    let mut viewer =
-        Viewer::new("artwork-viewer", art, title).on_click(|_, window, cx| hide(window, cx));
+    let mut viewer = Viewer::new("artwork-viewer", art, title)
+        .from_point(from)
+        .on_click(|_, window, cx| hide(window, cx));
     if let Some(detail) = detail {
         viewer = viewer.detail(detail);
     }

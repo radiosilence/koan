@@ -189,13 +189,14 @@ impl LyricsPanel {
             self.since = since;
             cx.notify();
         }
-        let Some(wait) = next.filter(|_| anchor.playing) else {
+        let Some(wait) = next
+            .filter(|_| anchor.playing)
+            .and_then(|wait| Duration::try_from_secs_f64(wait).ok())
+        else {
             return;
         };
         self._follow = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_secs_f64(wait))
-                .await;
+            cx.background_executor().timer(wait).await;
             this.update(cx, |this, cx| this.follow(cx)).ok();
         }));
     }

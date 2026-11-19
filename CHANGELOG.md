@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.72.4
+
+### Added
+
+- **Pull to refresh syncs with the server.** Pulling a library listing down past its top and letting go syncs with the signed-in server: with a finger on iOS and Android, and with two fingers on a Mac's trackpad in the kōan app, whose library listings now give at their ends under the trackpad.
+
+### Changed
+
+- **The search box goes to a track's record.** Return or a click on a track in the kōan app's search box opens its record page instead of playing it, so searching never interrupts what is playing; ⌘Return, ⌥Return and ⇧⌘Return still play.
+
+### Fixed
+
+- **A Mac app opened from the disk image or from where it was downloaded says to move it to Applications.** macOS runs such a copy read-only, so it cannot update itself; kōan said only that it could not write to its folder.
+- **EQ from the transport opens on the phone and tablet.** Edit… in the transport's EQ menu, and the server banner's Sign In, open Settings in the touch shell rather than a desktop Settings window that could not be left.
+
+## 0.72.3
+
+### Fixed
+
+- **Offline playback no longer stalls.** When the device cannot reach its server at all, or offline mode is on, playback moving on by itself passes over tracks that are not on the device and plays the next one that is, so a downloaded album plays from a cold launch with no network. A track you choose that is not on the device is waited for, with the reason shown, rather than swapped for another. A server answering with an error still counts as reachable.
+- **Downloads finish, and never pass for kept.** A download you ask for is remembered until it arrives, across the app being suspended or closed, and what failed while the server was away is fetched again when it comes back. A waiting download is an empty ring, and while the server cannot be reached a track not on the device says so; the Downloads page counts what is not downloaded yet, and the banner says why nothing plays.
+- **A new playlist from "add to playlist" asks for its name at once.** The question used to wait until the picked tracks were read, so a slow read looked like nothing happening. It now comes up as the sheet closes, counts the tracks as they are read, and holds "create" until they are. A failure reading the tracks, making the playlist or adding tracks to one is said over the window instead of only being logged.
+
+## 0.72.2
+
+### Changed
+
+- **The iOS app is laid out for the iPad.** A window at least 660 points wide gets the desktop's sidebar, the page, the lyrics beside it and the transport bar, inside the safe area and clear of the iPadOS window controls; Settings shows its sections beside the pane. Narrower windows in Split View or Stage Manager take the phone's layout, and the app keeps its place as a window is resized across the two. On a tablet's width record tiles fill their row and forms keep a readable measure. The iPhone stays portrait-only, and its layout is unchanged.
+
+## 0.72.1
+
+### Changed
+
+- **The phone app moves where it snapped.** Lists give past their ends and bounce; Now Playing grows out of the mini player's sleeve; held menus and artwork open out of the press; sheets slide back down; notices drop from the bar; queue rows close up when one goes and shift over for picking; a list sent back to its top arrives there. All of it is drawn by the GPU, and Reduce Motion makes it instant. The selection bar's verbs are icons over their words, so they fit along a phone.
+
+### Fixed
+
+- **Flings on the phone coast as far as a native list's.** The speed at release was read from the last instant of the touch, which came out at 40–84% of what `UIScrollView` reports for the same finger; it is now read over the trailing window, as UIKit reads it. A long press also fires its haptic once.
+- **Settings sections on a phone.** A second section tapped while the first was sliding in stacked the two, and the screen stopped responding as each took Settings' one pane from the other. A section that is no longer offered now goes back to the list.
+- **Fixes from an audit before the App Store release.** A device on the local network could crash the app with a deeply nested Apple TV pairing frame, fill the disk through the log, or queue commands without end; each is now bounded. Lowering the wash's drift late in a long run, a lyric line with an impossible time, and a tap on a queue row that had just gone no longer crash the app. A seek the decoder refuses no longer skips the track, Opus files play at the gain their header sets, the iPhone app again holds back cover preloading on cellular and in Low Data Mode and reconnects when the network changes, and it saves the session when it goes to the background. On a server, a transcoded stream sought while every transcoder is busy is refused where it used to restart from the beginning, and `/auth/refresh` takes its token from the request body only.
+
+### Internal
+
+- **App Store submissions wait for screenshots.** `push.py --submit` waits up to fifteen minutes while App Store Connect processes a new set.
+
+## 0.72.0
+
+### Security
+
+- **rmcp 3.9.** The MCP client no longer buffers an unbounded response body from a server (RUSTSEC-2026-0462).
+
+### Changed
+
+- **Licence.** kōan moves from MIT to AGPL-3.0-or-later, with an additional permission for app store distribution. Releases up to 0.71.4 remain under MIT.
+- **A shorter koan.rocks.** The homepage now leads with kōan as one player across server, desktop, phone, TV and terminal, and with the GPUI apps, and says what recent releases added; setup detail moves to the documentation. The compare page loses padding and its kōan cells follow the desktop app onto Linux.
+- **Fewer snaps on the phone.** The mini player fades to a new sleeve and new names, and tapping the tab showing slides the page away to the tab's root.
+- **A search hit on a track plays it.** In the desktop app's search box and on a phone's shelves, choosing a track plays it with the tracks listed after it, where it used to open the record with the row selected.
+- **The iOS app is now the GPUI app.** It updates the SwiftUI app in place under the same bundle id, keeping the library, sign-in and downloads; view preferences such as sort order start again.
+- **koan.rocks leads with the GPUI apps.** The homepage presents kōan as your player, server, remote and EQ on every device, with current screenshots, and the compare page and guides drop what described the SwiftUI Mac app.
+
+### Fixed
+
+- **Sheets on a phone stay on screen with Reduce Motion.** A sheet taller than the room above the keyboard now scrolls its body with motion off, as it already did with motion on.
+- **Read-only playlists on the phone.** The phone's playlists page listed only those a pick can be added to, so smart playlists and a server's read-only ones were missing.
+- **Live Activities are back on the iPhone.** While the phone controls another device, the lock screen and Dynamic Island show what is playing there, with working skip and play-pause buttons, kept up to date through the push relay.
+- **The iOS app is easier to try and to sign in to.** A signed-out app offers the demo server without typing, password fields use the secure keyboard and Password AutoFill, an invite or pairing link that launches the app answers in its one window, EQ import questions appear from any tab, and the EQ page can import files.
+- **The iPhone app recovers from interruptions and follows the system again.** Music comes back after Siri on AirPods or a call iOS never ends, the lock screen's scrubber stops when playback stops or waits on a download, Control Center has shuffle and repeat, a refused audio start says to tap to play, and a second shared EQ file in one session is imported at once.
+
+### Internal
+
+- **The GUI smoke runs no longer gate merges or releases.** They still run and report; a slow or stuck run no longer holds up `Checks`.
+- **The App Store listing describes the GPUI app.** Review notes no longer mention an iPad sidebar, and the description no longer claims a Live Activity.
+
 ## 0.71.4
 
 ### Fixed

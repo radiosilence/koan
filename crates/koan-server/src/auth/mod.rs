@@ -1,9 +1,11 @@
 //! Authentication layer for the koan server.
 //!
 //! When `auth_enabled = true`:
-//!   - GraphQL requests must carry a valid JWT (see `middleware` for where it is
-//!     read from); the web UI takes it only as the `koan_access` cookie
-//!   - Auth routes (/auth/login, /auth/refresh, /auth/logout) are always accessible
+//!   - GraphQL requests must carry a JWT, an API key or the introspection key
+//!     (see `middleware` for where each is read from); the web UI takes a JWT
+//!     only as the `koan_access` cookie
+//!   - Auth routes (/auth/login, /auth/refresh, /auth/logout, and the web
+//!     UI's /auth/resume, /auth/renew and /auth/signout) are always accessible
 //!
 //! When `auth_enabled = false` (opt-in, not the default):
 //!   - All requests are treated as admin — no auth required.

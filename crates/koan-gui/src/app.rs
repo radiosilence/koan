@@ -57,6 +57,11 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
 /// Hands each link waiting to Settings, as an invite or a pairing; anything
 /// else is not koan's and is dropped.
 fn answer_links(cx: &mut App) {
+    // A phone has one window: a link that came with the launch waits for its
+    // shell (`open_window`), or Settings would open a window behind it.
+    if crate::mobile::handheld() && !crate::mobile::shell_open(cx) {
+        return;
+    }
     for link in crate::platform::Links::take(cx) {
         let engine = crate::engine::engine(cx);
         let incoming = if let Some(pairing) = engine.parse_pairing_link(link.clone()) {
@@ -247,7 +252,7 @@ fn open(saved: Option<window_state::Saved>, show: bool, cx: &mut App) {
     if show {
         open_window(saved, cx);
         // The guide is a window of its own, which a phone has no room for.
-        if !crate::mobile::phone() {
+        if !crate::mobile::handheld() {
             crate::setup::offer_at_launch(cx);
         }
     } else {
@@ -278,8 +283,8 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
                 window_state::write(window.window_bounds());
                 true
             });
-            if crate::mobile::phone() {
-                let shell = cx.new(|cx| crate::mobile::PhoneShell::new(window, cx));
+            if crate::mobile::handheld() {
+                let shell = cx.new(|cx| crate::mobile::TouchShell::new(window, cx));
                 return cx.new(|cx| WindowRoot::new(shell, window, cx));
             }
             let shell = cx.new(|cx| Shell::new(window, cx));
@@ -293,6 +298,7 @@ fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
             cx.quit();
         }
     }
+    answer_links(cx);
     crate::platform::residency::window_opening();
     cx.activate(true);
 }

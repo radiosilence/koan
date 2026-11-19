@@ -105,9 +105,6 @@ pub(crate) fn long_press(pressed: Pressed, lifted: Option<Lifted>) -> impl IntoE
                         // The hold felt as it takes, as UIKit's context
                         // menus answer.
                         cx.perform_haptic(HapticFeedback::Medium);
-                        // The hold felt as it takes, as UIKit's context
-                        // menus answer.
-                        cx.perform_haptic(HapticFeedback::Medium);
                         pressed(event.start_position, window, cx);
                     }
                     (DispatchPhase::Bubble, TouchPhase::Moved) if cx.has_active_drag() => {

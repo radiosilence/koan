@@ -3,27 +3,27 @@ resolver = "2"
 members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-runtime", "crates/koan-gui", "crates/koan-kit", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "tools/uniffi-bindgen"]
 
 [workspace.package]
-version = "0.71.4"
+version = "0.72.4"
 edition = "2024"
 homepage = "https://github.com/radiosilence/koan"
 repository = "https://github.com/radiosilence/koan"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 # GPUI from koan's fork of Zed (radiosilence/zed, branch `koan`): Zed's GPUI
 # with koan's commits, each proposed upstream, published as gpui-koan-*.
 # Pinned to a revision; the library names stay Zed's (`gpui`,
 # `gpui_platform`).
-gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "6d00c3ebf108aeec498394e3a52e220014f29309" }
+gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "be8db535bac465333448ec87099ba5faa7fd37aa" }
 # `font-kit` is the macOS text system: without it GPUI draws no text.
-gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "6d00c3ebf108aeec498394e3a52e220014f29309", features = ["font-kit"] }
+gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "be8db535bac465333448ec87099ba5faa7fd37aa", features = ["font-kit"] }
 # kōan's push relay's client: radiosilence/koan-push-relay.
 koan-relay-client = "0.1.2"
 # Internal crates. Keep the version in step with [workspace.package] above —
 # a stale pin here publishes members that resolve against the wrong sibling.
-koan-core = { path = "crates/koan-core", version = "0.71.4" }
-koan-server = { path = "crates/koan-server", version = "0.71.4" }
-koan-tui = { path = "crates/koan-tui", version = "0.71.4" }
+koan-core = { path = "crates/koan-core", version = "0.72.4" }
+koan-server = { path = "crates/koan-server", version = "0.72.4" }
+koan-tui = { path = "crates/koan-tui", version = "0.72.4" }
 # Feature set is the union every member needs; `default-tls` is an alias for
 # `rustls`, so there is exactly one TLS stack.
 reqwest = { version = "0.13", default-features = false, features = [
@@ -36,7 +36,7 @@ reqwest = { version = "0.13", default-features = false, features = [
   "rustls",
   "system-proxy",
 ] }
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.42", features = ["bundled"] }
 walkdir = "2.5"
 
 # The desktop app's test loop (`just gui-run`): dependencies optimised fully,

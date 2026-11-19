@@ -373,7 +373,11 @@ impl KoanEngine {
                 hosts: names,
                 session: Some(self.session),
             })
-            .map_err(|message| KoanError::Refused { message })?;
+            .map_err(|message| {
+                // The server that ran is down: the device list says so.
+                koan_core::remote::devices::touch();
+                KoanError::Refused { message }
+            })?;
             // Phones on the tailnet reach this device by its name there, and
             // a tunnel's or Funnel's by its address. Both move while the
             // server runs: Tailscale comes up or goes down, Funnel is

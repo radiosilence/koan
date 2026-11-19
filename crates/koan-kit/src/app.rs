@@ -65,4 +65,5 @@ pub mod input {
     pub use crate::components::field::{
         Escape, FieldState as InputState, InputEvent, MoveDown, MoveUp,
     };
+    pub use gpui::TextContentType;
 }

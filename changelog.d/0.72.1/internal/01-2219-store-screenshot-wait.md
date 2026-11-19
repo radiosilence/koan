@@ -1,0 +1,1 @@
+- **App Store submissions wait for screenshots.** `push.py --submit` waits up to fifteen minutes while App Store Connect processes a new set.

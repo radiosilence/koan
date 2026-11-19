@@ -41,7 +41,9 @@ targets:
 
   # The kōan GUI app: GPUI in Rust, linked as one static library with the
   # uniffi bindings, entered from `Sources/KoanGUI/main.swift`. Swift remains
-  # for push and App Attest, driving the same engine (`opened_engine`).
+  # for push, App Attest, the Live Activity, watching the network and saving on
+  # leaving, driving
+  # the same engine (`opened_engine`).
   Koan:
     type: application
     platform: iOS
@@ -49,6 +51,8 @@ targets:
       - path: Sources/KoanGUI
       - path: Sources/KoanIOS/PushDelegate.swift
       - path: Sources/KoanIOS/AppAttest.swift
+      - path: Sources/KoanIOS/RemoteActivity.swift
+      - path: Sources/Koan/Support/NetworkWatch.swift
       - path: Resources/Assets.xcassets
       - path: PrivacyInfo.xcprivacy
     dependencies:

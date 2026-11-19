@@ -35,7 +35,8 @@ def frame(src: Path, caption: str, out: Path):
     scale = 0.84 if tablet else 0.80
     sw, sh = int(w * scale), int(h * scale)
     screen = shot.resize((sw, sh), Image.LANCZOS)
-    radius = int(sw * 0.075)
+    # A wider screen with the same share of radius cuts into its status bar.
+    radius = int(sw * (0.04 if tablet else 0.075))
     mask = Image.new("L", (sw, sh), 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, sw, sh), radius, fill=255)
 

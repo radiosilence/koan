@@ -150,6 +150,8 @@ pub enum Incoming {
     Invite(String),
     /// A device waiting to pair: the server it asked, and the pairing's id.
     Pairing { server: String, id: String },
+    /// Asked for from outside the Server pane: the demonstration server.
+    Demo,
 }
 
 /// Opens Settings on the pane that answers `link` and hands it over: an
@@ -193,6 +195,19 @@ pub fn open_server(cx: &mut App) {
             view.update(cx, |settings, cx| settings.choose(Tab::Server, window, cx))
         })
         .ok();
+}
+
+/// Whether signing in to the demonstration server can work now: signed in
+/// to nothing, and not sharing this device's library.
+pub fn demo_offered(cx: &App) -> bool {
+    cx.try_global::<Settings>().is_some_and(|settings| {
+        settings.sharing.read(cx).serving.is_none()
+            && settings
+                .model
+                .read(cx)
+                .settings()
+                .is_some_and(|s| !s.remote_signed_in && !s.remote_enabled && !s.share_enabled)
+    })
 }
 
 /// Opens Settings on its EQ pane, showing `device`, or the output in use:
@@ -468,7 +483,7 @@ impl SettingsWindow {
         // with the window closed, opening at login and updating itself are a
         // desktop app's. Nor a Library pane: a phone keeps no folders to
         // scan, and its library is the server's.
-        let mut tabs = if crate::mobile::phone() {
+        let mut tabs = if crate::mobile::handheld() {
             vec![Tab::Server]
         } else {
             vec![Tab::General, Tab::Library, Tab::Server]
@@ -518,11 +533,30 @@ impl SettingsWindow {
         self.screen = true;
     }
 
-    pub fn choose(&mut self, tab: Tab, window: &mut Window, cx: &mut koan_kit::app::Context<Self>) {
+    /// Shows `tab`, and says whether it could: with the account gone, one
+    /// that needs it is left for the Server pane it gave way to. What the
+    /// server offers may just not have arrived yet, so that alone stays.
+    pub fn choose(
+        &mut self,
+        tab: Tab,
+        window: &mut Window,
+        cx: &mut koan_kit::app::Context<Self>,
+    ) -> bool {
+        let signed_out = self.ctx.sharing.read(cx).serving.is_none()
+            && self
+                .ctx
+                .model
+                .read(cx)
+                .settings()
+                .is_some_and(|s| !s.remote_signed_in);
+        if signed_out && !self.tabs(cx).contains(&tab) {
+            return false;
+        }
         if tab != self.tab {
             self.show(tab, window, cx);
             cx.notify();
         }
+        true
     }
 
     pub fn answer(
@@ -532,6 +566,12 @@ impl SettingsWindow {
         cx: &mut koan_kit::app::Context<Self>,
     ) {
         match link {
+            Incoming::Demo => {
+                self.choose(Tab::Server, window, cx);
+                if let Ok(pane) = self.pane.view().downcast::<panes::server::ServerPane>() {
+                    pane.update(cx, |pane, cx| pane.try_demo(window, cx));
+                }
+            }
             Incoming::Invite(text) => {
                 self.choose(Tab::Server, window, cx);
                 if let Ok(pane) = self.pane.view().downcast::<panes::server::ServerPane>() {
@@ -639,7 +679,11 @@ impl Render for SettingsWindow {
                     tab.icon(),
                     tab.title(),
                     tab == self.tab,
-                    move |_, window, cx| entity.update(cx, |this, cx| this.choose(tab, window, cx)),
+                    move |_, window, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.choose(tab, window, cx);
+                        })
+                    },
                 )
             });
         let status = status_line(self.ctx.model.read(cx));

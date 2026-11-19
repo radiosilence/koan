@@ -563,6 +563,7 @@ impl ShelfPage {
                 selected: self.selection.contains(item),
                 gathered: true,
                 transfer: feed.transfers.get(&track.id).copied(),
+                out_of_reach: feed.out_of_reach,
                 drag,
                 note: None,
                 cursor: (self.on(s.artists.len() + s.albums.len() + index))
@@ -721,10 +722,10 @@ impl TileHost for ShelfPage {
 }
 
 impl TrackList for ShelfPage {
-    fn row_tracks(&self) -> Vec<i64> {
+    fn row_tracks(&self) -> Vec<&koan_runtime::Track> {
         self.summary
             .as_ref()
-            .map(|s| s.tracks.iter().map(|t| t.id).collect())
+            .map(|s| s.tracks.iter().collect())
             .unwrap_or_default()
     }
 
@@ -741,31 +742,14 @@ impl TrackList for ShelfPage {
         match part {
             RowPart::Row => {
                 let item = Playable::Track(track);
-                // A finger's tap goes to the track on its record's page, as
-                // the search box's choice does: a shelf mixes kinds, and its
-                // rows are not a list to play through.
-                if cx.global::<crate::theme::KoanTheme>().touch && !self.selection.is_active() {
-                    let album = self
-                        .summary
-                        .as_ref()
-                        .and_then(|s| s.tracks.iter().find(|t| t.id == track))
-                        .and_then(|t| t.album_id);
-                    if let Some(album) = album {
-                        self.lib.nav.update(cx, |nav, cx| {
-                            nav.pick = Some((album, track));
-                            nav.open(Page::Album(album), cx);
-                            cx.notify();
-                        });
-                    }
-                    return;
-                }
-                let ids = self.row_tracks();
+                let touch = cx.global::<crate::theme::KoanTheme>().touch;
                 let order = self.order();
                 let m = event.modifiers();
                 self.place(item, m.shift, &order);
                 // Outside the mode a plain click marks the row alone: the
                 // mode would turn every tile's and pill's click into a tick.
-                let plays = if !m.shift && !m.secondary(cx) && !self.selection.is_active() {
+                let plays = if !touch && !m.shift && !m.secondary(cx) && !self.selection.is_active()
+                {
                     let double = event.click_count() >= 2;
                     if !double {
                         self.selection.mark(item);
@@ -776,7 +760,7 @@ impl TrackList for ShelfPage {
                     rows::select(&mut self.selection, item, event, || order, cx)
                 };
                 if plays {
-                    actions::play_list(&self.lib, ids, index, cx);
+                    actions::play_list(&self.lib, self.row_tracks(), index, cx);
                 }
                 cx.notify();
             }
@@ -851,8 +835,7 @@ impl super::keys::KeyedList for ShelfPage {
                     .iter()
                     .take_while(|p| !matches!(p, Playable::Track(_)))
                     .count();
-                let ids = self.row_tracks();
-                actions::play_list(&self.lib, ids, ix - skip, cx);
+                actions::play_list(&self.lib, self.row_tracks(), ix - skip, cx);
             }
         }
     }

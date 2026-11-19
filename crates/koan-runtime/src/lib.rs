@@ -54,6 +54,7 @@ pub use serve::{InviteTo, ShareStatus, Sharing, TailscaleStatus};
 mod server_queue;
 mod state;
 mod types;
+pub use koan_core::player::{NOT_HERE, NOTHING_HERE};
 pub use state::*;
 pub use types::*;
 
@@ -639,11 +640,11 @@ impl ClockStream {
                 let now = std::time::Instant::now();
                 let wait = 1000 - anchor.reckoning(now) % 1000;
                 // No Tokio reactor drives this future (GPUI's executor and
-                // Swift's both poll it), so the wait is a thread's sleep.
-                let (woke, waited) = tokio::sync::oneshot::channel();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(wait));
-                    let _ = woke.send(());
+                // Swift's both poll it), so the timer runs on the runtime's.
+                // The sleep is made inside the task: it needs the reactor where
+                // it is created, not only where it is polled.
+                let waited = offload::cancellable(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(wait)).await
                 });
                 tokio::select! {
                     _ = waited => {
@@ -1042,6 +1043,17 @@ impl KoanEngine {
     /// (`LinkIdentity::desktop`). `device_name` is as for `open`; on iOS the
     /// system's name for the phone, which the hostname is not.
     pub async fn open_desktop(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
+        Self::start_desktop(device_name, |_| {}).await
+    }
+
+    /// `open_desktop`, begun by this call rather than by the future's first
+    /// poll, telling `opened` from the opening thread. For a launch that may
+    /// have no user interface to await it: iOS can start the app with no
+    /// scene, for a Live Activity's button or a background push.
+    pub fn start_desktop(
+        device_name: Option<String>,
+        opened: impl FnOnce(&Arc<Self>) + Send + 'static,
+    ) -> impl Future<Output = Result<Arc<Self>, KoanError>> + Send + 'static {
         offload::offload(move || {
             init_logging();
             let identity = match device_name.clone() {
@@ -1053,9 +1065,9 @@ impl KoanEngine {
                 .state
                 .downloads()
                 .set_reading_gap(DESKTOP_READING_GAP);
+            opened(&engine);
             Ok(engine)
         })
-        .await
     }
 }
 
@@ -1397,6 +1409,11 @@ impl KoanEngine {
         state::StateStream::new(&self.out)
     }
 
+    /// `observe`, for a client that reads only the `Devices` slice.
+    pub fn observe_devices(&self) -> Arc<state::StateStream> {
+        state::StateStream::devices(&self.out)
+    }
+
     /// Forget the transfers that have already settled. Running ones are left
     /// alone — stopping one is a different verb.
     pub fn clear_settled_downloads(&self) {
@@ -1530,6 +1547,30 @@ impl KoanEngine {
             }
             let db = self.db()?;
             self.place(&db, &track_ids, Placement::Replace { start_at, shuffled })
+        })
+    }
+
+    /// Replace the queue with the tracks `uids` name and play from the one at
+    /// `start_at`, as `replace_queue` does. What a tap on a page's row sends:
+    /// a row id the page holds can name another track once a sync has
+    /// deleted its own, and a uid cannot. Refused when the track tapped is
+    /// gone; the others that are gone are left out.
+    pub fn play_uids(
+        self: Arc<Self>,
+        uids: Vec<String>,
+        start_at: u32,
+    ) -> impl Future<Output = Result<Vec<String>, KoanError>> + Send + 'static {
+        offload::sequenced(move || {
+            let db = self.db()?;
+            let (track_ids, start_at) = resolve_uids(&db, &uids, start_at as usize)?;
+            self.place(
+                &db,
+                &track_ids,
+                Placement::Replace {
+                    start_at: Some(start_at as u32),
+                    shuffled: false,
+                },
+            )
         })
     }
 
@@ -5308,6 +5349,19 @@ impl KoanEngine {
         offload::offload(|| Config::cached().cache_limit_bytes()).await
     }
 
+    /// How many downloads the person asked for have not arrived: every one
+    /// owed, listed as a transfer or still waiting its turn.
+    pub async fn owed_downloads(self: Arc<Self>) -> Result<u32, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(
+                koan_core::db::queries::owed_downloads(&db.conn)
+                    .map_or(0, |owed| owed.len() as u32),
+            )
+        })
+        .await
+    }
+
     /// Delete every downloaded remote track. The library rows stay.
     pub async fn clear_download_cache(self: Arc<Self>) -> Result<CacheCleared, KoanError> {
         offload::offload(move || {
@@ -6192,21 +6246,14 @@ impl KoanEngine {
                         .output_opening()
                         .map(|o| o.since + OUTPUT_WAIT_NOTE)
                         .filter(|at| *at > Instant::now());
-                    let held_until = note_at;
                     // Dropped before the wait: this thread holds the engine
                     // only for as long as it is reading it, so parking here
                     // cannot be what keeps koan open.
                     drop(engine);
-                    seen = match held_until {
+                    seen = match note_at {
                         None => wake.wait(seen),
                         Some(until) => {
-                            let left = until.saturating_duration_since(Instant::now());
-                            let woken = wake.wait_until(seen, left);
-                            if woken == seen {
-                                // Said again, without the held seek.
-                                last_devices = u64::MAX;
-                            }
-                            woken
+                            wake.wait_until(seen, until.saturating_duration_since(Instant::now()))
                         }
                     };
                 }
@@ -7245,9 +7292,10 @@ impl KoanEngine {
         let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
         match placement {
             Placement::Replace { start_at, shuffled } => {
+                let start = start_in_found(track_ids, &items, start_at.unwrap_or(0) as usize);
                 self.send(PlayerCommand::ReplacePlaylist {
                     items,
-                    start: start_at.unwrap_or(0) as usize,
+                    start,
                     position_ms: 0,
                     play: true,
                     mode: if shuffled {
@@ -7441,10 +7489,12 @@ impl KoanEngine {
         let favs: HashSet<i64> =
             queries::favourite_track_ids_batch(&db.conn, queries::LOCAL_USER).unwrap_or_default();
         let credits = koan_core::helpers::ListCredits::read_rows(&db.conn, &rows);
+        let mut uids = uids(db, queries::UidKind::Track, rows.iter().map(|r| r.id));
         rows.into_iter()
             .map(|r| {
                 let (row, favourite) = (credits.track(&r), favs.contains(&r.id));
-                Track::from_row(r, favourite, row)
+                let uid = uids.remove(&r.id);
+                Track::from_row(r, uid, favourite, row)
             })
             .collect()
     }
@@ -7466,12 +7516,71 @@ fn credits(
 fn decorate_albums(db: &Database, rows: Vec<queries::AlbumRow>) -> Vec<Album> {
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let credits = credits(db, queries::batch::CreditsOf::Albums, &ids);
+    let mut uids = uids(db, queries::UidKind::Album, ids);
     rows.into_iter()
         .map(|r| {
             let artists = credits.get(&r.id).map_or(&[][..], Vec::as_slice);
-            Album::from_row(r, artists)
+            let uid = uids.remove(&r.id);
+            Album::from_row(r, uid, artists)
         })
         .collect()
+}
+
+/// The tracks `uids` name, in order, and where the one at `start_at` is
+/// among them. Refused when that one names no track.
+fn resolve_uids(
+    db: &Database,
+    uids: &[String],
+    start_at: usize,
+) -> Result<(Vec<i64>, usize), KoanError> {
+    let found = queries::ids_for_uids(
+        &db.conn,
+        queries::UidKind::Track,
+        uids.iter().map(String::as_str),
+    )
+    .map_err(db_err)?;
+    if uids
+        .get(start_at)
+        .is_none_or(|uid| !found.contains_key(uid))
+    {
+        return Err(KoanError::NotFound {
+            message: "that track is no longer in the library".into(),
+        });
+    }
+    let start = uids[..start_at]
+        .iter()
+        .filter(|uid| found.contains_key(*uid))
+        .count();
+    Ok((
+        uids.iter()
+            .filter_map(|uid| found.get(uid).copied())
+            .collect(),
+        start,
+    ))
+}
+
+/// Where the track asked for at `start_at` of `asked` sits among `items`,
+/// which leave out what the library no longer holds: counted in `asked`, the
+/// start would land on a track further on.
+fn start_in_found(asked: &[i64], items: &[PlaylistItem], start_at: usize) -> usize {
+    let found: HashSet<i64> = items.iter().filter_map(|i| i.db_id).collect();
+    asked
+        .iter()
+        .take(start_at)
+        .filter(|id| found.contains(id))
+        .count()
+}
+
+/// The uids of these rows, none where the read fails.
+fn uids(
+    db: &Database,
+    kind: queries::UidKind,
+    ids: impl IntoIterator<Item = i64>,
+) -> HashMap<i64, String> {
+    queries::uids_for(&db.conn, kind, ids).unwrap_or_else(|e| {
+        log::warn!("uids unread: {e}");
+        HashMap::new()
+    })
 }
 
 fn decorate_album(db: &Database, row: Option<queries::AlbumRow>) -> Option<Album> {
@@ -7798,6 +7907,7 @@ fn connection_info() -> ConnectionInfo {
         share_accounts: devices::accounts(),
         offline: koan_core::remote::offline::active(),
         offline_manual: koan_core::remote::offline::manual(),
+        out_of_reach: koan_core::remote::offline::out_of_reach(),
         sign_in_refused: koan_core::helpers::sign_in_refused(&Config::cached()),
         standing: koan_core::helpers::server_standing(&Config::cached()).into(),
         share_links_unavailable: share_links_unavailable(&Config::cached()),
@@ -8363,6 +8473,29 @@ mod restore_tests {
             uid: None,
             played: None,
         }
+    }
+
+    #[test]
+    fn a_play_by_uid_starts_on_the_track_tapped_and_skips_the_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let ids: Vec<i64> = ["One", "Two", "Three"]
+            .iter()
+            .map(|t| track(&db, t, &dir.path().join(format!("{t}.flac"))))
+            .collect();
+        let held = queries::uids_for(&db.conn, queries::UidKind::Track, ids.clone()).unwrap();
+        let gone = "019a0000-0000-7000-8000-000000000000".to_string();
+        let uids = vec![held[&ids[0]].clone(), gone.clone(), held[&ids[2]].clone()];
+
+        // Counted in what was asked, the start would land past Three.
+        let (found, start) = resolve_uids(&db, &uids, 2).unwrap();
+        assert_eq!(found, vec![ids[0], ids[2]]);
+        assert_eq!(found[start], ids[2]);
+
+        assert!(matches!(
+            resolve_uids(&db, &uids, 1),
+            Err(KoanError::NotFound { .. })
+        ));
     }
 
     #[test]

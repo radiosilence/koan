@@ -1078,7 +1078,8 @@ fn serve(
         stop,
         greeted: false,
         sent: Default::default(),
-        budget: Budget::default(),
+        budget: Budget::tracks(),
+        flood: Budget::commands(),
         waker: waker.clone(),
         levels: None,
         answers: Default::default(),
@@ -1101,6 +1102,7 @@ struct Serving<'a> {
     sent: crate::remote::link::SentState,
     /// Spent by each command that names tracks.
     budget: Budget,
+    flood: Budget,
     waker: Arc<Waker>,
     /// Set while the device at the other end has bars on screen for this
     /// one. Dropped with the connection, which stops the frames.
@@ -1198,7 +1200,10 @@ impl Serving<'_> {
                 let envelope = match Envelope::parse(&command) {
                     Ok(envelope) => envelope,
                     Err(e) => {
-                        log::warn!("nearby: not a command ({e}): {command}");
+                        log::warn!(
+                            "nearby: not a command ({e}): {}",
+                            crate::helpers::truncate_bytes(&command, 200)
+                        );
                         crate::remote::acks::refuse_unread(&command, self.answer());
                         return;
                     }
@@ -1242,8 +1247,8 @@ impl Serving<'_> {
                 }
             }
             Admitted::Command(mut cmd, source, pending) => {
-                if !cmd.track_ids_mut().is_empty() && !self.budget.take() {
-                    log::warn!("nearby: commands naming tracks arriving too fast; refused");
+                if !self.flood.take() || (!cmd.track_ids_mut().is_empty() && !self.budget.take()) {
+                    log::warn!("nearby: commands arriving too fast; refused");
                     if let Some(pending) = pending {
                         pending.finish(AckOutcome::Failed {
                             error: "too many commands at once".into(),
@@ -1258,37 +1263,47 @@ impl Serving<'_> {
     }
 }
 
-/// How fast a peer may send commands that name tracks, each of which costs a
-/// lookup and may start a sync: a burst, then a few a second. The rest of the
-/// playback set is cheap, and a seek bar dragged sends many.
+/// How fast a peer may send commands: a burst, then so many a second.
 struct Budget {
     tokens: f64,
     at: Instant,
+    burst: f64,
+    per_second: f64,
 }
 
 impl Budget {
-    const BURST: f64 = 16.0;
-    const PER_SECOND: f64 = 4.0;
+    /// Commands that name tracks, each of which costs a lookup and may start
+    /// a sync.
+    fn tracks() -> Self {
+        Self::new(16.0, 4.0)
+    }
+
+    /// Every command. The rest of the playback set is cheap, and a seek bar
+    /// dragged sends many, but each is queued for the player: without a bound
+    /// a peer sends them faster than the player takes them.
+    fn commands() -> Self {
+        Self::new(200.0, 50.0)
+    }
+
+    fn new(burst: f64, per_second: f64) -> Self {
+        Self {
+            tokens: burst,
+            at: Instant::now(),
+            burst,
+            per_second,
+        }
+    }
 
     fn take(&mut self) -> bool {
         let now = Instant::now();
-        let earned = now.duration_since(self.at).as_secs_f64() * Self::PER_SECOND;
-        self.tokens = (self.tokens + earned).min(Self::BURST);
+        let earned = now.duration_since(self.at).as_secs_f64() * self.per_second;
+        self.tokens = (self.tokens + earned).min(self.burst);
         self.at = now;
         if self.tokens < 1.0 {
             return false;
         }
         self.tokens -= 1.0;
         true
-    }
-}
-
-impl Default for Budget {
-    fn default() -> Self {
-        Self {
-            tokens: Self::BURST,
-            at: Instant::now(),
-        }
     }
 }
 
@@ -1358,7 +1373,10 @@ impl wire::Session for Serving<'_> {
         let envelope = match Envelope::parse(text) {
             Ok(envelope) => envelope,
             Err(e) => {
-                log::warn!("nearby: not a command ({e}): {text}");
+                log::warn!(
+                    "nearby: not a command ({e}): {}",
+                    crate::helpers::truncate_bytes(text, 200)
+                );
                 // A proven peer's commands come signed; this is not one.
                 if self.proven.is_none() {
                     crate::remote::acks::refuse_unread(text, self.answer());
@@ -2002,6 +2020,12 @@ fn announced(
     let Some(r) = running.as_mut().filter(|r| !r.off) else {
         return;
     };
+    // Each device announced gets a thread and a socket; names cost whoever
+    // announces them nothing.
+    if !r.dialers.contains_key(&key) && r.dialers.len() >= MAX_DIALERS {
+        log::warn!("nearby: {MAX_DIALERS} devices already; {name} ignored");
+        return;
+    }
     {
         let mut found = FOUND.lock();
         let problem = found
@@ -2033,6 +2057,10 @@ fn announced(
         None => spawn_dialer(r, key, addr),
     }
 }
+
+/// Far past any household.
+#[cfg(any(target_vendor = "apple", target_os = "android"))]
+const MAX_DIALERS: usize = 64;
 
 #[cfg(any(target_vendor = "apple", target_os = "android"))]
 fn lost(name: &str) {
@@ -2687,11 +2715,16 @@ pub(crate) mod bonjour {
                 if *count > 1 {
                     continue;
                 }
-                std::thread::spawn(move || {
-                    if let Some((host, port, id, platform, server)) = resolve(&s) {
-                        super::announced(name, host, port, id, platform, server);
-                    }
-                });
+                let resolving = std::thread::Builder::new()
+                    .name("koan-bonjour-resolve".into())
+                    .spawn(move || {
+                        if let Some((host, port, id, platform, server)) = resolve(&s) {
+                            super::announced(name, host, port, id, platform, server);
+                        }
+                    });
+                if let Err(e) = resolving {
+                    log::warn!("nearby: could not resolve an announcement: {e}");
+                }
             }
         }
     }
@@ -3176,7 +3209,8 @@ mod tests {
             stop: &r.stop,
             greeted: false,
             sent: Default::default(),
-            budget: Budget::default(),
+            budget: Budget::tracks(),
+            flood: Budget::commands(),
             waker: Waker::new().unwrap(),
             levels: None,
             answers: Default::default(),

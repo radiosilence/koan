@@ -1,0 +1,1 @@
+- **Sheets on a phone stay on screen with Reduce Motion.** A sheet taller than the room above the keyboard now scrolls its body with motion off, as it already did with motion on.

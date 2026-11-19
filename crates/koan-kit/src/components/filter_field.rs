@@ -125,7 +125,7 @@ impl RenderOnce for FilterField {
             |_, _| None::<Bounds<Pixels>>,
         );
         let focused = self.input.read(cx).focus_handle(cx).is_focused(window);
-        let opens = look.touch && !self.fill;
+        let opens = look.compact && !self.fill;
         let open = if opens {
             super::ease(
                 ElementId::from(("filter-open", self.input.entity_id().as_u64())),
@@ -183,7 +183,7 @@ impl RenderOnce for FilterField {
                     d.map(|d| {
                         // Under touch the field has a row to itself and takes
                         // what the buttons beside it leave.
-                        if look.touch {
+                        if look.compact {
                             d.flex_1()
                         } else {
                             d.w(super::ToolbarMetrics::FIELD * look.scale.size)

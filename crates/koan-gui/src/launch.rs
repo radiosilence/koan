@@ -39,6 +39,14 @@ pub fn run() {
     let device_name = platform::ios::device_name();
     #[cfg(not(target_os = "ios"))]
     let device_name = None;
+    // Not left for when a scene connects, which a launch into the background
+    // may never see: a Live Activity's button and a background push need the
+    // engine with no window.
+    #[cfg(target_os = "ios")]
+    let opened = platform::ios::engine_opened;
+    #[cfg(not(target_os = "ios"))]
+    let opened = |_: &_| {};
+    let engine_opening = koan_runtime::KoanEngine::start_desktop(device_name, opened);
     application.run(move |cx| {
         // Read while the launch's Apple event is still the current one.
         platform::residency::launched_at_login();
@@ -47,7 +55,7 @@ pub fn run() {
         theme::init(cx);
         quit_on_signal(cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
-            let engine = match koan_runtime::KoanEngine::open_desktop(device_name).await {
+            let engine = match engine_opening.await {
                 Ok(engine) => engine,
                 // A database from a newer koan, a configuration that does not
                 // parse, another desktop app on this configuration that got

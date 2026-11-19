@@ -93,9 +93,6 @@ pub struct AlbumPage {
     spot: crate::components::CursorSpot,
     /// The list holds the keyboard, as of the last frame.
     keyed: bool,
-    /// The list takes the keyboard at the next frame: a track was picked
-    /// for it from the search box.
-    take_focus: bool,
     width: Rc<Cell<Option<Pixels>>>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
@@ -116,12 +113,6 @@ impl AlbumPage {
                 cx.notify();
             }),
             cx.observe(&lib.covers, |_, _, cx| cx.notify()),
-            // A track picked for this record while it is already showing.
-            cx.observe(&lib.nav, |this, _, cx| {
-                if !this.tracks.is_empty() {
-                    this.take_pick(cx);
-                }
-            }),
             cx.subscribe(&lib.covers, |this, _, gone: &super::covers::Evicted, cx| {
                 let tracks: std::collections::HashSet<i64> = gone.tracks.iter().copied().collect();
                 this.selection
@@ -147,7 +138,6 @@ impl AlbumPage {
             cursor: Default::default(),
             spot: Default::default(),
             keyed: false,
-            take_focus: false,
             width: Rc::new(Cell::new(None)),
             selection: Selection::default(),
             pick: None,
@@ -182,7 +172,44 @@ impl AlbumPage {
         self.request += 1;
         let request = self.request;
         let (engine, id) = (self.lib.engine.clone(), self.album_id);
+        let uid = self.album.as_ref().and_then(|a| a.uid.clone());
         self._load = Some(cx.spawn(async move |this, cx| {
+            // Once shown, the record is followed by its uid: a sync can
+            // delete its row and add it back as another, and its old id can
+            // come back as some other record.
+            let mut id = id;
+            if let Some(uid) = uid {
+                let now = engine.clone().album_for_uid(uid).await;
+                let found = this.update(cx, |this, cx| {
+                    if this.request != request {
+                        return None;
+                    }
+                    match now {
+                        Ok(Some(now)) => {
+                            if now != id {
+                                this.album_id = now;
+                                this.lib.nav.update(cx, |nav, cx| {
+                                    nav.relink(Page::Album(id), Page::Album(now), cx)
+                                });
+                            }
+                            Some(now)
+                        }
+                        Ok(None) => {
+                            this.tracks.clear();
+                            this.lines.clear();
+                            this.selection.retain(|_| false);
+                            this.gone = Some(false);
+                            cx.notify();
+                            None
+                        }
+                        Err(_) => Some(id),
+                    }
+                });
+                match found {
+                    Ok(Some(now)) => id = now,
+                    _ => return,
+                }
+            }
             let page = engine.album_page(id).await;
             this.update(cx, |this, cx| {
                 if this.request != request {
@@ -196,53 +223,22 @@ impl AlbumPage {
                         this.cursor.relocate(&ids(&this.tracks), &ids(&page.tracks));
                         this.tracks = page.tracks;
                         this.gone = None;
-                        this.take_pick(cx);
                     }
                     Ok(_) => {
+                        this.tracks.clear();
+                        this.lines.clear();
+                        this.selection.retain(|_| false);
                         this.gone = Some(false);
-                        this.drop_pick(cx);
                     }
                     Err(e) => {
                         log::warn!("album {id}: {e}");
                         this.gone = Some(true);
-                        this.drop_pick(cx);
                     }
                 }
                 cx.notify();
             })
             .ok();
         }));
-    }
-
-    /// The record did not load: a track picked for it has nowhere to be.
-    fn drop_pick(&mut self, cx: &mut Context<Self>) {
-        let album = self.album_id;
-        if self.lib.nav.read(cx).pick.is_some_and(|(a, _)| a == album) {
-            self.lib.nav.update(cx, |nav, _| nav.pick = None);
-        }
-    }
-
-    /// A track picked for this record in the search box: the cursor and the
-    /// selection on it, as a click on its row puts them, and scrolled into
-    /// view.
-    fn take_pick(&mut self, cx: &mut Context<Self>) {
-        let Some((album, track)) = self.lib.nav.read(cx).pick else {
-            return;
-        };
-        if album != self.album_id {
-            return;
-        }
-        self.lib.nav.update(cx, |nav, _| nav.pick = None);
-        let Some(index) = self.tracks.iter().position(|t| t.id == track) else {
-            return;
-        };
-        self.cursor.click(index, false);
-        self.selection.only(Playable::Track(track));
-        super::keys::KeyedList::reveal(self, index, cx);
-        self.take_focus = true;
-        // Drawn now, focus included: a record already showing has nothing
-        // else to redraw it.
-        cx.notify();
     }
 
     fn retry(&mut self, cx: &mut Context<Self>) {
@@ -320,6 +316,7 @@ impl AlbumPage {
             selected,
             gathered: false,
             transfer: feed.transfers.get(&id).copied(),
+            out_of_reach: feed.out_of_reach,
             drag,
             kind,
             note: None,
@@ -379,7 +376,7 @@ impl AlbumPage {
             if !rest.is_empty() {
                 // A phone's narrow header gives the facts a line under the
                 // credit, as the iOS app's does.
-                details = if crate::mobile::phone() {
+                details = if p.look.compact {
                     div()
                         .flex()
                         .flex_col()
@@ -465,8 +462,8 @@ impl actions::Menus for AlbumPage {
 }
 
 impl TrackList for AlbumPage {
-    fn row_tracks(&self) -> Vec<i64> {
-        self.tracks.iter().map(|t| t.id).collect()
+    fn row_tracks(&self) -> Vec<&Track> {
+        self.tracks.iter().collect()
     }
 
     fn clicked(
@@ -492,8 +489,7 @@ impl TrackList for AlbumPage {
                     order,
                     cx,
                 ) {
-                    let ids = self.tracks.iter().map(|t| t.id).collect();
-                    actions::play_list(&self.lib, ids, index, cx);
+                    actions::play_list(&self.lib, &self.tracks, index, cx);
                 }
                 cx.notify();
             }
@@ -538,7 +534,7 @@ impl Render for AlbumPage {
                 })
                 .into_any_element(),
             (Some(width), None) if self.album.is_some() => {
-                let grid = Grid::for_width(width, &p.look.scale);
+                let grid = Grid::for_look(width, &p.look);
                 let lead_width = rows::lead_width(p, self.tracks.len(), window);
                 // The page scrolls whole, the header with the tracks, as the
                 // iOS app's does, and passes under the toolbar: a header held
@@ -567,9 +563,6 @@ impl Render for AlbumPage {
                 .into_any_element(),
             _ => div().into_any_element(),
         };
-        if std::mem::take(&mut self.take_focus) {
-            window.focus(&self.focus, cx);
-        }
         self.keyed = self.focus.is_focused(window);
         actions::list_menu(
             super::keys::keyed(
@@ -630,8 +623,7 @@ impl super::keys::KeyedList for AlbumPage {
     }
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
-        let ids = self.tracks.iter().map(|t| t.id).collect();
-        actions::play_list(&self.lib, ids, ix, cx);
+        actions::play_list(&self.lib, &self.tracks, ix, cx);
     }
 
     fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {
@@ -655,6 +647,7 @@ mod tests {
     fn track(disc: Option<i32>, number: Option<i32>) -> Track {
         Track {
             id: 0,
+            uid: None,
             title: String::new(),
             artist_name: String::new(),
             artist_credit: Vec::new(),

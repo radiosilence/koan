@@ -1,0 +1,27 @@
+kōan
+Copyright (C) 2024-2026 James Cleveland
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. It is distributed WITHOUT ANY WARRANTY; see the LICENSE file.
+
+Additional permission under section 7 of the GNU AGPL version 3
+
+If you convey this program, or a work based on it, through an application
+distribution service (including Apple's App Store and TestFlight) whose terms
+or technical measures would otherwise conflict with this License, the copyright
+holders give you permission to do so, provided that the Corresponding Source of
+the version conveyed remains available to its recipients at no charge under
+this License, and that the service's listing or the program itself says where
+to get it. This permission removes no other requirement of this License,
+including section 13. You may remove it from your own versions of this program.
+
+Earlier versions
+
+Releases up to and including 0.71.4 were published under the MIT License, and
+remain available under it.
+
+Third-party components keep their own licences. The AutoEQ target data, for
+example, is under the MIT License; see
+crates/koan-core/src/audio/dsp/targets/SOURCES.md.

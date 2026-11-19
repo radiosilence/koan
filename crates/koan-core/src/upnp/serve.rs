@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
@@ -254,9 +254,34 @@ impl Request {
     }
 }
 
+/// How long a client has to send a whole request. A timeout on the socket
+/// alone bounds each read, and a byte every few seconds would hold one of the
+/// listener's connections for hours.
+const REQUEST_TIME: Duration = Duration::from_secs(10);
+
+/// A socket read against one deadline for however many reads it takes.
+struct Timed<'a> {
+    stream: &'a TcpStream,
+    until: Instant,
+}
+
+impl Read for Timed<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        (&mut self.stream).read(buf)
+    }
+}
+
 pub(crate) fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
-    let mut reader = BufReader::new(stream);
-    // The request line and headers together, however slowly they arrive.
+    let mut reader = BufReader::new(Timed {
+        stream,
+        until: Instant::now() + REQUEST_TIME,
+    });
+    // The request line and headers together.
     let mut head = (&mut reader).take(MAX_HEAD);
     let mut line = String::new();
     head.read_line(&mut line)?;
@@ -291,6 +316,7 @@ pub(crate) fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
         .min(MAX_BODY);
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
+    stream.set_read_timeout(Some(REQUEST_TIME))?;
     Ok(Request {
         method,
         path,
@@ -300,7 +326,6 @@ pub(crate) fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
 }
 
 fn handle(shared: &Shared, mut stream: TcpStream) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     let req = read_request(&stream)?;
     let path = req.path.split('?').next().unwrap_or_default();
     let mut segments = path.trim_start_matches('/').splitn(2, '/');

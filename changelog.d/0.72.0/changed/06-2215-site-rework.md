@@ -1,0 +1,1 @@
+- **koan.rocks leads with the GPUI apps.** The homepage presents kōan as your player, server, remote and EQ on every device, with current screenshots, and the compare page and guides drop what described the SwiftUI Mac app.

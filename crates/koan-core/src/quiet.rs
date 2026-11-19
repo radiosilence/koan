@@ -116,6 +116,9 @@ fn update(f: impl FnOnce(&mut State)) {
         if now.awake {
             log::info!("quiet: awake");
             crate::remote::offline::woke();
+            // Suspension cut every transfer short: what failed for it, and
+            // what was asked for and never arrived, is fetched now.
+            crate::remote::queue::reconnected();
             crate::remote::nearby::wake();
             crate::remote::devices::resume();
         } else {

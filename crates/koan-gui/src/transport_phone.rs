@@ -20,6 +20,39 @@ pub enum Form {
     Full,
 }
 
+/// Where Now Playing's art stands while the mini player's sleeve flies to
+/// it: what the page tells the shell, which draws the flight.
+#[derive(Clone)]
+pub struct Flight {
+    /// Where the art goes, once the page has been laid out.
+    to: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    /// Told when the art's place is known.
+    shell: EntityId,
+    /// The flight has landed: the art draws itself again.
+    pub landed: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl Flight {
+    pub fn new(shell: EntityId) -> Self {
+        Self {
+            to: Default::default(),
+            shell,
+            landed: Default::default(),
+        }
+    }
+
+    pub fn to(&self) -> Option<Bounds<Pixels>> {
+        self.to.get()
+    }
+
+    fn told(&self, bounds: Bounds<Pixels>, cx: &mut App) {
+        if self.to.get() != Some(bounds) {
+            self.to.set(Some(bounds));
+            cx.notify(self.shell);
+        }
+    }
+}
+
 /// The mini player, tapped: Now Playing is asked for.
 pub struct Expand;
 /// Now Playing's close, tapped.
@@ -35,7 +68,7 @@ impl EventEmitter<ShowInfo> for Transport {}
 /// theme's size.
 pub const MINI_HEIGHT: f32 = 56.0;
 /// The mini player's sleeve.
-const SLEEVE: f32 = 30.0;
+pub const SLEEVE: f32 = 30.0;
 
 impl Transport {
     /// Draws the transport as `form` from now on. The phone's forms follow
@@ -50,6 +83,17 @@ impl Transport {
         cx.notify();
     }
 
+    /// The record playing, for the flight from the mini player's sleeve:
+    /// `None` when nothing is playing.
+    pub fn now_playing_album(&self, cx: &App) -> Option<Option<i64>> {
+        self.playback
+            .read(cx)
+            .0
+            .entry
+            .as_ref()
+            .map(|entry| entry.album_id)
+    }
+
     pub(super) fn mini(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = Paint::of(window, cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
@@ -62,18 +106,19 @@ impl Transport {
         // The playhead's line glides on the GPU from the engine's last anchor,
         // as the seek bar does: no frame is drawn between the anchors.
         let anchor = *cx.global::<Mirror>().playhead.read(cx);
-        let share = if now.duration_ms > 0 {
-            let at = anchor.at(std::time::Instant::now(), now.duration_ms);
+        let duration = super::known_duration(now.duration_ms, entry.and_then(|e| e.duration_ms));
+        let share = if duration > 0 {
+            let at = anchor.at(std::time::Instant::now(), duration);
             self.mini_glide.set(
-                (anchor.position_ms as f64 / now.duration_ms as f64) as f32,
+                (anchor.position_ms as f64 / duration as f64) as f32,
                 if anchor.playing {
-                    1000.0 / now.duration_ms as f32
+                    1000.0 / duration as f32
                 } else {
                     0.0
                 },
                 anchor.at,
             );
-            (at as f32 / now.duration_ms as f32).clamp(0.0, 1.0)
+            (at as f32 / duration as f32).clamp(0.0, 1.0)
         } else {
             0.0
         };
@@ -88,7 +133,9 @@ impl Transport {
             .map(|e| e.title.clone())
             .unwrap_or_else(|| theme::label("nothing playing").to_string());
         let has_entry = entry.is_some();
-        div()
+        let album_id = entry.and_then(|e| e.album_id).unwrap_or(0) as u64;
+        let track_id = entry.and_then(|e| e.track_id).unwrap_or(0) as u64;
+        let bar = div()
             .id("mini-player")
             .relative()
             .w_full()
@@ -107,27 +154,38 @@ impl Transport {
                         .glide(&self.mini_glide),
                 ),
             )
-            .child(Cover::new(self.cover.clone(), sleeve))
+            // A new record's sleeve and a new track's names fade in over
+            // what they replace, as Now Playing's do.
+            .child(crate::components::FadeIn::new(
+                ElementId::NamedInteger("mini-sleeve".into(), album_id),
+                Cover::new(self.cover.clone(), sleeve),
+            ))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(
+                    .child(crate::components::FadeIn::new(
+                        ElementId::NamedInteger("mini-titles".into(), track_id),
                         div()
-                            .text_role(TypeRole::Meta, &p.look)
-                            .text_color(p.strong)
-                            .truncate()
-                            .child(title),
-                    )
-                    .children(detail.map(|detail| {
-                        div()
-                            .text_role(TypeRole::Fine, &p.look)
-                            .text_color(p.muted)
-                            .truncate()
-                            .child(detail)
-                    })),
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_role(TypeRole::Meta, &p.look)
+                                    .text_color(p.strong)
+                                    .truncate()
+                                    .child(title),
+                            )
+                            .children(detail.map(|detail| {
+                                div()
+                                    .text_role(TypeRole::Fine, &p.look)
+                                    .text_color(p.muted)
+                                    .truncate()
+                                    .child(detail)
+                            })),
+                    )),
             )
             // Where the music plays, a thumb away on every page, as on iOS.
             .child(
@@ -160,7 +218,7 @@ impl Transport {
             // as iOS players open; its buttons keep their own taps.
             .when(has_entry, |bar| {
                 bar.on_click(cx.listener(|_, _, _, cx| cx.emit(Expand)))
-                    .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
+                    .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
                         if event.source != ScrollSource::Touch {
                             return;
                         }
@@ -172,6 +230,12 @@ impl Transport {
                                 let lift = lift + dy;
                                 if lift < -Pixels::from(24.) {
                                     this.lift = None;
+                                    // The rest of the swipe, and its fling,
+                                    // are spent on opening: none of it
+                                    // reaches Now Playing, where a touch
+                                    // catching the fling would be a scroll
+                                    // rather than the seek bar's drag.
+                                    window.end_touch_scroll();
                                     cx.emit(Expand);
                                 } else {
                                     this.lift = Some(lift);
@@ -181,8 +245,21 @@ impl Transport {
                         }
                         cx.stop_propagation();
                     }))
-            })
-            .into_any_element()
+            });
+        // A first track's bar rises into the foot over "nothing playing".
+        crate::components::Shifted::new(
+            ElementId::NamedInteger("mini-arrives".into(), has_entry as u64),
+            Point::new(
+                Pixels::ZERO,
+                if has_entry {
+                    p.look.spaced(MINI_HEIGHT)
+                } else {
+                    Pixels::ZERO
+                },
+            ),
+            bar,
+        )
+        .into_any_element()
     }
 
     pub(super) fn full(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -206,13 +283,31 @@ impl Transport {
                 .clone()
                 .cached(StyleRefinement::default().size_full())
                 .into_any_element(),
-            _ => div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(Cover::new(self.cover.clone(), side))
-                .into_any_element(),
+            _ => {
+                // While the mini player's sleeve grows into this place the
+                // art itself waits, a canvas telling the flight where it goes.
+                let flying = self.flight.as_ref().filter(|f| !f.landed.get());
+                let art = match flying {
+                    Some(flight) => {
+                        let flight = flight.clone();
+                        div()
+                            .relative()
+                            .size(side)
+                            .child(crate::components::bounds_probe(move |bounds, cx| {
+                                flight.told(bounds, cx)
+                            }))
+                            .into_any_element()
+                    }
+                    None => Cover::new(self.cover.clone(), side).into_any_element(),
+                };
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(art)
+                    .into_any_element()
+            }
         };
         let titles = entry.map(|e| {
             let heart = e
@@ -236,15 +331,44 @@ impl Transport {
                 &self.nav,
                 p.ink,
             );
+            // The track's menu, as the rows' hold opens it: its record, its
+            // artist, a playlist, the queue.
+            let more = e.track_id.zip(self.lib.clone()).map(|(track, lib)| {
+                let album = e.album_id;
+                div()
+                    .koan_menu_on_press("np-more", window, cx, move |m, _, cx| {
+                        crate::library::actions::menu(
+                            m,
+                            &lib,
+                            std::sync::Arc::from([crate::library::drag::Playable::Track(track)]),
+                            album,
+                            None,
+                            cx,
+                        )
+                    })
+                    .child(Button::icon_only("np-more-button", Icon::More, "more"))
+            });
+            // The heart and the menu on a line of their own, so the names
+            // below have the page's width.
+            let actions = (heart.is_some() || more.is_some()).then(|| {
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(p.space(Space::M))
+                    .children(heart)
+                    .children(more)
+            });
             div()
                 .w_full()
                 .flex()
-                .items_center()
-                .gap(p.space(Space::M))
+                .flex_col()
+                .gap(p.space(Space::S))
+                .children(actions)
                 .child(
                     div()
-                        .flex_1()
-                        .min_w_0()
+                        .w_full()
                         .flex()
                         .flex_col()
                         .gap(p.space(Space::Xs))
@@ -252,6 +376,7 @@ impl Transport {
                         .child(
                             div()
                                 .id("np-full-title")
+                                .w_full()
                                 .text_role(TypeRole::TitleSmall, &p.look)
                                 .text_color(p.strong)
                                 .truncate()
@@ -281,26 +406,6 @@ impl Transport {
                             ))
                         }),
                 )
-                .children(heart)
-                // The track's menu, as the rows' hold opens it: its record,
-                // its artist, a playlist, the queue.
-                .children(e.track_id.zip(self.lib.clone()).map(|(track, lib)| {
-                    let album = e.album_id;
-                    div()
-                        .koan_menu_on_press("np-more", window, cx, move |m, _, cx| {
-                            crate::library::actions::menu(
-                                m,
-                                &lib,
-                                std::sync::Arc::from([crate::library::drag::Playable::Track(
-                                    track,
-                                )]),
-                                album,
-                                None,
-                                cx,
-                            )
-                        })
-                        .child(Button::icon_only("np-more-button", Icon::More, "more"))
-                }))
         });
         let play_pause = Button::icon_outlined(
             "np-full-play-pause",
@@ -457,6 +562,7 @@ impl Transport {
                 if event.source != ScrollSource::Touch {
                     return;
                 }
+                cx.stop_propagation();
                 let dy = event.delta.pixel_delta(Pixels::from(16.)).y;
                 let down = |by: Pixels| Point::new(Pixels::ZERO, by.max(Pixels::ZERO));
                 match event.touch_phase {
@@ -472,21 +578,24 @@ impl Transport {
                             cx.notify();
                         }
                     }
-                    koan_kit::app::platform::TouchPhase::Moved => match this.pull {
-                        Some(by) => {
+                    // With no pull held, a fling's coasting after the
+                    // release decided.
+                    koan_kit::app::platform::TouchPhase::Moved => {
+                        if let Some(by) = this.pull {
                             let at = (by + dy).max(Pixels::ZERO);
                             this.pulled.follow(down(at), window);
                             this.pull = Some(at);
                         }
-                        // A fling's coasting after the release decided.
-                        None => return,
-                    },
+                    }
                     koan_kit::app::platform::TouchPhase::Ended => {
                         let Some(by) = this.pull.take() else { return };
                         let at = (by + dy).max(Pixels::ZERO);
                         if at > close_at {
                             this.pulled.follow(down(at), window);
                             this.released = Some(true);
+                            // The swipe is spent on closing: its fling does
+                            // not carry on into the page uncovered.
+                            window.end_touch_scroll();
                             cx.emit(Collapse);
                         } else {
                             this.ease_back(window, cx);
@@ -498,7 +607,6 @@ impl Transport {
                         }
                     }
                 }
-                cx.stop_propagation();
             }))
             .clear_of_system(crate::components::Clear::System, window)
             .child(page);

@@ -18,9 +18,9 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, TypeRole, label};
 
 #[derive(Clone)]
 pub enum Availability {
-    /// Waiting at the front of the downloads.
+    /// Waiting at the front of the downloads: nothing here yet.
     Pending,
-    /// Queued behind others.
+    /// Waiting behind others: nothing here yet.
     Queued,
     Failed,
     /// Offline, with no file here: not a failure, and drawn apart from one.
@@ -40,8 +40,8 @@ impl Availability {
     /// What the mark means, for the row's tooltip, where it needs saying.
     pub fn help(&self) -> Option<&'static str> {
         match self {
-            Availability::Pending => Some("queued for download, next"),
-            Availability::Queued => Some("queued for download"),
+            Availability::Pending => Some("not downloaded yet, next to download"),
+            Availability::Queued => Some("not downloaded yet, waiting to download"),
             Availability::Failed => Some("couldn't be fetched"),
             Availability::NotHere => Some("not on this device"),
             Availability::Transferring(_) => Some("downloading"),
@@ -59,6 +59,10 @@ impl Availability {
 /// `bad` and the next download in the accent; a word in place of the glyph
 /// when the look hides icons. On a picked row everything but a failure takes
 /// `on_selection`.
+///
+/// A download waiting to start is the ring a running one fills, empty and
+/// faint: the same family as a transfer, and nothing like the kept cloud, so
+/// a column of queued tracks is never read as an album on this device.
 #[derive(IntoElement)]
 pub struct AvailabilityMark {
     state: Option<Availability>,
@@ -108,6 +112,14 @@ impl RenderOnce for AvailabilityMark {
                 div().text_color(color).child(word).into_any_element()
             }
         };
+        // The empty ring: the whole circle, faint, nothing filled.
+        let waiting = |color: Hsla, word: &'static str| -> AnyElement {
+            if look.icons {
+                ProgressRing::new(Some(1.0), color).into_any_element()
+            } else {
+                div().text_color(color).child(word).into_any_element()
+            }
+        };
         let help = self.state.as_ref().and_then(Availability::help);
         // The file arriving here, seen while the mark shows: a download
         // finishing rings once as its ring gives way to the kept mark.
@@ -129,8 +141,8 @@ impl RenderOnce for AvailabilityMark {
             answers.layer(window, cx)
         });
         let inner = self.state.map(|state| match state {
-            Availability::Pending => mark(Icon::Downloads, "next", accent),
-            Availability::Queued => mark(Icon::Downloads, "queued", muted),
+            Availability::Pending => waiting(accent.opacity(0.55), "next"),
+            Availability::Queued => waiting(muted.opacity(0.4), "queued"),
             Availability::Failed => mark(Icon::WarningFilled, "failed", bad),
             Availability::NotHere => mark(Icon::CloudMissing, "away", quiet),
             Availability::Transferring(ring) => {

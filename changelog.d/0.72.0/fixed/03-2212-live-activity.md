@@ -1,0 +1,1 @@
+- **Live Activities are back on the iPhone.** While the phone controls another device, the lock screen and Dynamic Island show what is playing there, with working skip and play-pause buttons, kept up to date through the push relay.

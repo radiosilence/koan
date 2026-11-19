@@ -19,7 +19,13 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
     /// Set once the engine is up. A token or a tapped notification that
     /// arrives before then waits for it: a tap can be what launched the app.
     static var engine: KoanEngine? {
-        didSet { flush() }
+        didSet {
+            // Told before the holds in `flush`. A launch into the background,
+            // as for a push after iOS ended the app, reports no change of
+            // state, and would otherwise run as if in front.
+            engine?.setBackground(background: UIApplication.shared.applicationState == .background)
+            flush()
+        }
     }
 
     private static var token: String?
@@ -127,6 +133,22 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
             .requestAuthorization(options: [.alert, .sound])
         #endif
     }
+
+    #if os(iOS)
+    /// iOS will not give the session to an app in the background while
+    /// another app plays, so music asked for from another device cannot start
+    /// here. Says so where the person will see it; tapping opens the app,
+    /// which may then play.
+    nonisolated static func askToBeTapped() {
+        let content = UNMutableNotificationContent()
+        content.title = "kōan could not start playing"
+        content.body = "iOS needs kōan open to take over the audio. Tap to play."
+        content.userInfo = ["koan": ["type": "resume"]]
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "koan.refused-activation", content: content, trigger: nil)
+        )
+    }
+    #endif
 
     private static func run(_ claim: String, from: String?) {
         guard let engine else {

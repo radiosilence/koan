@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::components::{Button, ButtonKind, CopyButton, MenuPanel, MenuRow, Picker, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
-use koan_kit::app::input::InputState;
+use koan_kit::app::input::{InputState, TextContentType};
 use koan_kit::app::*;
 use koan_runtime::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
 
@@ -244,7 +244,7 @@ impl PeoplePane {
     }
 
     fn set_password(&self, account: String, window: &mut Window, cx: &mut App) {
-        let field = sheet::field("New password", true, window, cx);
+        let field = sheet::secret_field("New password", TextContentType::NewPassword, window, cx);
         let people = self.people.clone();
         let sheet = Sheet::new(format!("Set a password for {account}"))
             .message("Their devices will have to sign in again with it.")

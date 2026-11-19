@@ -162,6 +162,9 @@ pub(crate) fn credit_parts(
 #[derive(Debug, Clone, PartialEq)]
 pub struct Album {
     pub id: i64,
+    /// What names the record on every device and across a sync: a row id
+    /// can come back as another record once this one is deleted.
+    pub uid: Option<String>,
     pub title: String,
     pub artist_id: i64,
     pub artist_name: String,
@@ -229,10 +232,11 @@ pub struct AlbumOnDevice {
 
 impl Album {
     /// The row, with the artists `credits_by_id` read for it.
-    pub(crate) fn from_row(r: AlbumRow, artists: &[(i64, String)]) -> Self {
+    pub(crate) fn from_row(r: AlbumRow, uid: Option<String>, artists: &[(i64, String)]) -> Self {
         let year = r.date.as_deref().and_then(year_of);
         Self {
             id: r.id,
+            uid,
             title: r.title,
             artist_id: r.artist_id,
             artist_credit: helpers::record_credit(&r.artist_name, Some(r.artist_id), artists)
@@ -259,6 +263,10 @@ impl Album {
 #[derive(Debug, Clone)]
 pub struct Track {
     pub id: i64,
+    /// What names the track across a sync, and what a play from a page
+    /// sends: a row id can come back as another track once this one is
+    /// deleted.
+    pub uid: Option<String>,
     pub title: String,
     pub artist_name: String,
     /// `artist_name` with each artist it credits linked.
@@ -406,11 +414,17 @@ pub struct PlayHistoryEntry {
 impl Track {
     /// The row, with its record's artist and the credits `ListCredits` built
     /// for it.
-    pub(crate) fn from_row(r: TrackRow, is_favourite: bool, credits: helpers::RowCredits) -> Self {
+    pub(crate) fn from_row(
+        r: TrackRow,
+        uid: Option<String>,
+        is_favourite: bool,
+        credits: helpers::RowCredits,
+    ) -> Self {
         let path = r.path.clone().or_else(|| r.cached_path.clone());
         let credits = Credits::from(credits);
         Self {
             id: r.id,
+            uid,
             title: r.title,
             artist_credit: credits.artist,
             album_artist_credit: credits.album_artist,
@@ -3019,6 +3033,10 @@ pub struct ConnectionInfo {
     pub offline: bool,
     /// Turned on by hand, rather than by the server being out of reach.
     pub offline_manual: bool,
+    /// Nothing can be fetched now: offline mode, or no connection to the
+    /// server at all (`koan_core::remote::offline::out_of_reach`). A track
+    /// not on this device does not play, and a queued download waits.
+    pub out_of_reach: bool,
     /// The server can sign a device without a keyboard in, once someone here
     /// approves it.
     pub pairing: bool,

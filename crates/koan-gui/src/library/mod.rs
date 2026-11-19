@@ -101,9 +101,25 @@ impl Lib {
         let feed = cx.new(|cx| feed::Feed::new(engine.clone(), cx));
         let covers = cx.new(|cx| covers::Covers::new(engine.clone(), cx));
         // The transport's and the viewer's sleeves forget what the library
-        // lost, as the library's own do.
-        cx.subscribe(&covers, |_, gone: &covers::Evicted, cx| {
-            crate::covers::Covers::forget(&gone.albums, cx)
+        // lost, as the library's own do, and Back no longer leads to it: its
+        // id may come back as another record.
+        let lost = navigator.clone();
+        cx.subscribe(&covers, move |_, gone: &covers::Evicted, cx| {
+            crate::covers::Covers::forget(&gone.albums, cx);
+            lost.update(cx, |nav, cx| {
+                let albums = gone
+                    .albums
+                    .iter()
+                    .map(|id| crate::navigator::Route::Album(*id));
+                let artists = gone
+                    .artists
+                    .iter()
+                    .map(|id| crate::navigator::Route::Artist(*id));
+                for route in albums.chain(artists) {
+                    nav.forget_lost(route);
+                }
+                cx.notify();
+            });
         })
         .detach();
         let search = cx.new(|_| crate::search::Search::new(engine.clone(), navigator.clone()));

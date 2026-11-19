@@ -65,7 +65,44 @@ pub struct Activity {
     last_sync: Option<SyncProgress>,
     /// The last task's failure, until another starts.
     problem: Option<SharedString>,
+    /// The rows last drawn, and whether to go on drawing them with nothing
+    /// under way: a phone's card fading out still shows what it said.
+    drawn: Vec<Row>,
+    pub holding: bool,
     _watch: [Subscription; 4],
+}
+
+/// Whether this device has a server to sync with, and whether a sync runs,
+/// asked here or anywhere else.
+pub fn sync_standing(cx: &App) -> (bool, bool) {
+    let mirror = cx.global::<Mirror>();
+    let signed_in = mirror
+        .connection
+        .read(cx)
+        .0
+        .as_ref()
+        .is_some_and(|c| c.signed_in_to.is_some());
+    let syncing =
+        cx.global::<ActivityHandle>().0.read(cx).syncing > 0 || mirror.tasks.read(cx).0.syncing;
+    (signed_in, syncing)
+}
+
+/// A pull from the top of `route` syncing with the server, as the Library
+/// menu's Sync does: offered on the library's listings while this device has
+/// a server. `top` is where the gap the page leaves begins.
+pub fn pull_to_sync(
+    route: crate::navigator::Route,
+    top: Pixels,
+    color: crate::theme::Hsla,
+    cx: &App,
+) -> Option<crate::components::Refresh> {
+    let (signed_in, busy) = sync_standing(cx);
+    (signed_in && route.syncs_on_pull()).then(|| crate::components::Refresh {
+        top,
+        busy,
+        color,
+        start: std::rc::Rc::new(|_, cx| cx.dispatch_action(&Sync)),
+    })
 }
 
 /// The library menu's actions, and the activity rows the sidebar shows.
@@ -84,6 +121,8 @@ pub fn init(cx: &mut App) {
             syncing: 0,
             last_sync: None,
             problem: None,
+            drawn: Vec::new(),
+            holding: false,
             _watch: [
                 cx.observe(&tasks, |this: &mut Activity, tasks, cx| {
                     if this.syncing == 0 && !tasks.read(cx).0.syncing {
@@ -377,6 +416,7 @@ impl Activity {
     }
 }
 
+#[derive(Clone)]
 struct Row {
     id: &'static str,
     label: SharedString,
@@ -465,7 +505,12 @@ impl Render for Activity {
         // On a phone the rows sit in a card that pads them.
         let look = crate::theme::Look::of(window, cx);
         let flush = look.touch;
-        let rows = self.rows(cx);
+        let mut rows = self.rows(cx);
+        if rows.is_empty() && self.holding {
+            rows = self.drawn.clone();
+        } else if !rows.is_empty() {
+            self.drawn = rows.clone();
+        }
         if rows.is_empty() && self.problem.is_none() {
             return div().into_any_element();
         }
