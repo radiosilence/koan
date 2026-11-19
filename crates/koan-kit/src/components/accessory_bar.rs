@@ -15,6 +15,9 @@ use crate::theme::{Look, Space};
 /// How far a finger pushes the bar up before it opens.
 const LIFT: f32 = 24.0;
 
+/// What opening the bar runs.
+type OnOpen = Rc<dyn Fn(&mut Window, &mut App)>;
+
 /// A bar over a touch window's tabs, on the page's ground, laying out what
 /// it is given in a row on the page's steps, centred down it, with an
 /// optional progress line along its top edge, `AccessoryBar::height` tall.
@@ -28,7 +31,7 @@ pub struct AccessoryBar {
     id: SharedString,
     children: Vec<AnyElement>,
     progress: Option<(f32, Option<Glide>)>,
-    on_open: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
+    on_open: Option<OnOpen>,
 }
 
 impl AccessoryBar {
