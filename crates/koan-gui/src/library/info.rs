@@ -64,7 +64,7 @@ fn group(title: &str, fields: &[InfoField]) -> DetailGroup {
 impl Render for TrackInfo {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = &Look::of(window, cx);
-        let mut body = ask::body("track-info-body", look).pt(look.space(Space::M));
+        let mut body = ask::body("track-info-body", look);
         match &self.details {
             Some(d) => {
                 body = body.child(form_text(

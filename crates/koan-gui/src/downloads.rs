@@ -228,10 +228,10 @@ impl DownloadsPage {
             )
             .line(
                 Text::new(TypeRole::Meta)
-                    .text_color(if t.failure_reason.is_some() {
-                        p.bad
+                    .tone(if t.failure_reason.is_some() {
+                        Tone::Bad
                     } else {
-                        p.muted
+                        Tone::Muted
                     })
                     .truncate()
                     .child(line),
@@ -241,7 +241,7 @@ impl DownloadsPage {
                     Stack::row()
                         .role(TypeRole::Fine)
                         .justify_end()
-                        .text_color(if warns { p.bad } else { p.muted })
+                        .tone(if warns { Tone::Bad } else { Tone::Muted })
                         .truncate()
                         .child(status)
                 };

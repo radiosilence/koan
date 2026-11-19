@@ -768,7 +768,7 @@ impl MeasurementFlow {
                 .into_any_element(),
                 section(
                     Some("What the file looks like"),
-                    vec![Text::new(TypeRole::Meta).text_color(look.text_color(Tone::Muted)).child("20, 92.4  ·  21, 92.6  ·  22, 92.7  ·  …").into_any_element()],
+                    vec![Text::new(TypeRole::Meta).tone(Tone::Muted).child("20, 92.4  ·  21, 92.6  ·  22, 92.7  ·  …").into_any_element()],
                     Some("Two numbers a line: a frequency in hertz, then a level in decibels. Commas, tabs or spaces between them all work.".into()),
                     &look,
                 )

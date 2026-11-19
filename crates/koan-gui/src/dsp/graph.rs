@@ -721,7 +721,7 @@ impl Render for Graph {
                             .left_0()
                             .right_0()
                             .justify_center()
-                            .text_color(look.text_color(Tone::Muted))
+                            .tone(Tone::Muted)
                             .child(label(note))
                     })),
             )

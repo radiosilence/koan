@@ -7,6 +7,7 @@ use koan_kit::app::*;
 
 use super::Search;
 use crate::components::FilterButton;
+use crate::components::{Inset, Stack};
 use crate::theme::Space;
 
 pub struct SearchField {
@@ -28,10 +29,10 @@ impl Render for SearchField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = crate::theme::Look::of(window, cx);
         let query = self.search.read(cx).query().to_string();
-        div()
+        Stack::block()
+            .inset_x(Space::L)
+            .inset_y(Space::S)
             .w_full()
-            .px(look.space(Space::L))
-            .py(look.space(Space::S))
             .child(
                 FilterButton::new("sidebar-search", query, "search").on_click(|_, window, cx| {
                     window.dispatch_action(crate::platform::actions::Search.boxed_clone(), cx)

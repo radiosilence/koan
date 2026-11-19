@@ -1774,7 +1774,6 @@ impl ProfileBody {
         }
         body("curve-body", &look)
             .size_full()
-            .pt(look.space(Space::M))
             .children(s)
             .into_any_element()
     }

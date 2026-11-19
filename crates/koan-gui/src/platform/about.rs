@@ -142,10 +142,10 @@ fn show(_cx: &mut App) {
 /// its build, and the links.
 #[cfg(not(target_os = "macos"))]
 fn show(cx: &mut App) {
-    use koan_kit::app::{AppContext, IntoElement, ParentElement, Render, Styled, div};
+    use koan_kit::app::{AppContext, IntoElement, ParentElement, Render, Styled};
 
-    use crate::components::{Button, ButtonKind, SecondaryWindow};
-    use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
+    use crate::components::{Button, ButtonKind, SecondaryWindow, Stack, Text};
+    use crate::theme::{Look, Space, Tone, TypeRole};
 
     struct AboutWindow;
 
@@ -165,7 +165,7 @@ fn show(cx: &mut App) {
                 .child(crate::components::title_text("kōan", &look))
                 .child(
                     Text::new(TypeRole::Meta)
-                        .text_color(look.text_color(Tone::Muted))
+                        .tone(Tone::Muted)
                         .child(format!("{VERSION} ({BUILD})")),
                 )
                 .child(

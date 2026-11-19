@@ -619,7 +619,7 @@ impl Render for OrganizeSheet {
                             .figure(
                                 OUTCOME,
                                 Text::new(TypeRole::Fine)
-                                    .text_color(if warns { p.bad } else { p.muted })
+                                    .tone(if warns { Tone::Bad } else { Tone::Muted })
                                     .truncate()
                                     .child(said),
                             )
@@ -639,7 +639,6 @@ impl Render for OrganizeSheet {
             .child(
                 ask::body("organize-form", look)
                     .flex_none()
-                    .pt(look.space(crate::theme::Space::M))
                     .child(FormRow::new("pattern").control(picker))
                     .child(
                         TextField::new(&self.draft)
