@@ -1,0 +1,1 @@
+- **EQ on the phone.** The graph's legend no longer runs into the chain when it wraps, the chain's gaps are even, and each stage card gives its name and detail the full width, with its curve and controls on a row beneath.
