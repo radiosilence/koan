@@ -1074,7 +1074,13 @@ impl State {
 
             if changed {
                 let n = series.xs.len().min(series.ys.len());
-                let picked = decimated(n, w * scale);
+                // A scrolling series slides by its first step, so it keeps
+                // every sample: thinned, it would slide two samples a poll.
+                let picked = if matches!(series.motion, DataMotion::Scroll(_)) {
+                    (0..n).collect()
+                } else {
+                    decimated(n, w * scale)
+                };
                 let mut xs: Vec<f64> = picked.iter().map(|&i| xt(series.xs[i])).collect();
                 let mut ys: Vec<f64> = picked.iter().map(|&i| yt(series.ys[i])).collect();
                 let mut base: Vec<f64> = match &base_line {
