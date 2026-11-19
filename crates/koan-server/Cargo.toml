@@ -53,7 +53,7 @@ askama = "0.16"
 # Strips the types from scripts/*.ts (build.rs). Pinned exactly: oxc's minor
 # releases break its API.
 [build-dependencies]
-oxc = { version = "=0.157.0", default-features = false, features = ["codegen", "semantic", "transformer"] }
+oxc = { version = "=0.158.0", default-features = false, features = ["codegen", "semantic", "transformer"] }
 
 [dev-dependencies]
 tempfile = "3"
