@@ -84,6 +84,7 @@ impl Meter {
         self
     }
 
+    /// The bar's thickness, rather than the 3-point default.
     pub fn height(mut self, height: Pixels) -> Self {
         self.height = Some(height);
         self
