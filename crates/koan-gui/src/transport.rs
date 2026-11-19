@@ -1480,6 +1480,17 @@ fn answer_after(waiting: Option<u64>, count: u64) -> u64 {
     waiting.map_or(count, |earlier| count.max(earlier + 1))
 }
 
+/// How long what is playing is: the stream's own figure, or, while it has
+/// none yet (the output still opening, a download not yet probed), the
+/// library's for the entry, so neither the seek bar nor the mini player's
+/// line is left empty.
+pub(super) fn known_duration(stream_ms: u64, library_ms: Option<u64>) -> u64 {
+    match stream_ms {
+        0 => library_ms.unwrap_or(0),
+        known => known,
+    }
+}
+
 /// The seek slider and the times either side of it.
 ///
 /// The position is reckoned from the engine's playhead anchor, the one source
@@ -1577,7 +1588,11 @@ impl Seek {
     }
 
     fn duration_ms(&self, cx: &App) -> u64 {
-        self.playback.read(cx).0.duration_ms
+        let now = &self.playback.read(cx).0;
+        known_duration(
+            now.duration_ms,
+            now.entry.as_ref().and_then(|e| e.duration_ms),
+        )
     }
 
     fn schedule(&mut self, cx: &mut Context<Self>) {
@@ -1747,8 +1762,17 @@ fn controlled_shown(view: &Devices) -> ControlledShown {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{Thumb, answer_after, shown_position, thumb_after};
+    use super::{Thumb, answer_after, known_duration, shown_position, thumb_after};
     use crate::mirror::Playhead;
+
+    /// A stream that has not said how long it is yet leaves the seek bar
+    /// the library's figure, not a disabled bar; once it says, it wins.
+    #[test]
+    fn the_seek_bar_has_a_duration_before_the_stream_states_one() {
+        assert_eq!(known_duration(0, Some(240_000)), 240_000);
+        assert_eq!(known_duration(241_500, Some(240_000)), 241_500);
+        assert_eq!(known_duration(0, None), 0);
+    }
 
     fn playhead(position_ms: u64, seek: u64) -> Playhead {
         Playhead {

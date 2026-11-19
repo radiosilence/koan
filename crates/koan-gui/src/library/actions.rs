@@ -68,11 +68,34 @@ pub fn play(lib: &Lib, items: &[Playable], shuffled: bool, cx: &mut App) -> Task
 /// Play a list from one of its rows, keeping the rest behind it: a double
 /// click in a track list. Where showing the queue once it plays belongs, when
 /// the shell has one to show.
-pub fn play_list(lib: &Lib, track_ids: Vec<i64>, index: usize, cx: &mut App) {
-    let replaced = lib
-        .engine
-        .clone()
-        .replace_queue(track_ids, Some(index as u32), false);
+/// Plays `tracks` from the one at `index`, named by uid where every one has
+/// a uid: a row id a page holds can name another track once a sync has
+/// deleted its own, and the tap would play that.
+pub fn play_list<'a>(
+    lib: &Lib,
+    tracks: impl IntoIterator<Item = &'a koan_runtime::Track>,
+    index: usize,
+    cx: &mut App,
+) {
+    let tracks: Vec<&koan_runtime::Track> = tracks.into_iter().collect();
+    let engine = lib.engine.clone();
+    match tracks
+        .iter()
+        .map(|t| t.uid.clone())
+        .collect::<Option<Vec<_>>>()
+    {
+        Some(uids) => played(engine.play_uids(uids, index as u32), cx),
+        None => {
+            let ids = tracks.iter().map(|t| t.id).collect();
+            played(engine.replace_queue(ids, Some(index as u32), false), cx)
+        }
+    }
+}
+
+fn played(
+    replaced: impl Future<Output = Result<Vec<String>, koan_runtime::KoanError>> + 'static,
+    cx: &mut App,
+) {
     cx.spawn(async move |cx| match replaced.await {
         Ok(_) => cx.update(|cx| arrived(None, cx)),
         Err(e) => log::warn!("play: {e}"),
@@ -80,7 +103,14 @@ pub fn play_list(lib: &Lib, track_ids: Vec<i64>, index: usize, cx: &mut App) {
     .detach();
 }
 
-pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut App) {
+/// `window` is where the add was asked for, which says so if it fails.
+pub fn add_to_playlist(
+    lib: &Lib,
+    playlist: i64,
+    items: &[Playable],
+    window: AnyWindowHandle,
+    cx: &mut App,
+) {
     let engine = lib.engine.clone();
     let sets = sources(items);
     let feed = lib.feed.clone();
@@ -88,7 +118,18 @@ pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut Ap
     cx.spawn(async move |cx| {
         match added.await {
             Ok(_) => cx.update(|cx| arrived(Some(playlist), cx)),
-            Err(e) => log::warn!("add to playlist {playlist}: {e}"),
+            Err(e) => {
+                log::warn!("add to playlist {playlist}: {e}");
+                cx.update_window(window, |_, window, cx| {
+                    crate::components::sheet::tell(
+                        "not added",
+                        vec![e.to_string().into()],
+                        window,
+                        cx,
+                    )
+                })
+                .ok();
+            }
         }
         feed.update(cx, |feed, cx| feed.reload_playlists(cx));
     })

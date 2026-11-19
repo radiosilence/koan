@@ -9,9 +9,10 @@
 //! waits for this process to exit. The Homebrew cask's copy is the DMG's
 //! app and replaces itself as it does; the cask declares `auto_updates`, so
 //! `brew upgrade` leaves it alone. The `.deb` belongs to its package
-//! manager, and an app bundle kōan cannot write to belongs to an
-//! administrator: those are only told a version is out. A build from source
-//! never checks.
+//! manager, an app bundle kōan cannot write to belongs to an administrator,
+//! and a Mac app run from the disk image or from where it was downloaded is
+//! asked to be moved to Applications first: those are only told a version
+//! is out. A build from source never checks.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -585,6 +586,40 @@ fn writable(dir: &Path) -> bool {
     made
 }
 
+/// Whether Gatekeeper translocated this bundle: a quarantined app opened
+/// where it was unpacked runs from a read-only copy at a random path until
+/// the person moves it in Finder. Asked of Security alone, so nothing outside
+/// the bundle is touched: the folder it came from is usually Downloads or the
+/// Desktop, which the system would ask the person to let kōan into.
+#[cfg(target_os = "macos")]
+fn translocated(app: &Path) -> bool {
+    use objc2_foundation::{NSString, NSURL};
+    use std::ffi::c_void;
+    #[link(name = "Security", kind = "framework")]
+    unsafe extern "C" {
+        fn SecTranslocateIsTranslocatedURL(
+            path: &NSURL,
+            translocated: *mut u8,
+            error: *mut *mut c_void,
+        ) -> u8;
+    }
+    let Some(path) = app.to_str() else {
+        return false;
+    };
+    objc2::rc::autoreleasepool(|_| {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+        let mut translocated = 0u8;
+        // SAFETY: a valid URL, an out-pointer to a Boolean, no error wanted.
+        let asked = unsafe {
+            SecTranslocateIsTranslocatedURL(&url, &mut translocated, std::ptr::null_mut())
+        };
+        if asked == 0 {
+            log::warn!("updates: could not ask whether {path} is translocated");
+        }
+        translocated != 0
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn install() -> Install {
     let Some(app) = std::env::current_exe().ok().and_then(|e| bundle_of(&e)) else {
@@ -593,7 +628,16 @@ fn install() -> Install {
     let Some((id, team)) = signature(&app) else {
         return Install::Source;
     };
+    const MOVE: &str = "Move kōan to Applications to keep it up to date: where it runs now, macOS keeps it read-only.";
+    if translocated(&app) {
+        return Install::Told(MOVE);
+    }
     if !app.parent().is_some_and(writable) {
+        // A disk image, mounted read-only, rather than a folder of an
+        // administrator's.
+        if app.starts_with("/Volumes") {
+            return Install::Told(MOVE);
+        }
         return Install::Told(
             "kōan cannot write to the folder it is in, so it cannot replace itself.",
         );

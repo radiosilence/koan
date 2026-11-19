@@ -332,12 +332,24 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _: &mut (),
         prepaint: &mut Prepaint,
         window: &mut Window,
         cx: &mut App,
     ) {
+        // Whether the list stands at an end as a scroll over it arrives, for
+        // the page around it to give there (`Elastic`).
+        let source = self.source.clone();
+        window.on_mouse_event(move |event: &ScrollEvent, phase, _, _| {
+            if phase == DispatchPhase::Capture && bounds.contains(&event.position) {
+                let offset = source.offset().y;
+                super::follow::scroll_ends(
+                    offset >= px(-0.5),
+                    offset <= -source.max_offset() + px(0.5),
+                );
+            }
+        });
         let (Some(hitbox), Some(thumb)) = (prepaint.hitbox.clone(), prepaint.thumb) else {
             return;
         };

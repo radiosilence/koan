@@ -80,7 +80,7 @@ pub trait TrackList: actions::Menus {
 
     /// The list's tracks in the order they play, for a row's play button to
     /// play from that row with the rest behind it, as a double click does.
-    fn row_tracks(&self) -> Vec<i64>;
+    fn row_tracks(&self) -> Vec<&koan_runtime::Track>;
 }
 
 pub struct RowState {
@@ -94,6 +94,8 @@ pub struct RowState {
     /// Gathered from many records: the sleeve, and the record named.
     pub gathered: bool,
     pub transfer: Option<TransferState>,
+    /// Nothing can be fetched now: see `transfers::of_track`.
+    pub out_of_reach: bool,
     /// What dragging the row carries, and what its menu acts on: the list's
     /// selection when the row is in it, built once for the selection.
     pub drag: PlayableDrag,
@@ -165,8 +167,7 @@ pub fn track_row<V: TrackList>(
         let view = view.clone();
         move |_: &mut Window, cx: &mut App| {
             view.update(cx, |this, cx| {
-                let ids = this.row_tracks();
-                actions::play_list(this.lib(), ids, index, cx);
+                actions::play_list(this.lib(), this.row_tracks(), index, cx);
             })
             .ok();
         }
@@ -298,6 +299,7 @@ pub fn track_row<V: TrackList>(
                 track.on_server,
                 track.on_disk,
                 state.transfer,
+                state.out_of_reach,
             ))
             .id(("row-availability", key))
             .picked(state.selected),

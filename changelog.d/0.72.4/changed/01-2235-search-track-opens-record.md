@@ -1,0 +1,1 @@
+- **The search box goes to a track's record.** Return or a click on a track in the kōan app's search box opens its record page instead of playing it, so searching never interrupts what is playing; ⌘Return, ⌥Return and ⇧⌘Return still play.

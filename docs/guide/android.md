@@ -50,6 +50,9 @@ signed in. **Sign in with a code** pairs the phone from a device that is
 already signed in, as the Apple TV does: the phone shows a code, and you
 approve it from the other device or the web UI.
 
+Once signed in, pulling a library listing down past its top and letting go
+syncs with the server, as Settings → Server → Sync does.
+
 The `koan.rocks/join/` and `koan.rocks/pair/` links open the app only once the
 site publishes the release signing key's fingerprint, which waits on a Play
 listing. Until then they open in the browser, and the code is typed by hand.

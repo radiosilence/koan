@@ -88,14 +88,14 @@ objc2-app-kit = { version = "0.3.2", features = [
   "NSStatusBar",
   "NSStatusItem",
 ] }
-objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSGeometry", "NSString"] }
+objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSGeometry", "NSString", "NSURL"] }
 
 # The audio session the engine plays through on iOS.
 [target.'cfg(target_os = "ios")'.dependencies]
 # The app's Swift (push, App Attest) drives the same engine, through the
 # uniffi bindings linked into this library.
 koan-ffi = { path = "../koan-ffi" }
-gpui_ios = { package = "gpui-koan-ios", git = "https://github.com/radiosilence/zed", rev = "26bae046a38126b776c702b1eab5cabc7a4cf4e2" }
+gpui_ios = { package = "gpui-koan-ios", git = "https://github.com/radiosilence/zed", rev = "be8db535bac465333448ec87099ba5faa7fd37aa" }
 objc2 = "0.6"
 objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "UIApplication", "UIDevice", "UIResponder"] }
 objc2-avf-audio = { version = "0.3.2", default-features = false, features = [

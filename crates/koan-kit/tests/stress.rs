@@ -207,12 +207,18 @@ fn uniforms_written_while_a_presenter_reads_them_stay_whole_and_land() {
     presenter.join().expect("the presenter does not panic");
     // Everything written has an end within 30 ms: once that is past, the
     // shader presents once more at most and then parks. Each present fills
-    // the colour table first, as a renderer's does.
+    // the colour table first and then reads the uniforms, as a renderer's
+    // does: the read is what clears a stale mark left by the presenter's
+    // last read colliding with a write.
     std::thread::sleep(Duration::from_millis(80));
     let presents = (0..5)
         .filter(|_| {
             gpui::refresh_dynamic_colors(Instant::now());
-            uniforms.take_present(Instant::now())
+            let present = uniforms.take_present(Instant::now());
+            if present {
+                uniforms.presented_at(present_now());
+            }
+            present
         })
         .count();
     assert!(presents <= 1, "{presents} presents after everything landed");

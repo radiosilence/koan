@@ -425,6 +425,7 @@ impl HistoryPage {
                     selected,
                     gathered: true,
                     transfer: feed.transfers.get(&track.id).copied(),
+                    out_of_reach: feed.out_of_reach,
                     drag,
                     kind: RowKind::Art,
                     note: elsewhere.then_some((Icon::Renderer, "Scrobbled by another client")),
@@ -538,8 +539,8 @@ impl actions::Menus for HistoryPage {
 }
 
 impl TrackList for HistoryPage {
-    fn row_tracks(&self) -> Vec<i64> {
-        self.entries.iter().map(|e| e.track.id).collect()
+    fn row_tracks(&self) -> Vec<&koan_runtime::Track> {
+        self.entries.iter().map(|e| &e.track).collect()
     }
 
     fn clicked(
@@ -822,6 +823,7 @@ mod tests {
     fn plays_fall_under_their_days_newest_first() {
         let track = |id| koan_runtime::Track {
             id,
+            uid: None,
             title: "Song".into(),
             artist_name: "Artist".into(),
             artist_credit: Vec::new(),

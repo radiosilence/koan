@@ -56,8 +56,9 @@ pub fn manual() -> bool {
 
 /// The link to the server came up or went down.
 pub fn link_changed(up: bool) {
-    {
+    let came_back = {
         let mut down = down_since().lock().unwrap_or_else(|e| e.into_inner());
+        let came_back = up && down.is_some();
         match (up, down.is_some()) {
             (true, true) => *down = None,
             (false, false) => {
@@ -66,11 +67,17 @@ pub fn link_changed(up: bool) {
             }
             _ => {}
         }
-    }
+        came_back
+    };
     // A link up is the server answering: in reach again, and downloads
     // waiting out an outage try at once.
     if up {
         crate::helpers::server_answered();
+    }
+    // Back after being down: what failed meanwhile, and what is owed, is
+    // fetched now.
+    if came_back {
+        crate::remote::queue::reconnected();
     }
 }
 

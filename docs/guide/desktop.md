@@ -16,7 +16,7 @@ Reset to Defaults…, beside it, puts kōan back as it was first opened: it stop
 
 ## Updates
 
-Installed from the DMG or the Homebrew cask, or run as an AppImage, the app keeps itself up to date: it checks GitHub for a newer release at launch and once a day, downloads it, checks it against the digest GitHub publishes (and on a Mac against the Developer ID the running app is signed with), and installs it when kōan quits. Once one is downloaded, kōan asks whether to restart into it now; declined, it is installed at the next quit. Settings → General → Updates turns this off, checks now, and restarts into a downloaded version. The first launch of a newer version says so at the foot of the sidebar. A copy `apt` installed, or one in a folder kōan cannot write to, is only told that a new version is out, with a link to its release notes; the new `.deb`, or a copy of the app in a folder kōan can write to, updates it. The cask declares `auto_updates`, so `brew upgrade` leaves the app to update itself. See [`[updates]`](../reference/configuration.md#updates).
+Installed from the DMG or the Homebrew cask, or run as an AppImage, the app keeps itself up to date: it checks GitHub for a newer release at launch and once a day, downloads it, checks it against the digest GitHub publishes (and on a Mac against the Developer ID the running app is signed with), and installs it when kōan quits. Once one is downloaded, kōan asks whether to restart into it now; declined, it is installed at the next quit. Settings → General → Updates turns this off, checks now, and restarts into a downloaded version. The first launch of a newer version says so at the foot of the sidebar. On a Mac the app has to be moved to Applications (or any folder you can write to) in Finder first: a copy opened from the disk image or from where it was downloaded runs read-only (Gatekeeper's App Translocation), so it cannot replace itself, and Settings → General → Updates says to move it. A copy `apt` installed, or one in a folder kōan cannot write to, is only told that a new version is out, with a link to its release notes; the new `.deb`, or a copy of the app in a folder kōan can write to, updates it. The cask declares `auto_updates`, so `brew upgrade` leaves the app to update itself. See [`[updates]`](../reference/configuration.md#updates).
 
 ## Beside the other apps
 
@@ -97,6 +97,10 @@ Playlists in the sidebar are reordered by dragging them; dragged onto the queue'
 
 A playlist's page is laid out as the queue is, grouped by record or flat (the album toggle in the toolbar, remembered per playlist). Play and shuffle are in its header; the toolbar holds undo and redo, and under ⋯ play next, add to queue, shuffle the order, rename, export as M3U8 and delete. Rows are selected as in the queue and dragged to reorder, with the insertion line showing where they land; tracks, records and playlists dropped between rows are added there, and files dropped on the page are added at the end. Delete removes the selected rows. Removing, shuffling the order, renaming and deleting say what will change before they do it, and every edit but deleting can be undone. Smart playlists, playlists read from files in the library and playlists the server marks read-only say so in the header and take no edits.
 
+## Syncing from the trackpad
+
+Signed in to a server, scrolling a library listing past its top with two fingers on a Mac's trackpad and letting go syncs with it, as the Library menu's Sync does; the gap above the page shows how far to pull and then a spinner until the sync ends. A mouse wheel does not pull. The listings' ends give under the trackpad as a Mac's own lists do.
+
 ## Favourites, Recently played and Downloaded
 
 Each of these shows the first few artists, records and tracks on it, artists as names, records as tiles and tracks as rows, with how many there are of each in all. A section's heading opens the whole listing of that kind on the shelf (favourite albums, artists played in the last month, tracks on this device) on a page of its own, which starts with what the preview showed and leaves the library's own browsers filtered as they were. Clicking a name opens the artist; ⌘-click (Ctrl on Linux) starts picking, after which clicks tick artists, records and tracks alike, Shift-click ticks a range and ⌘A ticks everything on the page. Dragging anything picked carries the whole pick to the queue or a playlist, and the context menu acts on it.
@@ -107,11 +111,11 @@ History lists every play, most recent first, under a heading per day, with the t
 
 ## Search
 
-⌘K, `/`, ⇧⌘K (File → Find and Play…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches as you type and lists up to five tracks, five records and five artists, then "All results…"; in a small window the list scrolls between the query and the keys. Everything in it is done from the keyboard:
+⌘K, `/`, ⇧⌘K (File → Find…, Ctrl on Linux) or a click in the sidebar's search field opens the search box over the window. It searches as you type and lists up to five tracks, five records and five artists, then "All results…"; in a small window the list scrolls between the query and the keys. Everything in it is done from the keyboard:
 
 | Key | Does |
 |---|---|
-| Return | With nothing lit, or "All results…", every result on a page of its own, whose headings open each kind's whole listing; on a result, a record or an artist opens its page and a track plays, with the other tracks listed after it |
+| Return | With nothing lit, or "All results…", every result on a page of its own, whose headings open each kind's whole listing; on a result, a record or an artist opens its page and a track opens its record's, so nothing that is playing is interrupted; the modified keys below play |
 | ↑ ↓ | Light a result, or "All results…" after the last |
 | ⌘Return | Play next |
 | ⌥Return | Add to the queue |

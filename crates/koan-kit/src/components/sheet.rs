@@ -321,6 +321,8 @@ pub fn note(text: impl Into<SharedString>, tone: Tone, look: &Look) -> Div {
 type Preview = Rc<dyn Fn(&str) -> Vec<SharedString>>;
 /// What a question does once answered, with what was typed.
 type Run = Rc<dyn Fn(String, &mut App)>;
+/// Whether the question's verb can be answered yet.
+type Ready = Rc<dyn Fn() -> bool>;
 
 /// A question asked before a write: what will change, and the verb that
 /// changes it. With a name field, the preview follows what is typed.
@@ -328,12 +330,16 @@ struct Ask {
     title: SharedString,
     verb: SharedString,
     destructive: bool,
+    /// Whether it can be put away without its verb: a question can, news
+    /// (`tell`) has only the one answer.
+    cancel: bool,
     /// What the write will change, a line each.
     preview: Preview,
     /// Said under the preview: what the write leaves alone, or how to undo
     /// it.
     note: Option<SharedString>,
     name: Option<Entity<InputState>>,
+    ready: Ready,
     run: Run,
     /// The sheet's own keys, for a question without a field; with one, the
     /// field has them and answers Return itself.
@@ -366,6 +372,9 @@ pub struct Asking {
     /// stood.
     leaving_sheet: Option<(AnyView, Fading)>,
     leaving_ask: Option<(Ask, Fading)>,
+    /// News told while a question was open, shown in turn as each is put
+    /// away rather than over what the person was answering.
+    told: std::collections::VecDeque<Ask>,
 }
 
 /// Lets go, once a fade started now has run, of what began fading by then.
@@ -574,9 +583,11 @@ pub fn confirm(c: Confirm, window: &mut Window, cx: &mut App, run: impl Fn(&mut 
             title: c.title,
             verb: c.verb,
             destructive: c.destructive,
+            cancel: true,
             preview: Rc::new(move |_| lines.clone()),
             note: c.note,
             name: None,
+            ready: Rc::new(|| true),
             run: Rc::new(move |_, cx| run(cx)),
             focus: Some(focus),
             before,
@@ -584,6 +595,42 @@ pub fn confirm(c: Confirm, window: &mut Window, cx: &mut App, run: impl Fn(&mut 
         },
         cx,
     );
+}
+
+/// Says why something asked for could not be done, over the window, until
+/// it is put away: what failed is news to answer, not a line to miss.
+pub fn tell(
+    title: impl Into<SharedString>,
+    lines: Vec<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let host = asking(cx);
+    let waits = host.read(cx).ask.is_some();
+    let before = if waits { None } else { window.focused(cx) };
+    let focus = cx.focus_handle();
+    if !waits {
+        window.focus(&focus, cx);
+    }
+    let news = Ask {
+        title: title.into(),
+        verb: "ok".into(),
+        destructive: false,
+        cancel: false,
+        preview: Rc::new(move |_| lines.clone()),
+        note: None,
+        name: None,
+        ready: Rc::new(|| true),
+        run: Rc::new(|_, _| {}),
+        focus: Some(focus),
+        before,
+        _enter: None,
+    };
+    if waits {
+        host.update(cx, |a, _| a.told.push_back(news));
+    } else {
+        show(news, cx);
+    }
 }
 
 /// Asks for a name, saying what it will do with what is typed, before
@@ -597,6 +644,24 @@ pub fn name(
     cx: &mut App,
     run: impl Fn(String, &mut App) + 'static,
 ) {
+    name_when(title, verb, initial, preview, || true, window, cx, run);
+}
+
+/// `name`, its verb held until `ready`: for a question whose answer needs
+/// something still being read, which its preview says. The host is
+/// notified (`asking`) when that changes.
+#[allow(clippy::too_many_arguments)]
+pub fn name_when(
+    title: impl Into<SharedString>,
+    verb: impl Into<SharedString>,
+    initial: &str,
+    preview: impl Fn(&str) -> Vec<SharedString> + 'static,
+    ready: impl Fn() -> bool + 'static,
+    window: &mut Window,
+    cx: &mut App,
+    run: impl Fn(String, &mut App) + 'static,
+) {
+    let ready: Ready = Rc::new(ready);
     let initial = initial.to_owned();
     let before = window.focused(cx);
     let input = cx.new(|cx| InputState::new(window, cx).default_value(initial));
@@ -605,11 +670,11 @@ pub fn name(
     let focus = None;
     let run: Run = Rc::new(run);
     let enter = {
-        let run = run.clone();
+        let (run, ready) = (run.clone(), ready.clone());
         window.subscribe(&input, cx, move |input, event: &InputEvent, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
                 let typed = input.read(cx).value().trim().to_owned();
-                if !typed.is_empty() {
+                if !typed.is_empty() && ready() {
                     dismiss(window, cx);
                     run(typed, cx);
                 }
@@ -621,9 +686,11 @@ pub fn name(
             title: title.into(),
             verb: verb.into(),
             destructive: false,
+            cancel: true,
             preview: Rc::new(preview),
             note: None,
             name: Some(input.clone()),
+            ready,
             run,
             focus,
             before,
@@ -637,8 +704,14 @@ pub fn name(
         .detach();
 }
 
-fn show(ask: Ask, cx: &mut App) {
+fn show(mut ask: Ask, cx: &mut App) {
     asking(cx).update(cx, |a, cx| {
+        // Asked as a sheet closes (the picker's "new playlist…"): the
+        // keyboard goes back, once this is answered, to what had it before
+        // the sheet, not to the sheet going away.
+        if let Some((_, before)) = a.restore.take() {
+            ask.before = before;
+        }
         a.ask = Some(ask);
         a.leaving_ask = None;
         cx.notify();
@@ -652,8 +725,13 @@ fn dismiss(window: &mut Window, cx: &mut App) -> bool {
         cx.notify();
         let mut ask = a.ask.take()?;
         ask._enter = None;
-        let before = ask.before.take();
+        let mut before = ask.before.take();
         a.leaving_ask = Fading::start(cx).map(|f| (ask, f));
+        if let Some(mut next) = a.told.pop_front() {
+            next.before = before.take();
+            before = next.focus.clone();
+            a.ask = Some(next);
+        }
         Some((before, a.leaving_ask.is_some()))
     }) else {
         return false;
@@ -687,15 +765,15 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .as_ref()
         .map(|i| i.read(cx).value().trim().to_owned());
     let lines = (ask.preview)(typed.as_deref().unwrap_or(""));
-    let blocked = typed.as_ref().is_some_and(String::is_empty);
+    let blocked = typed.as_ref().is_some_and(String::is_empty) || !(ask.ready)();
     let go = {
-        let (run, name) = (ask.run.clone(), ask.name.clone());
+        let (run, name, ready) = (ask.run.clone(), ask.name.clone(), ask.ready.clone());
         move |window: &mut Window, cx: &mut App| {
             let typed = name
                 .as_ref()
                 .map(|i| i.read(cx).value().trim().to_owned())
                 .unwrap_or_default();
-            if name.is_some() && typed.is_empty() {
+            if name.is_some() && typed.is_empty() || !ready() {
                 return;
             }
             if dismiss(window, cx) {
@@ -743,13 +821,19 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                 panel(ask.title.as_ref(), &look)
                     .child(head(
                         ask.title.as_ref(),
-                        vec![cancel.into_any_element(), verb.into_any_element()],
+                        if ask.cancel {
+                            vec![cancel.into_any_element(), verb.into_any_element()]
+                        } else {
+                            vec![verb.into_any_element()]
+                        },
                         &look,
                     ))
                     .child(
                         body("ask-body", &look)
                             .pt(look.space(Space::M))
-                            .when_some(ask.name.as_ref(), |d, input| d.child(TextField::new(input)))
+                            .when_some(ask.name.as_ref(), |d, input| {
+                                d.child(TextField::new(input).label("name"))
+                            })
                             .children(rows)
                             .when_some(ask.note.clone(), |d, n| {
                                 d.child(note(n, Tone::Muted, &look))
@@ -1004,6 +1088,141 @@ mod tests {
                 "tab entered the fading question"
             );
         }
+    }
+
+    /// News told over the window has only its one answer, and goes with it.
+    #[gpui::test]
+    fn told_news_goes_with_its_one_answer(cx: &mut TestAppContext) {
+        use gpui::accesskit::Action;
+
+        use crate::components::testing::{act, redraw, stage, tree};
+
+        let (_, cx) = stage(cx, |window, cx| {
+            overlay(window, cx)
+                .map(|element| vec![("ask", element)])
+                .unwrap_or_default()
+        });
+        cx.update(|window, cx| {
+            tell(
+                "playlist not made",
+                vec!["the library is busy".into()],
+                window,
+                cx,
+            )
+        });
+        redraw(cx);
+        let labels: Vec<String> = tree(cx)["nodes"]
+            .as_object()
+            .expect("nodes")
+            .values()
+            .filter_map(|n| n["aria"]["label"].as_str().map(str::to_owned))
+            .collect();
+        assert!(labels.iter().any(|l| l == "ok"), "{labels:?}");
+        assert!(!labels.iter().any(|l| l == "cancel"), "{labels:?}");
+        act(cx, "ok", Action::Click);
+        let host = cx.update(|_, cx| asking(cx));
+        assert!(cx.update(|_, cx| host.read(cx).ask.is_none()));
+    }
+
+    /// News told while a question is open waits for it: the question keeps
+    /// what was typed, and the news follows once it is answered.
+    #[gpui::test]
+    fn news_waits_for_the_question_open(cx: &mut TestAppContext) {
+        use gpui::accesskit::Action;
+
+        use crate::components::testing::{act, redraw, stage, tree};
+
+        let labels = |cx: &mut VisualTestContext| -> Vec<String> {
+            tree(cx)["nodes"]
+                .as_object()
+                .expect("nodes")
+                .values()
+                .filter_map(|n| n["aria"]["label"].as_str().map(str::to_owned))
+                .collect()
+        };
+        let (_, cx) = stage(cx, |window, cx| {
+            overlay(window, cx)
+                .map(|element| vec![("ask", element)])
+                .unwrap_or_default()
+        });
+        cx.update(|window, cx| {
+            confirm(
+                Confirm {
+                    title: "delete the playlist".into(),
+                    verb: "delete".into(),
+                    destructive: true,
+                    lines: vec!["It goes.".into()],
+                    note: None,
+                },
+                window,
+                cx,
+                |_| {},
+            );
+            tell("not added", vec!["the library is busy".into()], window, cx);
+        });
+        redraw(cx);
+        let now = labels(cx);
+        assert!(now.iter().any(|l| l == "delete"), "{now:?}");
+        assert!(!now.iter().any(|l| l == "ok"), "{now:?}");
+        act(cx, "cancel", Action::Click);
+        redraw(cx);
+        let now = labels(cx);
+        assert!(now.iter().any(|l| l == "ok"), "{now:?}");
+    }
+
+    struct Both {
+        focus: FocusHandle,
+    }
+
+    impl Render for Both {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .track_focus(&self.focus)
+                .children(presented(window, cx))
+                .children(overlay(window, cx))
+        }
+    }
+
+    /// A question asked as a sheet closes, with nothing drawn between, gives
+    /// the keyboard back to what had it before the sheet.
+    #[gpui::test]
+    fn a_question_from_a_closing_sheet_gives_the_page_its_keys_back(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::theme::init(cx);
+        });
+        let (both, cx) = cx.add_window_view(|_, cx| Both {
+            focus: cx.focus_handle(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        let page = both.read_with(cx, |b, _| b.focus.clone());
+        let redraw = |cx: &mut VisualTestContext| {
+            cx.update(|_, cx| both.update(cx, |_, cx| cx.notify()));
+            cx.run_until_parked();
+        };
+        cx.update(|window, cx| {
+            window.focus(&page, cx);
+            let panel = cx.new(|_| Panel);
+            present(panel, window, cx);
+        });
+        redraw(cx);
+        cx.update(|window, cx| {
+            close(cx);
+            name(
+                "new playlist",
+                "create",
+                "",
+                |_| Vec::new(),
+                window,
+                cx,
+                |_, _| {},
+            );
+        });
+        redraw(cx);
+        assert!(!cx.update(|window, _| page.is_focused(window)));
+        cx.simulate_keystrokes("escape");
+        redraw(cx);
+        assert!(cx.update(|window, _| page.is_focused(window)));
     }
 
     struct Presenter {

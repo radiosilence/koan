@@ -734,6 +734,18 @@ impl KoanEngine {
             .await
     }
 
+    /// Replace the queue with the tracks `uids` name and play from the one at
+    /// `start_at`: what a tap on a page's row sends, since a row id the page
+    /// holds can name another track after a sync. Refused when the track
+    /// tapped is gone.
+    pub async fn play_uids(
+        self: Arc<Self>,
+        uids: Vec<String>,
+        start_at: u32,
+    ) -> Result<Vec<String>, KoanError> {
+        self.0.clone().play_uids(uids, start_at).await
+    }
+
     /// Insert after an existing item — what a drop between two rows means.
     pub async fn insert_after(
         self: Arc<Self>,
@@ -2615,6 +2627,11 @@ impl KoanEngine {
         self.0.clone().cache_limit_bytes().await
     }
 
+    /// How many downloads the person asked for have not arrived.
+    pub async fn owed_downloads(self: Arc<Self>) -> Result<u32, KoanError> {
+        self.0.clone().owed_downloads().await
+    }
+
     /// Delete every downloaded remote track. The library rows stay.
     pub async fn clear_download_cache(self: Arc<Self>) -> Result<CacheCleared, KoanError> {
         self.0.clone().clear_download_cache().await
@@ -3319,6 +3336,7 @@ mod types {
     #[uniffi::remote(Record)]
     pub struct Album {
         pub id: i64,
+        pub uid: Option<String>,
         pub title: String,
         pub artist_id: i64,
         pub artist_name: String,
@@ -3363,6 +3381,7 @@ mod types {
     #[uniffi::remote(Record)]
     pub struct Track {
         pub id: i64,
+        pub uid: Option<String>,
         pub title: String,
         pub artist_name: String,
         /// `artist_name` with each artist it credits linked.
@@ -5122,6 +5141,7 @@ mod types {
         pub offline: bool,
         /// Turned on by hand, rather than by the server being out of reach.
         pub offline_manual: bool,
+        pub out_of_reach: bool,
         /// The server can sign a device without a keyboard in, once someone here
         /// approves it.
         pub pairing: bool,

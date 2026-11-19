@@ -72,6 +72,39 @@ pub struct Activity {
     _watch: [Subscription; 4],
 }
 
+/// Whether this device has a server to sync with, and whether a sync runs,
+/// asked here or anywhere else.
+pub fn sync_standing(cx: &App) -> (bool, bool) {
+    let mirror = cx.global::<Mirror>();
+    let signed_in = mirror
+        .connection
+        .read(cx)
+        .0
+        .as_ref()
+        .is_some_and(|c| c.signed_in_to.is_some());
+    let syncing =
+        cx.global::<ActivityHandle>().0.read(cx).syncing > 0 || mirror.tasks.read(cx).0.syncing;
+    (signed_in, syncing)
+}
+
+/// A pull from the top of `route` syncing with the server, as the Library
+/// menu's Sync does: offered on the library's listings while this device has
+/// a server. `top` is where the gap the page leaves begins.
+pub fn pull_to_sync(
+    route: crate::navigator::Route,
+    top: Pixels,
+    color: crate::theme::Hsla,
+    cx: &App,
+) -> Option<crate::components::Refresh> {
+    let (signed_in, busy) = sync_standing(cx);
+    (signed_in && route.syncs_on_pull()).then(|| crate::components::Refresh {
+        top,
+        busy,
+        color,
+        start: std::rc::Rc::new(|_, cx| cx.dispatch_action(&Sync)),
+    })
+}
+
 /// The library menu's actions, and the activity rows the sidebar shows.
 pub fn init(cx: &mut App) {
     let activity = cx.new(|cx: &mut Context<Activity>| {

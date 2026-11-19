@@ -424,6 +424,7 @@ impl TrackBrowser {
             selected,
             gathered: true,
             transfer: feed.transfers.get(&id).copied(),
+            out_of_reach: feed.out_of_reach,
             drag,
             note: None,
             cursor: (self.keyed && self.cursor.at == Some(index)).then(|| self.spot.clone()),
@@ -473,8 +474,8 @@ impl actions::Menus for TrackBrowser {
 }
 
 impl TrackList for TrackBrowser {
-    fn row_tracks(&self) -> Vec<i64> {
-        self.tracks.iter().map(|t| t.id).collect()
+    fn row_tracks(&self) -> Vec<&koan_runtime::Track> {
+        self.tracks.iter().collect()
     }
 
     fn clicked(
@@ -500,8 +501,7 @@ impl TrackList for TrackBrowser {
                     order,
                     cx,
                 ) {
-                    let ids = self.tracks.iter().map(|t| t.id).collect();
-                    actions::play_list(&self.lib, ids, index, cx);
+                    actions::play_list(&self.lib, &self.tracks, index, cx);
                 }
                 cx.notify();
             }
@@ -747,8 +747,7 @@ impl super::keys::KeyedList for TrackBrowser {
     }
 
     fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
-        let ids = self.tracks.iter().map(|t| t.id).collect();
-        actions::play_list(&self.lib, ids, ix, cx);
+        actions::play_list(&self.lib, &self.tracks, ix, cx);
     }
 
     fn menu_at(&mut self, ix: Option<usize>, _: &mut Context<Self>) {

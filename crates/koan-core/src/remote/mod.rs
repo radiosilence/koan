@@ -9,6 +9,7 @@ pub mod download;
 pub mod downloads;
 pub mod dsp_sync;
 pub mod history;
+pub mod keep;
 pub mod lanes;
 pub mod levels;
 pub mod link;

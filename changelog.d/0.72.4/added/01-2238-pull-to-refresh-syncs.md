@@ -1,0 +1,1 @@
+- **Pull to refresh syncs with the server.** Pulling a library listing down past its top and letting go syncs with the signed-in server: with a finger on iOS and Android, and with two fingers on a Mac's trackpad in the kōan app, whose library listings now give at their ends under the trackpad.

@@ -40,9 +40,14 @@ pub struct DownloadsPage {
     transfers: Entity<Slice<Vec<Transfer>>>,
     figures: Entity<Slice<Vec<TransferFigure>>>,
     cache: Entity<Slice<u64>>,
+    connection: Entity<Slice<Option<koan_runtime::ConnectionInfo>>>,
     /// The cache's limit in bytes, `None` for none; read as the page opens.
     limit: Option<u64>,
     _limit: Task<()>,
+    /// Downloads asked for that have not arrived, listed or waiting their
+    /// turn: read again whenever the transfers move.
+    owed: u32,
+    _owed: Task<()>,
     focus: FocusHandle,
     /// The keyboard's place in the list.
     cursor: crate::components::ListCursor,
@@ -52,7 +57,7 @@ pub struct DownloadsPage {
     keyed: bool,
     /// How many transfers the list shows, as of the last frame.
     count: usize,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 impl DownloadsPage {
@@ -62,15 +67,22 @@ impl DownloadsPage {
         Self {
             nav: nav.clone(),
             _subscriptions: [
-                cx.observe(&mirror.transfers, |_, _, cx| cx.notify()),
+                cx.observe(&mirror.transfers, |this, _, cx| {
+                    this._owed = Self::read_owed(cx);
+                    cx.notify();
+                }),
                 // The rates; a running row's bar takes frames of its own.
                 cx.observe(&mirror.figures, |_, _, cx| cx.notify()),
                 cx.observe(&mirror.cache, |_, _, cx| cx.notify()),
+                cx.observe(&mirror.connection, |_, _, cx| cx.notify()),
             ],
             transfers: mirror.transfers,
             figures: mirror.figures,
             cache: mirror.cache,
+            connection: mirror.connection,
             limit: None,
+            owed: 0,
+            _owed: Self::read_owed(cx),
             focus: cx.focus_handle().tab_stop(true),
             cursor: Default::default(),
             spot: Default::default(),
@@ -87,6 +99,29 @@ impl DownloadsPage {
         }
     }
 
+    fn read_owed(cx: &mut Context<Self>) -> Task<()> {
+        let read = engine(cx).owed_downloads();
+        cx.spawn(async move |this, cx| {
+            let Ok(owed) = read.await else { return };
+            this.update(cx, |this, cx| {
+                if this.owed != owed {
+                    this.owed = owed;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+    }
+
+    /// Nothing can be fetched now: waiting downloads wait for the server.
+    fn out_of_reach(&self, cx: &App) -> bool {
+        self.connection
+            .read(cx)
+            .0
+            .as_ref()
+            .is_some_and(|c| c.out_of_reach)
+    }
+
     fn header(&self, settled: usize, cx: &mut Context<Self>) -> PageHeader {
         let used = self.cache.read(cx).0;
         let detail = match self.limit {
@@ -95,6 +130,13 @@ impl DownloadsPage {
             Some(0) => format!("{} cached, kept only while needed", bytes(used)),
             Some(limit) => format!("{} cached of {}", bytes(used), bytes(limit)),
             None => format!("{} cached", bytes(used)),
+        };
+        // What is listed but not here, said first: a page of rows is
+        // otherwise easily taken for music already on this device.
+        let detail = match (self.owed, self.out_of_reach(cx)) {
+            (0, _) => detail,
+            (n, true) => format!("{n} not downloaded, waiting for your server · {detail}"),
+            (n, false) => format!("{n} not downloaded yet · {detail}"),
         };
         let header = PageHeader::new("downloads").detail(detail);
         if settled == 0 {
@@ -136,7 +178,10 @@ impl DownloadsPage {
             .find(|f| f.track_id == id)
             .cloned();
         let (status, warns) = match t.state {
-            TransferState::Queued => ("queued".to_owned(), false),
+            TransferState::Queued if self.out_of_reach(cx) => {
+                ("waiting for your server".to_owned(), false)
+            }
+            TransferState::Queued => ("waiting".to_owned(), false),
             TransferState::Running => (
                 figure.as_ref().map(rate_and_size).unwrap_or_default(),
                 false,
