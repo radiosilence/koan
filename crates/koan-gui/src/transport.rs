@@ -12,7 +12,7 @@ use koan_runtime::{
 
 use crate::components::{
     Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
-    TransportControl, TransportMetrics,
+    BarControl, TransportMetrics,
 };
 use crate::components::{Inset, Stack};
 use crate::covers::{self, CoversHandle};
@@ -92,8 +92,6 @@ pub struct Transport {
     pulled: crate::components::Follow,
     /// The ease back up, letting the page's layer go once it is in place.
     returning: Option<Task<()>>,
-    /// How far a finger has pushed the mini player up, while it does.
-    lift: Option<Pixels>,
     /// Now Playing's art, while the mini player's sleeve grows into it.
     pub(crate) flight: Option<phone::Flight>,
     _subscriptions: [Subscription; 8],
@@ -280,7 +278,6 @@ impl Transport {
             released: None,
             pulled: crate::components::Follow::new(),
             returning: None,
-            lift: None,
             flight: None,
         };
         this.reload_eq(cx);
@@ -863,7 +860,7 @@ const CENTRE_LEAST: f32 = 300.0;
 /// to click: padding taken back by an equal negative margin, so the item's
 /// own bounds grow and nothing moves.
 fn trailing_item(base: Stateful<Div>, p: &Paint, glyph_only: bool) -> Stateful<Div> {
-    crate::components::transport_item(base, glyph_only, &p.look)
+    crate::components::bar_item(base, glyph_only, &p.look)
 }
 
 /// A transport control's tooltip.
@@ -1339,7 +1336,7 @@ fn controls(now: &NowPlaying, play_pause: impl IntoElement, cx: &App) -> Vec<Any
         RepeatMode::One => RepeatMode::Off,
     };
     vec![
-        TransportControl::new(
+        BarControl::new(
             "shuffle",
             Icon::Shuffle,
             "shuffle",
@@ -1354,7 +1351,7 @@ fn controls(now: &NowPlaying, play_pause: impl IntoElement, cx: &App) -> Vec<Any
             command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
         })
         .into_any_element(),
-        TransportControl::new(
+        BarControl::new(
             "previous",
             Icon::Previous,
             "prev",
@@ -1364,11 +1361,11 @@ fn controls(now: &NowPlaying, play_pause: impl IntoElement, cx: &App) -> Vec<Any
         .on_click(|_, _, cx| command(cx, "previous", |e| e.previous()))
         .into_any_element(),
         play_pause.into_any_element(),
-        TransportControl::new("next", Icon::Next, "next", help("next track", &Next, cx))
+        BarControl::new("next", Icon::Next, "next", help("next track", &Next, cx))
             .answer(crate::components::Answer::Nudge(true))
             .on_click(|_, _, cx| command(cx, "next", |e| e.next()))
             .into_any_element(),
-        TransportControl::new(
+        BarControl::new(
             "repeat",
             repeat_icon,
             repeat_label,

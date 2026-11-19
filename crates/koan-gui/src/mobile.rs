@@ -1116,8 +1116,8 @@ impl TouchShell {
         let Some(album) = album else { return };
         let look = crate::theme::Look::of(window, cx);
         let (side, height) = (
-            crate::components::TransportMetrics::mini_sleeve(&look),
-            crate::components::TransportMetrics::mini_height(&look),
+            crate::components::AccessoryBar::picture(&look),
+            crate::components::AccessoryBar::height(&look),
         );
         let insets = crate::components::system_insets(Clear::System, window);
         let viewport = window.viewport_size();

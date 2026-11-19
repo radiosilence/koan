@@ -16,6 +16,7 @@ mod program;
 mod slot;
 mod track;
 pub(crate) use animated::curve;
+mod accessory_bar;
 mod answer;
 mod appear;
 mod arrive;
@@ -30,6 +31,7 @@ pub mod chart;
 pub mod choice;
 mod collection;
 mod command_bar;
+mod control_group;
 mod copy;
 mod cover;
 mod dense;
@@ -92,7 +94,8 @@ mod tile;
 mod toggle;
 mod toolbar;
 mod touch;
-mod transport_control;
+mod bar_control;
+mod two_lines;
 mod viewer;
 mod window;
 
@@ -105,6 +108,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Task, Window, canvas, div, px,
 };
 
+pub use accessory_bar::AccessoryBar;
 pub use animated::{
     Animated, AnimatedQuad, Ease, Repeat, SHADED, SHADER_PLAIN, SHADER_TRACKS, SHADER_UNIFORMS,
     ShaderProgram, TRACK_FLOATS, Track, WeakAnimated,
@@ -124,6 +128,7 @@ pub use button::{Button, ButtonKind};
 pub use chain::{ChainEnd, ChainJoin, ChainLink, ChainSlot, ChainStage};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
 pub use command_bar::{CommandBar, CommandResults, CommandSection};
+pub use control_group::ControlGroup;
 pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
@@ -219,7 +224,8 @@ pub use toolbar::{
     ToolbarMetrics, ToolbarSelection, ToolbarTitle, WINDOW_BUTTONS,
 };
 pub use touch::{KoanLongPress, KoanTouchDrag};
-pub use transport_control::{TransportControl, transport_item};
+pub use bar_control::{BarControl, bar_item};
+pub use two_lines::TwoLines;
 pub use viewer::Viewer;
 pub use window::{
     MainWindow, SecondaryWindow, close_button, draws_decorations, host, moves_window,
