@@ -594,8 +594,7 @@ impl Render for OrganizeSheet {
         let list = table_list(
             "organize-plan",
             entries,
-            cx.processor(move |this, range: Range<usize>, window, cx| {
-                let p = Paint::of(window, cx);
+            cx.processor(move |this, range: Range<usize>, _window, _cx| {
                 let Some(plan) = &this.plan else {
                     return Vec::new();
                 };

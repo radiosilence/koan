@@ -8,7 +8,7 @@ use koan_runtime::{InfoField, TrackDetails};
 use super::{Dismiss, Lib};
 use crate::components::sheet as ask;
 use crate::components::{Button, ButtonKind, DetailGroup, form_text};
-use crate::theme::{Look, Space, Tone, TypeRole};
+use crate::theme::{Look, Tone, TypeRole};
 
 pub struct TrackInfo {
     lib: Lib,

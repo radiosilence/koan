@@ -26,8 +26,7 @@ impl SearchField {
 }
 
 impl Render for SearchField {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let look = crate::theme::Look::of(window, cx);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let query = self.search.read(cx).query().to_string();
         Stack::block()
             .inset_x(Space::L)

@@ -21,9 +21,9 @@ use koan_runtime::{DspBand, DspBandKind, DspPoint};
 
 use super::menu::{Item, Trigger, menu};
 use super::model::{Commit, Dsp};
-use crate::components::Stack;
 use crate::components::sheet::note;
 use crate::components::{Align, Column, DenseRow, DenseTable, TextField};
+use crate::components::{Stack, Text};
 use crate::theme::{Look, Space, Tone};
 
 /// A figure of a band's row, or of a curve's point.
