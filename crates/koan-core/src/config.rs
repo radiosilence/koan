@@ -394,7 +394,8 @@ pub struct RemoteConfig {
     /// Fetch every record's cover from the server in the background, at the
     /// size grids draw, so browsing never waits for one after the first sync.
     /// Kept in the download cache and counted against its limit. Off removes
-    /// nothing already fetched. Per device.
+    /// nothing already fetched, and pages still fetch the covers they show.
+    /// Per device; `PRELOAD_COVERS_DEFAULT` until set.
     pub preload_covers: bool,
     /// A sign-out kept, whose forgetting of the server's library has not yet
     /// finished. Written with the sign-out and cleared once the library is
@@ -480,6 +481,12 @@ impl Default for VisualizerConfig {
     }
 }
 
+/// Whether a device preloads every record's cover until told otherwise: a
+/// computer or a television, yes; a phone or tablet (iOS, Android), no, since
+/// a library's covers are a lot of data and storage for records the listener
+/// may never open, and pages fetch the covers they show anyway.
+pub const PRELOAD_COVERS_DEFAULT: bool = !cfg!(any(target_os = "ios", target_os = "android"));
+
 impl Default for RemoteConfig {
     fn default() -> Self {
         Self {
@@ -497,7 +504,7 @@ impl Default for RemoteConfig {
             auto_sync: true,
             auto_sync_interval_mins: 60,
             play_queue: false,
-            preload_covers: true,
+            preload_covers: PRELOAD_COVERS_DEFAULT,
             forget_owed: false,
         }
     }
@@ -2625,6 +2632,19 @@ pub(crate) mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.playback.replaygain, ReplayGainMode::Off);
         assert!(!cfg.remote.enabled);
+    }
+
+    /// Phones and tablets fetch covers as pages ask; computers and
+    /// televisions preload them. A device's own choice stays on the device.
+    #[test]
+    fn cover_preload_is_off_by_default_on_phones_and_kept_per_device() {
+        let handheld = cfg!(any(target_os = "ios", target_os = "android"));
+        assert_eq!(Config::default().remote.preload_covers, !handheld);
+        let cfg: Config = toml::from_str("[remote]\nenabled = true\n").unwrap();
+        assert_eq!(cfg.remote.preload_covers, PRELOAD_COVERS_DEFAULT);
+        let cfg: Config = toml::from_str("[remote]\npreload_covers = false\n").unwrap();
+        assert!(!cfg.remote.preload_covers);
+        assert!(matches!(layer_of("remote.preload_covers"), Layer::Machine));
     }
 
     #[test]
