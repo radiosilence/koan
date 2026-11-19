@@ -1270,19 +1270,25 @@ GPU. Opaque throughout; Reduce Motion shows it at once.
 pub struct SlideUp { /* private fields */ }
 ```
 
+- `pub fn leave_length(cx: &App) -> Duration`
+
+  How long a screen started down now takes to leave (`RISE`, its rise
+  in reverse), or nothing where it goes at once. The owner lets it go
+  after. A panel that `fits` leaves over `settle_length`.
+
 - `pub fn new(child: impl IntoElement) -> Self`
 
   `child` rising from the window's foot as it is first drawn.
 
 - `pub fn fits(self) -> Self`
 
-  Going back down, over `Motion::SETTLE`; the owner lets it go after.
   A sheet's panel rather than a screen: as tall as its content, up to
   the room above the keyboard and the system's insets.
 
 - `pub fn leaving(self, leaving: bool) -> Self`
 
-  Going back down, inert, before its owner drops it.
+  Going back down, inert, before its owner drops it: a screen over
+  `leave_length`, its rise in reverse; a panel over `Motion::SETTLE`.
 
 Implements `RenderOnce`.
 

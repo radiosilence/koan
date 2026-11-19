@@ -129,8 +129,6 @@ struct SearchPage {
     _typed: Subscription,
 }
 
-type SleeveFlight = (Option<i64>, Bounds<Pixels>, transport::Flight, Task<()>);
-
 pub struct TouchShell {
     nav: Entity<Navigator>,
     queue: Entity<QueueView>,
@@ -166,9 +164,6 @@ pub struct TouchShell {
     /// Now Playing over everything, while it is open: a transport of its own
     /// in its full form, made on opening and let go on closing.
     now_playing: Option<(Entity<Transport>, Subscription, Subscription)>,
-    /// The mini player's sleeve growing into Now Playing's art as it opens:
-    /// the record, where it left, and how the page says where it goes.
-    flight: Option<SleeveFlight>,
     /// A track's details over everything, while they are asked for: from a
     /// row's menu or Now Playing's title.
     info: Option<(i64, Entity<crate::library::info::TrackInfo>)>,
@@ -348,7 +343,6 @@ impl TouchShell {
             closing: None,
             seen: None,
             now_playing: None,
-            flight: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
             output_wait: cx.new(crate::output_wait::OutputWaitBanner::new),
             _subscriptions: subscriptions,
@@ -983,15 +977,9 @@ impl TouchShell {
             if this.closing.is_some() {
                 return;
             }
-            // The sleeve still flying gives way to the art going down.
-            if let Some((_, _, flight, _)) = this.flight.take() {
-                flight.landed.set(true);
-                if let Some((full, ..)) = &this.now_playing {
-                    full.update(cx, |_, cx| cx.notify());
-                }
-            }
-            // Down on the GPU (`SlideUp`), and let go once it is down.
-            let length = crate::components::settle_length(cx);
+            // Down on the GPU (`SlideUp`), its rise in reverse, and let go
+            // once it is down.
+            let length = crate::components::SlideUp::leave_length(cx);
             this.closing = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(length).await;
                 this.update(cx, |this, cx| {
@@ -1009,7 +997,6 @@ impl TouchShell {
             this.walk_track_info(asked.0, cx);
         });
         self.closing = None;
-        self.start_flight(&full, window, cx);
         self.now_playing = Some((full, closed, info));
         cx.notify();
     }
@@ -1044,7 +1031,6 @@ impl TouchShell {
         } else {
             self.now_playing = None;
             self.closing = None;
-            self.flight = None;
         }
         // Views cached at the other layout's width are drawn again; usually
         // called while the window draws, when a refresh is not taken.
@@ -1098,53 +1084,6 @@ impl TouchShell {
             })
             .ok();
         });
-    }
-
-    /// As Now Playing rises, the mini player's sleeve grows into the art: the
-    /// art waits while it flies, and takes over as it lands. Without motion
-    /// Now Playing simply stands there.
-    fn start_flight(&mut self, full: &Entity<Transport>, window: &Window, cx: &mut Context<Self>) {
-        self.flight = None;
-        if !crate::theme::KoanTheme::motion_allowed(cx) {
-            return;
-        }
-        let album = self
-            .transport
-            .read(cx)
-            .now_playing_album(cx)
-            .filter(|album| album.is_some());
-        let Some(album) = album else { return };
-        let look = crate::theme::Look::of(window, cx);
-        let (side, height) = (
-            crate::components::AccessoryBar::picture(&look),
-            crate::components::AccessoryBar::height(&look),
-        );
-        let insets = crate::components::system_insets(Clear::System, window);
-        let viewport = window.viewport_size();
-        let top =
-            viewport.height - crate::components::foot_inset(window, cx) + (height - side) / 2.;
-        let from = Bounds::new(
-            Point::new(insets.left + look.space(crate::theme::Space::L), top),
-            Size::new(side, side),
-        );
-        let flight = transport::Flight::new(cx.entity_id());
-        full.update(cx, |full, _| full.flight = Some(flight.clone()));
-        let landing = {
-            let (flight, full) = (flight.clone(), full.downgrade());
-            cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(crate::components::SlideUp::RISE)
-                    .await;
-                flight.landed.set(true);
-                full.update(cx, |_, cx| cx.notify()).ok();
-                this.update(cx, |this, cx| {
-                    this.flight = None;
-                    cx.notify();
-                })
-                .ok();
-            })
-        };
-        self.flight = Some((album, from, flight, landing));
     }
 
     fn tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1214,18 +1153,6 @@ impl Render for TouchShell {
                 )
                 .leaving(self.closing.is_some()),
             )
-        });
-        let flight = self.flight.as_ref().filter(|_| self.now_playing.is_some());
-        let flying = flight.and_then(|(album, from, flight, _)| {
-            let to = flight.to()?;
-            let art = crate::covers::art(*album, to.size.width, window.scale_factor(), cx);
-            Some(crate::components::Flying::new(
-                "sleeve-to-art",
-                *from,
-                to,
-                crate::components::SlideUp::RISE,
-                crate::components::Cover::new(art, to.size.width),
-            ))
         });
         self.see_push(cx);
         let route = self.nav.read(cx).current();
@@ -1454,7 +1381,6 @@ impl Render for TouchShell {
                     })),
             )
             .children(now_playing)
-            .children(flying)
             .children(eq_sheets.map(|s| ask::layered(Layer::Sheet, s)))
             .children(eq_questions.map(|q| ask::layered(Layer::Question, q)))
             .children(ask::presented(window, cx).map(|s| ask::layered(Layer::Sheet, s)))

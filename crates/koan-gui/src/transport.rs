@@ -28,7 +28,7 @@ pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
 
 #[path = "transport_phone.rs"]
 mod phone;
-pub use phone::{Collapse, Expand, Flight, Form, ShowInfo};
+pub use phone::{Collapse, Expand, Form, ShowInfo};
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
@@ -92,8 +92,6 @@ pub struct Transport {
     pulled: crate::components::Follow,
     /// The ease back up, letting the page's layer go once it is in place.
     returning: Option<Task<()>>,
-    /// Now Playing's art, while the mini player's sleeve grows into it.
-    pub(crate) flight: Option<phone::Flight>,
     _subscriptions: [Subscription; 8],
 }
 
@@ -278,7 +276,6 @@ impl Transport {
             released: None,
             pulled: crate::components::Follow::new(),
             returning: None,
-            flight: None,
         };
         this.reload_eq(cx);
         this

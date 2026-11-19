@@ -22,39 +22,6 @@ pub enum Form {
     Full,
 }
 
-/// Where Now Playing's art stands while the mini player's sleeve flies to
-/// it: what the page tells the shell, which draws the flight.
-#[derive(Clone)]
-pub struct Flight {
-    /// Where the art goes, once the page has been laid out.
-    to: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
-    /// Told when the art's place is known.
-    shell: EntityId,
-    /// The flight has landed: the art draws itself again.
-    pub landed: std::rc::Rc<std::cell::Cell<bool>>,
-}
-
-impl Flight {
-    pub fn new(shell: EntityId) -> Self {
-        Self {
-            to: Default::default(),
-            shell,
-            landed: Default::default(),
-        }
-    }
-
-    pub fn to(&self) -> Option<Bounds<Pixels>> {
-        self.to.get()
-    }
-
-    fn told(&self, bounds: Bounds<Pixels>, cx: &mut App) {
-        if self.to.get() != Some(bounds) {
-            self.to.set(Some(bounds));
-            cx.notify(self.shell);
-        }
-    }
-}
-
 /// The mini player, tapped: Now Playing is asked for.
 pub struct Expand;
 /// Now Playing's close, tapped.
@@ -77,17 +44,6 @@ impl Transport {
             cx.observe(&playhead, |_, _, cx| cx.notify())
         });
         cx.notify();
-    }
-
-    /// The record playing, for the flight from the mini player's sleeve:
-    /// `None` when nothing is playing.
-    pub fn now_playing_album(&self, cx: &App) -> Option<Option<i64>> {
-        self.playback
-            .read(cx)
-            .0
-            .entry
-            .as_ref()
-            .map(|entry| entry.album_id)
     }
 
     pub(super) fn mini(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -259,22 +215,7 @@ impl Transport {
                 .cached(StyleRefinement::default().size_full())
                 .into_any_element(),
             _ => {
-                // While the mini player's sleeve grows into this place the
-                // art itself waits, a canvas telling the flight where it goes.
-                let flying = self.flight.as_ref().filter(|f| !f.landed.get());
-                let art = match flying {
-                    Some(flight) => {
-                        let flight = flight.clone();
-                        div()
-                            .relative()
-                            .size(side)
-                            .child(crate::components::bounds_probe(move |bounds, cx| {
-                                flight.told(bounds, cx)
-                            }))
-                            .into_any_element()
-                    }
-                    None => Cover::new(self.cover.clone(), side).into_any_element(),
-                };
+                let art = Cover::new(self.cover.clone(), side);
                 // At the stage's foot, so the actions and the names follow
                 // it closely.
                 div()
