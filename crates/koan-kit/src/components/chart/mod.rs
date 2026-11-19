@@ -1102,8 +1102,7 @@ impl State {
                         ys.insert(0, yt(oy));
                         base.insert(0, ob.map_or(0.0, yt));
                     }
-                    let first = xs[xs.len() - 2];
-                    shift = (xmap.unit(first + step) - xmap.unit(first)) as f32;
+                    shift = (xmap.unit(xs[0] + step) - xmap.unit(xs[0])) as f32;
                 }
                 let from: Vec<f64> = match motion_kind {
                     DataMotion::Instant | DataMotion::Scroll(_) => ys.clone(),
@@ -1299,8 +1298,8 @@ impl State {
             // Until it is laid out again the mark stays within its spans
             // under every map the axes pass through, and an area to a level
             // only where it leaves the level. A series carried on past its
-            // samples can go anywhere.
-            // A scrolling one stands partly past the plot's edges.
+            // samples can go anywhere, and a scrolling one stands partly past
+            // the plot's edges.
             let bounds = if matches!(
                 series.motion,
                 DataMotion::Extrapolate(_) | DataMotion::Scroll(_)
