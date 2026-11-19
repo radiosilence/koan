@@ -821,6 +821,22 @@ mod tests {
 
     use super::*;
 
+    /// The setting off, no pass runs or carries on; turned on again, a
+    /// preload the person stopped looks again.
+    #[test]
+    fn the_setting_gates_the_preload_and_turning_it_on_resumes_it() {
+        assert!(!allowed(false, true), "off: nothing fetched ahead");
+        stop();
+        assert!(stopped());
+        let nudges = NUDGES.load(Ordering::Relaxed);
+        resume();
+        assert!(!stopped());
+        assert!(
+            NUDGES.load(Ordering::Relaxed) > nudges,
+            "a pass looks again"
+        );
+    }
+
     /// Frames read back as written: an unknown kind reads as not held, and
     /// the end of the stream as nothing more.
     #[test]
