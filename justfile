@@ -417,7 +417,8 @@ theme-leaks:
     done < <(find apps/ios/Sources -name '*.swift' ! -path '*/KoanFFI/*' ! -name 'KoanTheme.swift')
     [ "$found" = 0 ] && echo "no theme leaks" || { echo "theme leaks above"; exit 1; }
 
-# Type-check the Swift the iOS app still has against the iOS SDK.
+# Type-check the Swift the iOS app compiles (the `Koan` target's sources in
+# `apps/ios/project.yml`) against the iOS SDK.
 #
 # The bindings are target-independent, so this needs `swift-bindings` and
 # nothing else: no Rust iOS build, no simulator runtime, a few seconds in CI.
@@ -441,7 +442,9 @@ ios-typecheck: swift-bindings
         -package-name koan \
         -wmo -emit-sil -o /dev/null -module-name Koan -I "$mod" \
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
-        {{app_dir}}/Sources/KoanGUI/main.swift {{app_dir}}/Sources/KoanIOS/PushDelegate.swift {{app_dir}}/Sources/KoanIOS/AppAttest.swift
+        $(find {{app_dir}}/Sources/KoanGUI -name '*.swift') \
+        {{app_dir}}/Sources/KoanIOS/PushDelegate.swift {{app_dir}}/Sources/KoanIOS/AppAttest.swift \
+        {{app_dir}}/Sources/KoanIOS/RemoteActivity.swift {{app_dir}}/Sources/Koan/Support/NetworkWatch.swift
     echo "the iOS app's Swift still builds"
 
 
