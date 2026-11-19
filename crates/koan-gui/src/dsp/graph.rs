@@ -166,8 +166,17 @@ pub struct Graph {
     queued: Option<Option<Editing>>,
     /// Where each handle was last laid out, in the window.
     places: PointPlaces,
+    /// The height last drawn at, with the legend wrapped to the width.
+    drawn: Option<Pixels>,
     _subscriptions: Vec<Subscription>,
 }
+
+/// The graph's height as drawn, once it changes: a legend wraps to more lines
+/// as the width narrows, and a frame holding the graph as a cached view,
+/// which takes its size from its frame, needs the height to give it.
+pub struct Drawn(pub Pixels);
+
+impl EventEmitter<Drawn> for Graph {}
 
 /// A handle's radius, and its radius while held.
 const HANDLE: f32 = 4.0;
@@ -209,6 +218,7 @@ impl Graph {
             previewing: false,
             queued: None,
             places: PointPlaces::default(),
+            drawn: None,
             _subscriptions: subscriptions,
         }
     }
@@ -660,11 +670,25 @@ impl Render for Graph {
         }
 
         let compact = self.compact;
+        let this = cx.weak_entity();
         div()
+            .relative()
             .flex()
             .flex_col()
             .w_full()
             .when(self.fills, |d| d.h_full())
+            .when(!self.fills, |d| {
+                d.child(koan_kit::components::bounds_probe(move |bounds, cx| {
+                    let height = bounds.size.height;
+                    this.update(cx, |g, cx| {
+                        if g.drawn != Some(height) {
+                            g.drawn = Some(height);
+                            cx.emit(Drawn(height));
+                        }
+                    })
+                    .ok();
+                }))
+            })
             .gap(look.space(Space::M))
             .when(measured && !compact, |d| {
                 d.child(

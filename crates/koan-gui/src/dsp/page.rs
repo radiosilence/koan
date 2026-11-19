@@ -11,10 +11,13 @@ use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
 use koan_runtime::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
 
-use super::graph::{Graph, Part, Stroke};
+use super::graph::{Drawn, Graph, Part, Stroke};
 
 /// The overview's graph, in points.
 const GRAPH_H: f32 = 220.0;
+/// The graph's frame before it has drawn once: the curve, a legend of two
+/// lines and the brushes.
+const GRAPH_FRAME: f32 = 290.0;
 use super::menu::{Item, Trigger, menu};
 use super::model::{Dsp, Placement, Stage, describe_profile, joined};
 use super::sheet::{Confirm, Sheets, note};
@@ -135,6 +138,8 @@ pub struct EqBody {
     /// This machine's output devices.
     outputs: Vec<String>,
     graph: Entity<Graph>,
+    /// The graph's height as it last drew, legend and brushes included.
+    graph_h: Pixels,
     /// What the overview was last read at, and the read under way.
     loaded: Option<((u64, u64), Option<String>)>,
     _load: Option<Task<()>>,
@@ -157,6 +162,10 @@ impl EqBody {
         let subscriptions = vec![
             cx.observe(&dsp, |page: &mut EqBody, _, cx| page.follow(cx)),
             observe_accent(cx),
+            cx.subscribe(&graph, |page: &mut EqBody, _, drawn: &Drawn, cx| {
+                page.graph_h = drawn.0;
+                cx.notify();
+            }),
         ];
         let mut page = Self {
             dsp,
@@ -166,6 +175,7 @@ impl EqBody {
             curves: HashMap::new(),
             outputs: Vec::new(),
             graph,
+            graph_h: Pixels::from(GRAPH_FRAME),
             loaded: None,
             _load: None,
             naming: None,
@@ -496,9 +506,10 @@ impl Render for EqBody {
                     .gap(look.space(Space::L))
                     .child(head)
                     .child(
-                        // As the profile page's frame: the curve (`GRAPH_H`), its legend and
-                        // its brushes, which a scaled frame would clip.
-                        div().h(Pixels::from(290.0)).child(
+                        // As tall as the graph last drew: a cached view takes its
+                        // frame's size, and the legend wraps to more lines as the
+                        // page narrows.
+                        div().h(self.graph_h).child(
                             koan_kit::app::AnyView::from(self.graph.clone())
                                 // the bounds a cached view keeps between frames.
                                 .cached(StyleRefinement::default().size_full()),
@@ -905,7 +916,7 @@ impl EqBody {
             div()
                 .ml(look.spaced(18.0))
                 .w(if matched { MARK } else { look.hairline })
-                .h(look.spaced(14.0))
+                .h(look.space(Space::M))
                 .bg(if matched {
                     look.accent.hsla()
                 } else {
@@ -999,7 +1010,7 @@ impl EqBody {
         }
         col.push(
             div()
-                .py(look.spaced(4.0))
+                .py(look.space(Space::Xs))
                 .text_role(TypeRole::Fine, &look)
                 .text_color(look.text_color(Tone::Muted))
                 .child(label("Filters"))
@@ -1007,12 +1018,11 @@ impl EqBody {
         );
         for (i, entry) in o.chain.iter().enumerate() {
             let meets = o.joins.get(i);
-            if o.filters_only {
-                if i > 0 {
-                    col.push(link(&look).into_any_element());
-                }
-            } else if i > 0 || meets.is_some_and(|m| m.join.is_some() || m.note.is_some()) {
+            let joined = meets.is_some_and(|m| m.join.is_some() || m.note.is_some());
+            if !o.filters_only && (i > 0 || joined) {
                 col.push(self.join(meets, &entry.name, matched, &look, cx));
+            } else {
+                col.push(link(&look).into_any_element());
             }
             let detail = if entry.on {
                 if o.filters_only {
@@ -1269,9 +1279,9 @@ impl EqBody {
             .relative()
             .flex()
             .flex_col()
-            .gap(look.spaced(2.0))
-            .py(look.spaced(4.0))
-            .min_h(look.spaced(14.0))
+            .gap(look.space(Space::Xs))
+            .py(look.space(Space::Xs))
+            .min_h(look.space(Space::M))
             .pl(look.spaced(18.0) + look.space(Space::M))
             .child(
                 div()
@@ -1317,13 +1327,57 @@ fn block(
     on_click: impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static,
     controls: Vec<AnyElement>,
 ) -> impl IntoElement {
-    div()
+    // Below the compact width the words take the whole width, over a row of
+    // the curve and the controls; beside them they would be cut to a word.
+    let compact = look.compact;
+    let words = div()
+        .flex_1()
+        .min_w_0()
         .flex()
-        .items_center()
+        .flex_col()
+        .gap(look.spaced(2.0))
+        .child(note(label(title), Tone::Muted, look))
+        .child(
+            div()
+                .text_role(TypeRole::Body, look)
+                .text_color(look.palette.ink.hsla())
+                .truncate()
+                .child(name),
+        )
+        .children(
+            detail
+                .filter(|d| !d.is_empty())
+                .map(|d| note(d, Tone::Muted, look).when(!compact, |n| n.truncate())),
+        );
+    let curve = db.map(|db| thumb(db, stroke, None));
+    let card = div()
+        .flex()
         .gap(look.space(Space::M))
         .p(look.space(Space::S))
         .border(look.hairline)
-        .border_color(outline)
+        .border_color(outline);
+    if compact {
+        return card
+            .flex_col()
+            .child(
+                div()
+                    .id(id.into())
+                    .cursor_pointer()
+                    .on_click(on_click)
+                    .child(words),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(look.space(Space::M))
+                    .children(curve)
+                    .child(div().flex_1())
+                    .children(controls),
+            )
+            .into_any_element();
+    }
+    card.items_center()
         .child(
             div()
                 .id(id.into())
@@ -1334,30 +1388,11 @@ fn block(
                 .gap(look.space(Space::M))
                 .cursor_pointer()
                 .on_click(on_click)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap(look.spaced(2.0))
-                        .child(note(label(title), Tone::Muted, look))
-                        .child(
-                            div()
-                                .text_role(TypeRole::Body, look)
-                                .text_color(look.palette.ink.hsla())
-                                .truncate()
-                                .child(name),
-                        )
-                        .children(
-                            detail
-                                .filter(|d| !d.is_empty())
-                                .map(|d| note(d, Tone::Muted, look).truncate()),
-                        ),
-                )
-                .children(db.map(|db| thumb(db, stroke, None))),
+                .child(words)
+                .children(curve),
         )
         .children(controls)
+        .into_any_element()
 }
 
 /// An empty stage: a dashed place to choose what fills it.
