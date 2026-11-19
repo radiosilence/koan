@@ -47,7 +47,6 @@ private struct SectionPage: View {
     let section: Navigator.Section
 
     var body: some View {
-        #if os(tvOS)
         // In the page rather than the navigation bar: a television's toolbar
         // takes focus, but a sheet or menu opened from it never appears. Above
         // the listing rather than inset over it, which would scroll beneath.
@@ -58,25 +57,6 @@ private struct SectionPage: View {
             page
         }
         .navigationTitle(KoanTheme.label(title))
-        #else
-        page
-            .navigationTitle(KoanTheme.label(title))
-            .modifier(SectionFilter(placeholder: section.filterPlaceholder))
-            .toolbar {
-                if section.isBrowser {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        BrowseFilterButton().koanControl()
-                    }
-                    .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
-                }
-                if section == .albums {
-                    AlbumSortControls()
-                }
-                if section == .tracks {
-                    TrackSortControls()
-                }
-            }
-        #endif
     }
 
     @ViewBuilder private var page: some View {
@@ -112,11 +92,7 @@ private struct SectionPage: View {
         }
     }
 
-    #if os(tvOS)
     private static let television = true
-    #else
-    private static let television = false
-    #endif
 }
 
 /// The Mac's toolbar filter, as the search field iOS puts under a page's title.
@@ -168,12 +144,9 @@ private struct AlbumSortMenu: View {
 private struct SortMenu<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [(label: String, value: Value)]
-    #if os(tvOS)
     @State private var open = false
-    #endif
 
     var body: some View {
-        #if os(tvOS)
         if KoanTheme.isOn {
             Button { open = true } label: {
                 KoanLabel("Sort", icon: Icon.sort)
@@ -187,9 +160,6 @@ private struct SortMenu<Value: Hashable>: View {
         } else {
             menu
         }
-        #else
-        menu
-        #endif
     }
 
     private var menu: some View {
@@ -203,7 +173,6 @@ private struct SortMenu<Value: Hashable>: View {
     }
 }
 
-#if os(tvOS)
 /// A listing's name filter, filters and sort on a television: a row above the
 /// listing, reached by moving up from it, with room for their names. The
 /// filter is a field rather than `.searchable`, whose keyboard would stand
@@ -259,34 +228,3 @@ struct NameFilter: View {
             .accessibilityIdentifier("name-filter")
     }
 }
-#else
-/// The track browser's sort, in the navigation bar.
-private struct TrackSortControls: ToolbarContent {
-    var body: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) { TrackSortMenu().koanControl() }
-            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
-    }
-}
-
-/// The Mac's album sort, in the navigation bar. Reshuffle is its own button
-/// for the same reason as there: it is pressed repeatedly.
-private struct AlbumSortControls: ToolbarContent {
-    @Environment(LibraryModel.self) private var library
-
-    var body: some ToolbarContent {
-        if library.albumSort == .random {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    library.reshuffleAlbums()
-                } label: {
-                    Label("Shuffle", koan: Icon.reshuffle)
-                }
-                .koanControl()
-            }
-            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
-        }
-        ToolbarItem(placement: .topBarTrailing) { AlbumSortMenu().koanControl() }
-            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
-    }
-}
-#endif

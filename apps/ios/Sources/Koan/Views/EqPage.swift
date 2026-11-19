@@ -77,13 +77,6 @@ struct EqSettings: View {
                 }
             }
             Section {
-                #if os(iOS)
-                if let offer = app.dsp.suggestion, device == app.dsp.overview?.device, overview?.filtersOnly != true {
-                    AutoEqSuggestion(offer: offer, dsp: app.dsp) { query in
-                        finding = AutoEqFind(query: query)
-                    }
-                }
-                #endif
                 if let summary = app.dsp.importSummary {
                     Text(summary).koanText(.fine, .muted)
                 }
@@ -101,56 +94,9 @@ struct EqSettings: View {
         }
         .task(id: "\(picked ?? "")\u{0}\(app.dsp.stamp)") { await load() }
         .task(id: app.dsp.stamp) { app.dsp.reload() }
-        #if os(iOS)
-        .filePicker(
-            isPresented: $importing,
-            allowedContentTypes: [.item, .folder],
-            allowsMultipleSelection: true
-        ) { result in
-            let stage = importStage
-            importStage = nil
-            if case let .success(urls) = result, !urls.isEmpty, let stage, let device {
-                app.dsp.importFiles(urls, into: DspPlacement(device: device, stage: stage))
-            }
-        }
-        .formTray(item: $finding) { find in
-            AutoEqSearch(dsp: app.dsp, query: find.query)
-        }
-        .formTray(isPresented: $measuring) {
-            MeasurementFlow(dsp: app.dsp)
-        }
-        .formTray(item: $splitting) { baked in
-            SplitFlow(dsp: app.dsp, name: baked.name)
-        }
-        .formTray(item: $creating, onDismiss: {
-            guard let name = made else { return }
-            made = nil
-            showing = ShownProfile(name: name)
-        }) { _ in
-            NewEq(dsp: app.dsp) { name in
-                if let device, let o = overview {
-                    app.dsp.setTunings(o.chain + [DspTuningEntry(name: name, on: true)], for: device)
-                }
-                made = name
-            }
-        }
-        #endif
         // On a television, the account's own profiles only: no file reaches
         // one, and it has no microphone to measure with.
         .formTray(item: $choosing, onDismiss: {
-            #if os(iOS)
-            guard let (stage, add) = adding else { return }
-            adding = nil
-            switch add {
-            case .importing:
-                importStage = stage
-                importing = true
-            case .autoEq: finding = AutoEqFind(query: "")
-            case .measuring: measuring = true
-            case let .splitting(name): splitting = ShownProfile(name: name)
-            case .creating: creating = NewEqAsk()
-            }
-            #endif
         }) { stage in
             if let o = overview, let device {
                 StagePicker(dsp: app.dsp, stage: stage, overview: o, device: device) { add in
@@ -159,29 +105,6 @@ struct EqSettings: View {
                 }
             }
         }
-        #if os(iOS)
-        .formTray(isPresented: $explaining) {
-            EqExplainer()
-        }
-        // A profile imported from a file: a neutral correction, one with a
-        // tuning already in it, or taste to add on top? kōan cannot tell,
-        // and a chain corrects once.
-        .formTray(item: Binding(
-            // Manage EQ asks for its own imports while it is open.
-            get: { managing ? nil : app.dsp.askRole },
-            // Swiped away, as Decide Later.
-            set: { if $0 == nil, let ask = app.dsp.askRole { app.dsp.answer(ask, nil) } }
-        )) { ask in
-            RoleQuestion(dsp: app.dsp, ask: ask)
-        }
-        .alert(namingTitle, isPresented: $naming) {
-            TextField("Name", text: $presetName)
-            Button("Save") { save(as: presetName, over: false) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The correction and filters, to switch \(device.map(app.dsp.label) ?? "a device") back to, or another device to.")
-        }
-        #endif
         .navigationDestination(item: $showing) { shown in
             DspProfilePage(dsp: app.dsp, name: shown.name, device: device)
                 .koanPushedPage()
@@ -227,44 +150,10 @@ struct EqSettings: View {
                     },
                 keepsCase: true
             )
-            #if os(iOS)
-            Toggle("Correct for a headphone profile", isOn: Binding(
-                get: { !o.filtersOnly },
-                set: { on in app.dsp.setFiltersOnly(!on, for: device) }
-            ))
-            .koanToggle()
-            if let preset = o.preset, o.presetEdited {
-                LabeledContent {
-                    HStack {
-                        Button("Save") { save(as: preset, over: true) }
-                            .koanButton(.bordered)
-                        Button("Revert") { app.dsp.applyPreset(preset, to: device) }
-                            .koanButton(.link)
-                        Button("Save as New…") { ask("Save as New Preset") }
-                            .koanButton(.link)
-                    }
-                } label: {
-                    // The preset's name keeps its case; the words are the app's.
-                    Text("\(KoanTheme.label("Changed since")) \(preset)").textCase(nil)
-                }
-            } else if o.preset == nil, !flat {
-                Button("Save as Preset…") { ask("Save as Preset") }
-                    .koanButton(.compact)
-            }
-            if let refusal {
-                Text(refusal).koanText(.fine, .bad)
-            }
-            #endif
         } header: {
             HStack {
                 KoanSectionHeader("Device and preset")
                 Spacer()
-                #if os(iOS)
-                Button { explaining = true } label: {
-                    Label("How EQ works", koan: Icon.info)
-                }
-                .koanButton(.link)
-                #endif
             }
         }
     }
@@ -469,30 +358,6 @@ struct EqChain: View {
     }
 
     var body: some View {
-        #if os(iOS)
-        // Each EQ a row of the list, for its swipe actions; the rows meet,
-        // so the line through the chain runs unbroken.
-        Group {
-            head
-            ForEach(Array(overview.chain.enumerated()), id: \.element.name) { i, entry in
-                eq(i, entry)
-                    .swipeActions(edge: .trailing) {
-                        Button("Remove", role: .destructive) { remove(i) }
-                    }
-                    .swipeActions(edge: .leading) {
-                        if i > 0 {
-                            Button("Move Up") { move(i, by: -1) }
-                        }
-                        if i < overview.chain.count - 1 {
-                            Button("Move Down") { move(i, by: 1) }
-                        }
-                    }
-                    .contextMenu { menu(i) }
-            }
-            tail
-        }
-        .listRowInsets(.vertical, 0)
-        #else
         VStack(alignment: .leading, spacing: 0) {
             head
             ForEach(Array(overview.chain.enumerated()), id: \.element.name) { i, entry in
@@ -502,7 +367,6 @@ struct EqChain: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Self.sentence(overview, device: device))
-        #endif
     }
 
     /// Moving an EQ, and taking it out of the device's filters. Removing
@@ -538,10 +402,6 @@ struct EqChain: View {
                     outline: accent,
                     action: { choose(.correction) }
                 ) {
-                    #if os(iOS)
-                    Button("Show") { open(correction.name) }
-                        .koanButton(.link)
-                    #endif
                 }
             } else {
                 Placeholder(title: "Correction", prompt: "Add a correction", action: { choose(.correction) })
@@ -578,14 +438,6 @@ struct EqChain: View {
                 outline: accent,
                 action: { open(entry.name) }
             ) {
-                #if os(iOS)
-                Toggle("On", isOn: Binding(
-                    get: { entry.on },
-                    set: { on in set(overview.chain.enumerated().map { $0 == i ? DspTuningEntry(name: $1.name, on: on) : $1 }) }
-                ))
-                .koanToggle()
-                .fixedSize()
-                #endif
             }
         }
     }
@@ -596,12 +448,6 @@ struct EqChain: View {
             if !overview.chain.isEmpty {
                 link
             }
-            #if os(iOS)
-            if correction?.role != .baked {
-                Placeholder(title: nil, prompt: "Add EQ", outline: accent, action: { choose(.eq) })
-                link
-            }
-            #endif
             end("\(device) out", icon: Icon.speaker)
         }
     }
@@ -648,21 +494,8 @@ struct EqChain: View {
             case .unknown:
                 // Not saying is not a mismatch: a generic EQ has no target
                 // to say. Only a target set and differing is worth a mark.
-                #if os(tvOS)
                 Text("Made against: not set")
                     .koanText(.fine, .muted)
-                #else
-                Button { open(eq) } label: {
-                    Text("Made against: not set. Set it")
-                        .koanText(.fine, .muted)
-                        .multilineTextAlignment(.leading)
-                }
-                .buttonStyle(.plain)
-                if let suggestion = meets?.suggestion {
-                    Button("Looks made for \(suggestion.name). Use that?") { madeFor(eq, suggestion.id) }
-                        .koanButton(.link)
-                }
-                #endif
             case nil:
                 EmptyView()
             }
@@ -863,13 +696,9 @@ struct StagePicker: View {
     /// the account's other devices.
     private var emptyEqs: String {
         let none = overview.profiles.allSatisfy { $0.preset || $0.role != .tuning || !$0.rates.isEmpty }
-        #if os(tvOS)
         return none
             ? "No EQs yet. Add them on your phone or Mac, and they appear here."
             : "Every EQ is in the filters already. Add more on your phone or Mac."
-        #else
-        return "Every EQ is in the filters already. Make a new one or add another below."
-        #endif
     }
 
     var body: some View {
@@ -889,12 +718,10 @@ struct StagePicker: View {
                     } header: {
                         KoanSectionHeader("Corrections")
                     } footer: {
-                        #if os(tvOS)
                         if choices.isEmpty {
                             Text("No corrections yet. Add them on your phone or Mac, and they appear here.")
                                 .koanText(.meta, .muted)
                         }
-                        #endif
                     }
                 case .eq:
                     if choices.isEmpty {
@@ -920,24 +747,6 @@ struct StagePicker: View {
                 if stage == .correction, let name = overview.active {
                     current(name)
                 }
-                #if os(iOS)
-                Section {
-                    if stage == .eq {
-                        Button("New EQ…") { add(.creating) }
-                            .koanButton(.bordered)
-                    }
-                    Button("Import a File…") { add(.importing) }
-                        .koanButton(.bordered)
-                    if !overview.filtersOnly {
-                        Button("Find in AutoEQ…") { add(.autoEq) }
-                            .koanButton(.bordered)
-                        Button("Find a Measurement…") { add(.measuring) }
-                            .koanButton(.bordered)
-                    }
-                } header: {
-                    KoanSectionHeader("Add…")
-                }
-                #endif
             }
             .navigationTitle(KoanTheme.label(stage == .correction ? "Correction" : "Add EQ"))
             .toolbar {
@@ -988,12 +797,6 @@ struct StagePicker: View {
             if let c = correction, c.role == .baked {
                 Label("\(name) already includes a tuning, so no other tuning plays on it. Split it into a correction and a tuning to change that.", koan: Icon.info)
                     .koanText(.meta, .muted)
-                #if os(iOS)
-                if c.rates.isEmpty, c.layers == 0 {
-                    Button("Split into Correction + Tuning…") { add(.splitting(name)) }
-                        .koanButton(.compact)
-                }
-                #endif
             }
         } header: {
             KoanSectionHeader(name)
@@ -1086,69 +889,3 @@ struct EqExplainer: View {
     }
 }
 
-#if os(iOS)
-/// A new EQ: eight bands across the range, flat or from a starting curve,
-/// named before it is made. Made, it goes on the end of the device's filters
-/// and opens to edit.
-struct NewEq: View {
-    let dsp: DspModel
-    let made: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var starter = DspStarter.flat
-    @State private var refusal: String?
-    @State private var saving = false
-
-    private static let starters: [(label: String, value: DspStarter)] = [
-        ("Flat", .flat), ("Bass boost", .bassBoost), ("Warm", .warm), ("Bright", .bright),
-    ]
-
-    private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
-
-    var body: some View {
-        NavigationStack {
-            KoanForm {
-                Section {
-                    TextField("Name", text: $name)
-                        .koanField()
-                        .onSubmit(create)
-                    KoanPicker("Start from", selection: $starter, options: Self.starters)
-                } footer: {
-                    Text("A low shelf, six peaks an octave apart from 200 Hz, and a high shelf, each at 0 dB unless the starting curve says otherwise. Every band can be moved, retyped or removed.")
-                        .koanText(.fine, .muted)
-                }
-                if let refusal {
-                    Section {
-                        Text(refusal).koanText(.fine, .bad)
-                    }
-                }
-            }
-            .navigationTitle(KoanTheme.label("New EQ"))
-            .toolbar {
-                KoanSheetAction(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                KoanSheetAction(placement: .confirmationAction) {
-                    Button("Create") { create() }
-                        .disabled(trimmed.isEmpty || saving)
-                }
-            }
-        }
-    }
-
-    private func create() {
-        let name = trimmed
-        guard !name.isEmpty, !saving else { return }
-        saving = true
-        Task {
-            if await dsp.createEq(name, starter) {
-                made(name)
-                dismiss()
-            } else {
-                refusal = dsp.lastError
-            }
-            saving = false
-        }
-    }
-}
-#endif

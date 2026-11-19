@@ -89,7 +89,7 @@ jobs:
           toolchain: stable
           targets: aarch64-apple-${{ matrix.platform == 'tvos' && 'tvos' || 'ios' }}
       # The engine builds for the device into a target directory of its own
-      # (see `ios-ffi` and `tv-ffi`), which rust-cache does not look in unless
+      # (see `gui-ios-lib` and `tv-ffi`), which rust-cache does not look in unless
       # told. Saved even when the archive fails: the Rust built fine, and a
       # failed upload otherwise starts the next attempt from nothing.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3

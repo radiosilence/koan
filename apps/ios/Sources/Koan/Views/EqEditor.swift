@@ -75,11 +75,6 @@ struct EqEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: KoanTheme.Space.m) {
             graph
-            #if os(iOS)
-            if editable, curveIndex != nil, !compact {
-                KoanSegmentedPicker(options: Self.brushes, selection: $brush, title: "Brush")
-            }
-            #endif
         }
         .onChange(of: response.total) { _, _ in
             if !editing {

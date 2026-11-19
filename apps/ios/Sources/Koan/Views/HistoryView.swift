@@ -17,9 +17,6 @@ struct HistoryView: View {
     @Environment(PlayerModel.self) private var player
     @State private var selection: Set<Int64> = []
     @State private var confirmingClear = false
-    #if os(iOS)
-    @State private var editMode: EditMode = .inactive
-    #endif
 
     private var entries: [PlayHistoryEntry] { library.visiblePlayHistory }
 
@@ -67,16 +64,6 @@ struct HistoryView: View {
                 }
                 .insetList()
                 .washedGround()
-                #if os(iOS)
-                .listSelectMode($editMode, selection: $selection) { ids in
-                    let tracks = ids.compactMap { id in entries.first { $0.id == id }?.track.id }
-                    return SelectionBar.Actions(
-                        favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
-                        sources: [.tracks(ids: tracks)],
-                        remove: .init(title: "Forget", noun: "play", count: ids.count) { library.forgetPlays(ids: Set(ids)) }
-                    )
-                }
-                #endif
                 .clearsSelection($selection)
                 .selectionMenu(for: Int64.self) { ids in
                     menu(for: ids)
@@ -221,12 +208,8 @@ private struct HistoryRow: View {
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .frame(width: HistoryColumns.duration, alignment: .trailing)
         }
-        #if os(tvOS)
         // Television type is taller than the sleeve; the row grows to it.
         .frame(minHeight: RowMetrics.art)
-        #else
-        .frame(height: RowMetrics.art)
-        #endif
         .contentShape(Rectangle())
         .pointerHover { hovering = $0 }
     }
@@ -279,9 +262,5 @@ private enum HistoryDate {
 
 /// The length column, at a width television type fits in.
 private enum HistoryColumns {
-    #if os(tvOS)
     static let duration = 96.0
-    #else
-    static let duration = 48.0
-    #endif
 }

@@ -327,19 +327,6 @@ struct SeekBar: View {
                 // but the attempt is still worth answering, so releasing says
                 // why nothing happened. tvOS has no drag; the remote seeks
                 // through the system's Now Playing.
-                #if os(iOS)
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            guard player.canSeek else { return }
-                            player.beginScrub(fraction: (value.location.x / geo.size.width).clamped())
-                        }
-                        .onEnded { value in
-                            guard player.canSeek else { return player.explainUnseekable() }
-                            player.endScrub(fraction: (value.location.x / geo.size.width).clamped())
-                        }
-                )
-                #endif
             }
             .frame(height: Self.reach)
 

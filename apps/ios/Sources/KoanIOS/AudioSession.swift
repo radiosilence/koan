@@ -1,9 +1,6 @@
 import AVFAudio
 import Foundation
 import KoanFFI
-#if os(iOS)
-import UserNotifications
-#endif
 
 /// The half of iOS audio that the engine cannot own.
 ///
@@ -119,15 +116,6 @@ final class AudioSession {
         /// start here. Say so where the person will see it, as a push does for a
         /// suspended phone: tapping opens the app, which may then play.
         private func askToBeTapped() {
-            #if os(iOS)
-            let content = UNMutableNotificationContent()
-            content.title = "kōan could not start playing"
-            content.body = "iOS needs kōan open to take over the audio. Tap to play."
-            content.userInfo = ["koan": ["type": "resume"]]
-            UNUserNotificationCenter.current().add(
-                UNNotificationRequest(identifier: "koan.refused-activation", content: content, trigger: nil)
-            )
-            #endif
         }
 
         /// A route change: the new route asked for the output's rate, and
@@ -170,11 +158,7 @@ final class AudioSession {
             ) { [weak self] note in
                 let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
                 let options = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
-                #if os(tvOS)
                 let reason: UInt = 0
-                #else
-                let reason = note.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt ?? 0
-                #endif
                 guard let raw, let type = AVAudioSession.InterruptionType(rawValue: raw) else {
                     return
                 }
@@ -257,11 +241,7 @@ final class AudioSession {
     func recoverIfInterrupted() {
         guard interrupted else { return }
         note?("session still interrupted on returning; rebuilding the output")
-        #if os(tvOS)
         end(resume: true)
-        #else
-        end(resume: false)
-        #endif
     }
 
     /// Have the output rebuilt: the unit iOS stopped for the interruption will
@@ -282,12 +262,6 @@ final class AudioSession {
         // Nor is it on a television: HDMI drops for a moment whenever the
         // display or receiver wakes or changes input, as it does when the
         // TV is woken to play.
-        #if os(iOS)
-        if reason == .oldDeviceUnavailable {
-            routeLostAt = Date()
-            onRouteLost?()
-        }
-        #endif
     }
 
     deinit {

@@ -20,13 +20,8 @@ struct SettingsView: View {
     @State private var people: PeopleModel?
     @Environment(EngineMirror.self) private var mirror
     @Environment(\.scenePhase) private var scenePhase
-    #if os(iOS)
-    /// Taps on the version line, toward the seven that switch gay mode.
-    @State private var versionTaps: (count: Int, last: Date) = (0, .distantPast)
-    #else
     /// ↑↑↓↓←→←→ on the remote, which switches gay mode.
     @State private var konami = SecretCode<MoveCommandDirection>([.up, .up, .down, .down, .left, .right, .left, .right])
-    #endif
 
     /// A settings section: a row that goes into the pane it names.
     @ViewBuilder private func pane<Content: View>(
@@ -44,9 +39,7 @@ struct SettingsView: View {
         .listLink()
         // A television's lists are words alone, as its tabs are; elsewhere
         // the glyph follows "Show icons".
-        #if os(tvOS)
         .environment(\.koanIcons, false)
-        #endif
     }
 
     var body: some View {
@@ -68,20 +61,6 @@ struct SettingsView: View {
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
                     // A television keeps all of the server on its one page.
-                    #if os(iOS)
-                    if AccountSettings.shown(model, mirror) {
-                        pane("Account", Icon.account) {
-                            AccountSettings(model: model)
-                                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
-                        }
-                    }
-                    if PeoplePane.shown(model, people), let people {
-                        pane("People", Icon.people) {
-                            PeoplePane(model: model, people: people)
-                                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
-                        }
-                    }
-                    #endif
                     pane("Playback", Icon.speaker) {
                         PlaybackSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
@@ -94,48 +73,18 @@ struct SettingsView: View {
                         DevicesSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
-                    #if os(iOS)
-                    if ServerCapabilitySections.shown(model, mirror) {
-                        pane("Integrations", Icon.extensions) {
-                            ServerCapabilitiesSettings()
-                                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
-                        }
-                    }
-                    #endif
                     pane("Appearance", Icon.appearance) {
                         AppearanceSettings()
                     }
                     Text(AppVersion.text)
                         .koanText(.fine, .muted)
                         .frame(maxWidth: .infinity)
-                        #if os(iOS)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            let now = Date()
-                            let count = now.timeIntervalSince(versionTaps.last) < 1 ? versionTaps.count + 1 : 1
-                            versionTaps = (count == 7 ? 0 : count, now)
-                            if count == 7 { app.appearance.toggleRainbow() }
-                        }
-                        #endif
                         .washedRow()
                 }
                 .koanList()
-                #if os(iOS)
-                .navigationDestination(isPresented: Binding(
-                    get: { app.ui.showingServerSettings },
-                    set: { app.ui.showingServerSettings = $0 }
-                )) {
-                    RemoteSettings(model: model)
-                        .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
-                        .navigationTitle(KoanTheme.label("Server"))
-                        .koanPushedPage()
-                }
-                #endif
-                #if os(tvOS)
                 .onMoveCommand { direction in
                     if konami.press(direction) { app.appearance.toggleRainbow() }
                 }
-                #endif
                 .navigationTitle(KoanTheme.tabRootTitle("Settings"))
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
             } else {
@@ -156,17 +105,6 @@ struct SettingsView: View {
         // and so no People section. The last account's list goes first, so
         // none shows under another server. A television manages no accounts,
         // and asks for none.
-        #if os(iOS)
-        .task(id: model.map { "\($0.serverAccount ?? "") \($0.settings.remoteUrl) \(mirror.offers(PeopleModel.extensionName))" }) {
-            people = nil
-            guard let model, model.serverAccount != nil, mirror.offers(PeopleModel.extensionName) else { return }
-            let people = PeopleModel(engine: library.engine)
-            await people.load()
-            // Signed in elsewhere while it loaded: that account's task sets its own.
-            guard !Task.isCancelled else { return }
-            self.people = people
-        }
-        #endif
         .onReceive(NotificationCenter.default.publisher(for: .koanSignedIn)) { _ in model?.reload() }
         // The CLI and TUI write the same file; coming back to this window is
         // the moment to notice they did.
@@ -193,11 +131,7 @@ private struct StatusLine: View {
                     .koanRule(.top)
             }
         } else {
-            #if os(tvOS)
             line.koanMaterial(.regularMaterial)
-            #else
-            line.koanMaterial(.bar)
-            #endif
         }
     }
 
@@ -433,26 +367,7 @@ private struct RemoteSettings: View {
     @ViewBuilder private var connectSections: some View {
             if model.settings.remoteSignedIn {
                 Section {
-                    #if os(tvOS)
                     LabeledContent("Server", value: model.settings.remoteUrl)
-                    #else
-                    // The address is what another device or app asks for, so a
-                    // tap copies it.
-                    Button {
-                        Pasteboard.write(text: model.settings.remoteUrl)
-                        copiedServer = true
-                    } label: {
-                        LabeledContent("Server", value: copiedServer ? "Copied" : model.settings.remoteUrl)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy the server's address")
-                    .task(id: copiedServer) {
-                        guard copiedServer else { return }
-                        try? await Task.sleep(for: .seconds(1.5))
-                        copiedServer = false
-                    }
-                    #endif
                     LabeledContent("User", value: model.settings.remoteUsername)
                     LabeledContent(
                         "Tracks",
@@ -478,14 +393,12 @@ private struct RemoteSettings: View {
                 } header: {
                     KoanSectionHeader("Signed in")
                 }
-                #if os(tvOS)
                 // A television keeps the server on one page: what a phone or a
                 // Mac splits into sections, less what needs a keyboard.
                 if mirror.offers(ApiKeysSettings.extensionName) {
                     ApiKeysSettings()
                 }
                 ServerCapabilitySections()
-                #endif
                 ServerOffers()
             } else {
                 Section {
@@ -506,11 +419,9 @@ private struct RemoteSettings: View {
                     KoanPicker("Sign in with", selection: $model.withApiKey, options: [
                         ("Password", false), ("API key", true),
                     ])
-                    #if os(tvOS)
                     // Two choices side by side, rather than a page of their
                     // own to go into and come back from.
                     .pickerStyle(.segmented) // theme: raw — a television's, which the theme replaces
-                    #endif
                     LabeledContent(model.withApiKey ? "API key" : "Password") {
                         SecureField(
                             model.withApiKey ? "API key" : "Password",
@@ -526,12 +437,6 @@ private struct RemoteSettings: View {
                             .koanButton(.prominent)
                             .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                         Spacer()
-                        #if os(iOS)
-                        PasteButton(payloadType: String.self) { strings in
-                            Task { @MainActor in join(strings.first ?? "") }
-                        }
-                        .labelStyle(.titleAndIcon)
-                        #endif
                     }
                     .rowButtons()
                 } header: {
@@ -547,22 +452,6 @@ private struct RemoteSettings: View {
                 }
             }
 
-            #if os(iOS)
-            // Offline is from a server: nothing to be offline from before
-            // signing in, and the switch would sit between the form and its
-            // button.
-            if model.settings.remoteSignedIn {
-            Section {
-                Toggle("Offline mode", isOn: Binding(
-                    get: { mirror.connection?.offlineManual ?? false },
-                    set: { state.library.engine.setOffline(on: $0) }
-                )).koanToggle()
-            } footer: {
-                Text("Shows only what is on this iPhone. It turns on by itself when your server cannot be reached, and off again when it can.")
-                    .koanText(.fine, .muted)
-            }
-            }
-            #endif
 
             Section {
                 Toggle("Keep the library in sync", isOn: model.binding(\.autoSync)).koanToggle()
@@ -587,14 +476,11 @@ private struct RemoteSettings: View {
                     .koanText(.fine, .muted)
             }
 
-            #if os(tvOS)
             if model.settings.remoteSignedIn {
                 ServerQueueSection(model: model)
             }
-            #endif
 
             Section {
-                #if os(tvOS)
                 // tvOS has no stepper.
                 KoanPicker(
                     "Parallel downloads",
@@ -604,16 +490,6 @@ private struct RemoteSettings: View {
                     ),
                     options: (1...16).map { ("\($0)", $0) }
                 )
-                #else
-                KoanStepper(
-                    "Parallel downloads: \(model.settings.downloadWorkers)",
-                    value: Binding(
-                        get: { Int(model.settings.downloadWorkers) },
-                        set: { v in model.edit { $0.downloadWorkers = UInt32(v) } }
-                    ),
-                    in: 1...16
-                )
-                #endif
                 KoanPicker(
                     "Download ahead",
                     selection: Binding(
@@ -637,9 +513,6 @@ private struct RemoteSettings: View {
                             get: { cacheLimit ?? limitGB },
                             set: { cacheLimit = $0 }
                         ), prompt: Text("50"))
-                        #if os(iOS)
-                        .keyboardType(.decimalPad)
-                        #endif
                         .monospacedDigit()
                         .focused($focus, equals: .cacheLimit)
                         .onAppear { if choosingLimit { focus = .cacheLimit } }
@@ -787,11 +660,6 @@ private struct AccountSettings: View {
 
     var body: some View {
         KoanForm {
-            #if os(iOS)
-            if mirror.offers(PeopleModel.extensionName) {
-                LinkDeviceSection(username: model.serverAccount ?? "", visit: visits)
-            }
-            #endif
             if mirror.offers(PasswordChange.extensionName), !model.sharesThisMac {
                 Section {
                     LabeledContent("User", value: model.serverAccount ?? "")
@@ -823,11 +691,6 @@ private struct AccountSettings: View {
             if mirror.offers(ApiKeysSettings.extensionName) {
                 ApiKeysSettings()
             }
-            #if os(iOS)
-            if AppPasswordsSettings.shown(mirror) {
-                AppPasswordsSettings()
-            }
-            #endif
         }
         .koanSheet()
         .onAppear { visits += 1 }
@@ -956,21 +819,12 @@ private struct PlaybackSettings: View {
                     ("Off", "off"), ("Per track", "track"), ("Per album", "album"),
                 ])
                 if model.settings.replaygain != "off" {
-                    #if os(tvOS)
                     KoanPicker(
                         "Pre-amp",
                         selection: model.binding(\.preAmpDb),
                         options: stride(from: -15.0, through: 15.0, by: 0.5).map { (String(format: "%.1f dB", $0), $0) },
                         keepsCase: true
                     )
-                    #else
-                    KoanStepper(
-                        "Pre-amp: \(String(format: "%.1f", model.settings.preAmpDb)) dB",
-                        value: model.binding(\.preAmpDb),
-                        in: -15...15,
-                        step: 0.5
-                    )
-                    #endif
                 }
             } header: {
                 KoanSectionHeader("Loudness")
@@ -990,165 +844,7 @@ struct AutoEqFind: Identifiable {
     let query: String
 }
 
-#if os(iOS)
-/// The output in use, recognised by its name as a headphone AutoEQ has
-/// measured, or roughly so: its profile, or a search for its model to pick
-/// the right one from. Offered once, quietly; nothing is applied until asked.
-struct AutoEqSuggestion: View {
-    let offer: AutoEqOffer
-    let dsp: DspModel
-    let find: (String) -> Void
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            switch offer {
-            case let .profile(entry):
-                Text("AutoEQ has a correction for \(entry.name). Use it?")
-                    .koanText(.body, .muted)
-                HStack {
-                    Button("Use") { dsp.installAutoEq(entry) }
-                        .koanButton(.prominent)
-                    dismiss
-                    Spacer()
-                }
-            case let .search(query):
-                HStack {
-                    Button("Find \(query) in AutoEQ…") { find(query) }
-                        .koanButton(.bordered)
-                    dismiss
-                    Spacer()
-                }
-            }
-        }
-        .koanButton(.text, system: .borderless)
-        .koanText(.meta)
-    }
-
-    private var dismiss: some View {
-        Button("Not for This Device") { dsp.dismissSuggestion() }
-            .koanButton(.link)
-    }
-}
-
-/// AutoEQ's results by headphone name. Choosing one installs it and plays the
-/// output in use through it.
-struct AutoEqSearch: View {
-    let dsp: DspModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var query: String
-    @State private var measuring = false
-
-    init(dsp: DspModel, query: String = "") {
-        self.dsp = dsp
-        _query = State(initialValue: query)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if query.isEmpty {
-                    // Nothing typed: the makers, each opening its models.
-                    List(dsp.autoEqMakers, id: \.name) { maker in
-                        NavigationLink {
-                            AutoEqModels(dsp: dsp, maker: maker.name) { dismiss() }
-                                .koanPushedPage()
-                        } label: {
-                            LabeledContent {
-                                Text("\(maker.results)")
-                            } label: {
-                                Text(maker.name).textCase(nil)
-                            }
-                        }
-                        .washedRow()
-                    }
-                    .washedGround()
-                    .task { await dsp.loadAutoEqMakers() }
-                } else {
-                    List(dsp.autoEqResults, id: \.profileName) { entry in
-                        AutoEqRow(entry: entry) {
-                            dsp.installAutoEq(entry)
-                            dismiss()
-                        }
-                        .washedRow()
-                    }
-                    .washedGround()
-                    .overlay {
-                        if dsp.autoEqResults.isEmpty {
-                            ContentUnavailableView {
-                                Label("Not in AutoEQ", koan: Icon.search)
-                            } description: {
-                                Text("AutoEQ has nothing for “\(query)”. A measurement of your headphones works too: kōan builds the correction from it.")
-                            } actions: {
-                                Button("Find a Measurement…") { measuring = true }
-                            }
-                        }
-                    }
-                }
-            }
-            .koanSearchable(text: $query, prompt: "Headphone")
-            .navigationTitle(KoanTheme.label("AutoEQ"))
-            .formTray(isPresented: $measuring) {
-                MeasurementFlow(dsp: dsp, name: query) { _ in dismiss() }
-            }
-            .toolbar {
-                KoanSheetAction(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-            // Debounced: a search runs once typing pauses, not per keystroke.
-            .task(id: query) {
-                try? await Task.sleep(for: .milliseconds(250))
-                guard !Task.isCancelled else { return }
-                await dsp.searchAutoEq(query)
-            }
-        }
-        .koanSheetStack()
-    }
-}
-#endif
-
-#if os(iOS)
-/// One AutoEQ result: the headphone, and who measured it.
-private struct AutoEqRow: View {
-    let entry: AutoEqEntry
-    let choose: () -> Void
-
-    var body: some View {
-        Button(action: choose) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.name)
-                Text(entry.measuredBy)
-                    .koanText(.fine, .muted)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// A maker's results, by model; where several people measured one, the one
-/// AutoEQ recommends comes first. Choosing one installs it and closes the
-/// search.
-private struct AutoEqModels: View {
-    let dsp: DspModel
-    let maker: String
-    let done: () -> Void
-    @State private var models: [AutoEqEntry] = []
-
-    var body: some View {
-        List(models, id: \.profileName) { entry in
-            AutoEqRow(entry: entry) {
-                dsp.installAutoEq(entry)
-                done()
-            }
-            .washedRow()
-        }
-        .washedGround()
-        .navigationTitle(maker)
-        .task { models = await dsp.autoEqModels(maker) }
-    }
-}
-#endif
 
 struct ShownProfile: Identifiable, Hashable {
     let name: String
@@ -1178,9 +874,6 @@ struct DspImportPrompts: ViewModifier {
             } message: {
                 Text("These coefficients carry no rate of their own. Use the one the filter was designed at.")
             }
-            #if os(iOS)
-            .dspImportConfirmation(dsp)
-            #endif
     }
 }
 
@@ -1259,37 +952,14 @@ private struct ScrobblingSettings: View {
                         Text(Format.count(c.pending, "play") + " waiting to be sent")
                             .koanText(.meta, .muted)
                     }
-                    #if os(iOS)
-                    Button("Disconnect", role: .destructive, action: disconnect)
-                        .koanButton(.bordered)
-                        .disabled(busy)
-                    #endif
                 } else if !loaded {
                     Text("Checking…").koanText(.body, .muted)
                 } else if statusFailed {
                     Button("Try Again") { Task { await load() } }
                         .koanButton(.bordered)
                 } else {
-                    #if os(tvOS)
                     Text("Not connected. Connect ListenBrainz from kōan on a phone or Mac.")
                         .koanText(.body, .muted)
-                    #else
-                    LabeledContent("User token") {
-                        SecureField("User token", text: $token, prompt: Text("ListenBrainz user token"))
-                            .verbatimEntry()
-                            .onSubmit(connect)
-                            .koanField()
-                    }
-                    HStack {
-                        Link("Find your token", destination: URL(string: "https://listenbrainz.org/settings/")!)
-                            .koanButton(.link)
-                        Spacer()
-                        Button("Connect", action: connect)
-                            .koanButton(.prominent)
-                            .disabled(busy || token.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                    .rowButtons()
-                    #endif
                 }
                 if let error {
                     KoanLabel(error, icon: Icon.warning)
@@ -1363,13 +1033,7 @@ private struct ServerOffers: View {
                 LabeledContent("OpenSubsonic", value: c.openSubsonic ? "Yes" : "No")
                 LabeledContent("Your devices", value: devices(c))
                 if !c.extensions.isEmpty {
-                    #if os(tvOS)
                     extensionList(c.extensions)
-                    #else
-                    DisclosureGroup("Extensions (\(c.extensions.count))") {
-                        extensionList(c.extensions)
-                    }
-                    #endif
                 }
             } else {
                 Text("Not reached yet")
@@ -1424,12 +1088,6 @@ private struct DevicesSettings: View {
         KoanForm {
             // Pairing is approved from a device with a keyboard; a television
             // keeps its play queue setting with the server's.
-            #if os(iOS)
-            if model.settings.remoteSignedIn {
-                PairDevice()
-                ServerQueueSection(model: model)
-            }
-            #endif
             Section {
                 Toggle("Discoverable on this network", isOn: model.binding(\.devicesDiscoverable)).koanToggle()
                 KoanPicker("Devices on this network", selection: model.binding(\.devicesNearbyControl), options: [
@@ -1635,48 +1293,6 @@ private struct DevicesSettings: View {
 /// business, and the TUI has none of it to draw, so it sits in defaults beside
 /// the other view state rather than in the file the CLI shares.
 
-#if os(iOS)
-/// "Theme tint": how far the kōan theme holds the wash to its contrast limit.
-/// Saved when the drag ends, so a drag is one bake and one write, not one per
-/// step.
-private struct WashTintSlider: View {
-    @Environment(AppearanceModel.self) private var appearance
-    @State private var draft: Double?
-    @State private var dragging = false
-
-    var body: some View {
-        let shown = Int(draft ?? Double(appearance.washTint))
-        LabeledContent {
-            KoanSlider(
-                "Theme tint",
-                value: Binding(
-                    get: { draft ?? Double(appearance.washTint) },
-                    set: { new in
-                        draft = new
-                        if !dragging { commit() }
-                    }
-                ),
-                in: 0...100,
-                step: 5,
-                onEditingChanged: { editing in
-                    dragging = editing
-                    if !editing { commit() }
-                },
-                low: { Text("full colour").koanText(.fine, .muted) },
-                high: { Text("held").koanText(.fine, .muted) }
-            )
-        } label: {
-            Text("Theme tint \(shown)%")
-        }
-    }
-
-    private func commit() {
-        guard let draft else { return }
-        self.draft = nil
-        appearance.washTint = Int(draft.rounded())
-    }
-}
-#endif
 
 private struct AppearanceSettings: View {
     @AppStorage("graphics") private var graphics = Graphics.full
@@ -1704,11 +1320,6 @@ private struct AppearanceSettings: View {
             }
             Section {
                 Toggle("Colours from the record", isOn: $appearance.recordColours).koanToggle()
-                #if os(iOS)
-                if KoanTheme.isOn, appearance.recordColours {
-                    WashTintSlider()
-                }
-                #endif
             } header: {
                 KoanSectionHeader("Colour")
             } footer: {
@@ -1720,21 +1331,7 @@ private struct AppearanceSettings: View {
                 // value: the raw values are what is on disk and cannot be
                 // reordered, and the cheapest step was added last. tvOS has
                 // no slider; a picker in the same order stands in.
-                #if os(tvOS)
                 KoanPicker("Level", selection: $graphics, options: Graphics.allCases.map { ($0.label, $0) })
-                #else
-                KoanSlider(
-                    "Level",
-                    value: Binding(
-                        get: { Double(Graphics.allCases.firstIndex(of: graphics) ?? 0) },
-                        set: { graphics = Graphics.allCases[Int($0.rounded())] }
-                    ),
-                    in: 0...Double(Graphics.allCases.count - 1),
-                    step: 1,
-                    low: { Text(Graphics.allCases.first?.label ?? "").koanText(.fine, .muted).koanCase() },
-                    high: { Text(Graphics.allCases.last?.label ?? "").koanText(.fine, .muted).koanCase() }
-                )
-                #endif
                 Text("**\(graphics.label)** — \(graphics.detail)")
                     .koanText(.fine, .muted)
                     .fixedSize(horizontal: false, vertical: true)

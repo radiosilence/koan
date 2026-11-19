@@ -235,16 +235,6 @@ struct InviteSheet: View {
                         caption: "Scan with a phone's camera to open it there."
                     )
                     .frame(maxWidth: .infinity)
-                    #if os(iOS)
-                    ShareLink(
-                        item: invite.emailText,
-                        subject: Text(invite.emailSubject),
-                        message: Text(invite.emailText)
-                    ) {
-                        KoanLabel("Send Invite…", icon: Icon.export)
-                    }
-                    .koanButton(.prominent)
-                    #endif
                     if let mail = URL(string: invite.mailto) {
                         Link(destination: mail) { KoanLabel("Open in Mail", icon: Icon.mail) }
                             .koanButton(.link)

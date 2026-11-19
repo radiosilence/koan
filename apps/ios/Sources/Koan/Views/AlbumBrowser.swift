@@ -65,9 +65,6 @@ struct AlbumBrowser: View {
             if let y = library.albumsOffset { position.scrollTo(y: y) }
         }
         .onChange(of: nav.rewinds[.albums]) { position.scrollTo(edge: .top) }
-        #if os(iOS)
-        .playableSelectMode(library.selection, engine: library.engine, available: !library.visibleAlbums.isEmpty)
-        #endif
     }
 }
 

@@ -53,11 +53,7 @@ struct DspProfilePage: View {
     /// On a phone the keyboard, the graph and the page share the screen: the
     /// graph goes short while anything is typed, so its field stays in sight.
     private var typing: Bool {
-        #if os(iOS)
-        bandFocus != nil || nameFocused
-        #else
         false
-        #endif
     }
 
     private static let nameRow = "name"
@@ -100,7 +96,6 @@ struct DspProfilePage: View {
                     if let layout = d.channels, !d.readOnly {
                         channels(layout)
                     }
-                    #if os(tvOS)
                     if let r = response {
                         Section {
                             EqEditor(
@@ -109,12 +104,6 @@ struct DspProfilePage: View {
                             )
                         }
                     }
-                    #endif
-                    #if os(iOS)
-                    if !d.readOnly, before != now || (d.canRevert && d.edited) {
-                        keeping(d)
-                    }
-                    #endif
                     if let problem = d.problem {
                         Section {
                             Label(problem, koan: Icon.warningFilled)
@@ -195,61 +184,8 @@ struct DspProfilePage: View {
                 withAnimation(KoanTheme.Motion.normal) { proxy.scrollTo(Self.nameRow) }
             }
         }
-        #if os(iOS)
-        // The graph stays in view while the bands scroll under it: what an
-        // edit does is the point of making it.
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if let d = detail, let r = response {
-                EqEditor(
-                    dsp: dsp, name: name, detail: d, response: r, parts: onCorrection(d, r),
-                    channel: d.channels?.stereo == true ? channel : nil,
-                    compact: typing
-                )
-                    .padding(.horizontal, KoanTheme.Space.l)
-                    .padding(.vertical, typing ? KoanTheme.Space.s : KoanTheme.Space.m)
-                    .koanMaterial(.bar)
-                    .koanRule(.bottom)
-                    .koanAnimation(KoanTheme.Motion.normal, value: typing)
-            }
-        }
-        .decimalPadDone($bandFocus, order: detail.map {
-            BandTable.fields($0.bands, channel: $0.channels?.stereo == true ? channel : nil, readOnly: $0.readOnly)
-        } ?? [])
-        #endif
         .navigationTitle(name)
         .task(id: "\(name)\u{0}\(dsp.stamp)") { await load() }
-        #if os(iOS)
-        .filePicker(
-            isPresented: $addingTarget,
-            allowedContentTypes: [.commaSeparatedText, .plainText, .text, .item],
-            allowsMultipleSelection: false
-        ) { result in
-            if case let .success(urls) = result, let url = urls.first {
-                Task { await dsp.addTarget(url) }
-            }
-        }
-        .formTray(isPresented: $splitting) {
-            SplitFlow(dsp: dsp, name: name)
-        }
-        #endif
-        #if os(iOS)
-        .alert("Save as Copy", isPresented: $copying) {
-            TextField("Name", text: $copyName)
-            Button("Save") { saveCopy() }
-                .disabled(copyTaken)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(copyTaken
-                 ? "There is already an EQ called \(copyName.trimmingCharacters(in: .whitespaces))."
-                 : "The copy takes this EQ's place in the filters, and this one goes back to how it was.")
-        }
-        .confirmationDialog("Reset \(name) to its file?", isPresented: $confirmingReset, titleVisibility: .visible) {
-            Button("Reset", role: .destructive) {
-                dsp.revert(name)
-                before = nil
-            }
-        }
-        #endif
         .confirmationDialog(
             "Keep which channel?",
             isPresented: $askingKeep,
@@ -483,9 +419,6 @@ private struct GroupSection: View {
                 ),
                 values: detail.layers.map(\.profile)
             ) { Text($0) }
-            #if os(iOS)
-            Button("Play Them All in Order") { dsp.setGroup(detail.name, false) }
-            #endif
         } header: {
             KoanSectionHeader("Group: pick one")
         } footer: {
@@ -564,36 +497,8 @@ private struct LayersSection: View {
                         }
                     }
                 }
-                #if os(iOS)
-                // Remove, never Delete: the layer leaves this stack, and the
-                // EQ itself stays.
-                .contextMenu {
-                    Button("Move Up") { move(index, by: -1) }
-                        .disabled(index == 0)
-                    Button("Move Down") { move(index, by: 1) }
-                        .disabled(index == layers.count - 1)
-                    Button("Remove") { remove(index) }
-                }
-                #endif
-                #if os(iOS)
-                .swipeActions(edge: .trailing) {
-                    Button("Remove", role: .destructive) { remove(index) }
-                }
-                #endif
             }
-            #if os(iOS)
-            .onMove { from, to in
-                var changed = layers
-                changed.move(fromOffsets: from, toOffset: to)
-                dsp.setLayers(detail.name, changed)
-            }
-            #endif
             if !addable.isEmpty { addMenu }
-            #if os(iOS)
-            if layers.count > 1 {
-                Button("Make It a Group, One Playing at a Time") { dsp.setGroup(detail.name, true) }
-            }
-            #endif
         } header: {
             KoanSectionHeader("Plays first")
         } footer: {
@@ -824,12 +729,6 @@ private struct RoleSection: View {
     private func madeAgainstRow(_ id: String) -> some View {
         HStack(spacing: KoanTheme.Space.m) {
             madeForChoices.row(id)
-            #if os(iOS)
-            Spacer(minLength: 0)
-            if let db = previews[id] {
-                CurveThumb(db: db, stroke: .eq(1), range: previewRange)
-            }
-            #endif
         }
     }
 
@@ -856,11 +755,6 @@ private struct RoleSection: View {
                     .koanButton(.link)
                 }
             }
-            #if os(iOS)
-            if detail.role == .baked, detail.impulses.isEmpty, detail.layers.isEmpty {
-                Button("Split into Correction + Tuning…") { splitting = true }
-            }
-            #endif
             if detail.role == .correction {
                 if let targets {
                     KoanListPicker(
@@ -880,9 +774,6 @@ private struct RoleSection: View {
                             .font(.role(.control, system: .callout))
                             .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     }
-                    #if os(iOS)
-                    Button("Add a Target…") { adding = true }
-                    #endif
                 }
                 if targets == nil, !detail.measured, !madeForChoices.isEmpty {
                     KoanListPicker(

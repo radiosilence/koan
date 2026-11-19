@@ -30,27 +30,6 @@ enum KoanTheme {
         setTextSize(Int(appearance.textSize))
         guard isOn else { return }
         registerFace()
-        #if os(iOS)
-        // Navigation titles and subtitles are UIKit's, drawn from the bar's
-        // appearances: the system's own two, at rest and at the scroll edge,
-        // with the theme's type.
-        func themed(_ look: UINavigationBarAppearance) -> UINavigationBarAppearance {
-            look.largeTitleTextAttributes = [.font: UIFont.koan(.display), .foregroundColor: UIColor.koanStrong]
-            look.titleTextAttributes = [.font: UIFont.koan(.control), .foregroundColor: UIColor.koanStrong]
-            look.largeSubtitleTextAttributes = [.font: UIFont.koan(.fine), .foregroundColor: UIColor.koanMuted]
-            look.subtitleTextAttributes = [.font: UIFont.koan(.fine), .foregroundColor: UIColor.koanMuted]
-            return look
-        }
-        let rest = UINavigationBarAppearance()
-        rest.configureWithDefaultBackground()
-        let edge = UINavigationBarAppearance()
-        edge.configureWithTransparentBackground()
-        let bar = UINavigationBar.appearance()
-        bar.standardAppearance = themed(rest)
-        bar.compactAppearance = themed(rest.copy())
-        bar.scrollEdgeAppearance = themed(edge)
-        bar.compactScrollEdgeAppearance = themed(edge.copy())
-        #else
         // Each page's title is UIKit's, in the theme's type. The tabs are the
         // theme's own (`TelevisionTabs`): no appearance reaches the glass
         // capsule or the white platter of the platform's.
@@ -63,7 +42,6 @@ enum KoanTheme {
         UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).defaultTextAttributes = [
             .font: UIFont.koan(.title), .foregroundColor: UIColor.koanInk,
         ]
-        #endif
     }
 
     /// Geist Mono, bundled beside the app: the site's own file, which Core
@@ -93,21 +71,13 @@ enum KoanTheme {
     /// back is a bare chevron that names nothing. A title that says more than
     /// the tab (a search's query, what the queue follows) is the page's own.
     nonisolated static func tabRootTitle(_ text: String) -> String {
-        #if os(iOS)
-        isOn ? "" : text
-        #else
         label(text)
-        #endif
     }
 
     /// How strongly the wash shows through where the design leaves the ground
     /// bare: the share of the toned sleeve mixed over `bg`.
     static var wash: Double {
-        #if os(tvOS)
         0.5
-        #else
-        0.6
-        #endif
     }
 
     /// What the Mac's type is drawn at, against the scale's points. Geist Mono
@@ -407,15 +377,11 @@ struct KoanLabel: View {
         } else if style == .compact {
             Label(title, systemImage: icon).labelStyle(.iconOnly) // theme: raw
         } else {
-            #if os(tvOS)
             if style == .row {
                 Label(title, systemImage: icon).labelStyle(TelevisionRowLabelStyle()) // theme: raw
             } else {
                 Label(title, systemImage: icon) // theme: raw
             }
-            #else
-            Label(title, systemImage: icon) // theme: raw
-            #endif
         }
     }
 }
@@ -429,16 +395,11 @@ private struct KoanLabelStyle: LabelStyle {
         switch (icons, style) {
         case (false, _): Label(configuration).labelStyle(.titleOnly)
         case (true, .compact): Label(configuration).labelStyle(.iconOnly)
-        #if os(tvOS)
         case (true, .full), (true, .row): Label(configuration).labelStyle(TelevisionRowLabelStyle())
-        #else
-        case (true, .full), (true, .row): Label(configuration).labelStyle(.titleAndIcon)
-        #endif
         }
     }
 }
 
-#if os(tvOS)
 /// The icon in a column of its own: see `KoanLabel.Style.row`.
 private struct TelevisionRowLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
@@ -448,7 +409,6 @@ private struct TelevisionRowLabelStyle: LabelStyle {
         }
     }
 }
-#endif
 
 // MARK: - Colour
 
@@ -699,11 +659,7 @@ enum KoanType {
     /// Points, at the distance the device is read from: a television is read
     /// from across a room, so its scale is the same steps, larger.
     var size: CGFloat {
-        #if os(tvOS)
         base * 1.8
-        #else
-        base * KoanTheme.textScale
-        #endif
     }
 
     private var base: CGFloat {
@@ -833,12 +789,8 @@ extension UIFont {
             ? UIFont.monospacedSystemFont(ofSize: role.size, weight: weight)
             : UIFont(descriptor: wanted, size: role.size)
         let style: UIFont.TextStyle = switch role.scalesWith {
-        #if os(tvOS)
         // tvOS has no Large Title style; Title 1 is its largest.
         case .largeTitle: .title1
-        #else
-        case .largeTitle: .largeTitle
-        #endif
         case .title: .title1
         case .title2: .title2
         case .callout: .callout
@@ -988,15 +940,7 @@ extension View {
     /// platform's look.
     @ViewBuilder
     func koanMenuButton(_ kind: KoanButtonKind) -> some View {
-        #if os(tvOS)
         self
-        #else
-        if KoanTheme.isOn {
-            menuStyle(KoanMenuButtonStyle(kind: kind))
-        } else {
-            self
-        }
-        #endif
     }
 
     /// A list as the theme lays one out: rows on the ground with rules between
@@ -1010,11 +954,7 @@ extension View {
     /// affordable (`glass`), and the platform's own where it is not.
     @ViewBuilder
     func koanToolbar(glass: Bool) -> some View {
-        #if os(tvOS)
         self
-        #else
-        modifier(KoanToolbarRole(glass: glass))
-        #endif
     }
 
     /// Where content scrolling under a bar at the foot meets it: the hard
@@ -1064,14 +1004,7 @@ struct KoanSheetAction<Content: View>: ToolbarContent {
 
     var body: some ToolbarContent {
         // A television's bar has no glass to take away, and its own focus.
-        #if os(tvOS)
         ToolbarItem(placement: placement, content: content)
-        #else
-        ToolbarItem(placement: placement) {
-            content().koanButtons(.text)
-        }
-        .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
-        #endif
     }
 }
 
@@ -1246,9 +1179,7 @@ private struct KoanButtonBody: View {
     @Environment(\.koanAccent) private var accent
     @Environment(\.koanRainbow) private var rainbow
     @Environment(\.colorScheme) private var scheme
-    #if os(tvOS)
     @Environment(\.isFocused) private var focused
-    #endif
     @State private var hovering = false
 
     var body: some View {
@@ -1297,11 +1228,7 @@ private struct KoanButtonBody: View {
     }
 
     private var focusedNow: Bool {
-        #if os(tvOS)
         focused
-        #else
-        false
-        #endif
     }
 
     private func foreground(_ configuration: ButtonStyleConfiguration) -> AnyShapeStyle {
@@ -1341,9 +1268,6 @@ private struct KoanButtonBody: View {
         case .icon, .iconOutlined, .toolbar: 44
         // The small actions beside a title or a row, which a finger still
         // has to land on.
-        #if os(iOS)
-        case .compact, .link: 44
-        #endif
         default: nil
         }
     }
@@ -1388,11 +1312,7 @@ struct KoanToggleStyle: ToggleStyle {
     /// A finger's target on a phone; a pointer needs no more than the row.
     private static let hit: CGFloat = 44
     /// The box, at the distance the device is read from.
-    #if os(tvOS)
     private static let box: CGFloat = 26
-    #else
-    private static let box: CGFloat = 14
-    #endif
 
     func makeBody(configuration: Configuration) -> some View {
         Button {
@@ -1407,12 +1327,8 @@ struct KoanToggleStyle: ToggleStyle {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 ZStack {
                     if configuration.isOn {
-                        #if os(tvOS)
                         // The accent's own colour: a television sets no tint.
                         Rectangle().fill(accent.color)
-                        #else
-                        Rectangle().fill(.tint)
-                        #endif
                         KoanIcon(Icon.check)
                             .font(.system(size: Self.box * 0.64, weight: .bold))
                             .foregroundStyle(Color.koanBg)
@@ -1425,12 +1341,7 @@ struct KoanToggleStyle: ToggleStyle {
             .frame(minHeight: Self.hit)
             .contentShape(Rectangle())
         }
-        #if os(tvOS)
         .buttonStyle(TelevisionRow())
-        #else
-        .buttonStyle(.plain)
-        .opacity(enabled ? 1 : 0.4)
-        #endif
         .koanAnimation(KoanTheme.Motion.fast, value: configuration.isOn)
         .accessibilityValue(configuration.isOn ? "On" : "Off")
         .accessibilityAddTraits(.isToggle)
@@ -1499,11 +1410,7 @@ struct KoanIconToggle: View {
 
     /// The tint, which a television never sets: there, the accent's own colour.
     private var lit: AnyShapeStyle {
-        #if os(tvOS)
         AnyShapeStyle(accent.color)
-        #else
-        AnyShapeStyle(.tint)
-        #endif
     }
 
     var body: some View {
@@ -1526,9 +1433,6 @@ struct KoanIconToggle: View {
                     .contentShape(Rectangle())
             }
         }
-        #if os(iOS)
-        .buttonStyle(.plain)
-        #endif
         .help(label)
         .accessibilityLabel(label)
         .accessibilityValue(isOn ? "On" : "Off")
@@ -1560,41 +1464,11 @@ struct KoanPicker<Value: Hashable>: View {
     }
 
     var body: some View {
-        #if os(tvOS)
         if KoanTheme.isOn {
             TelevisionPicker(title: title, selection: $selection, options: options.map { (shown($0.label), $0.value) })
         } else {
             picker
         }
-        #else
-        if KoanTheme.isOn {
-            LabeledContent {
-                Menu {
-                    Picker(title, selection: $selection) {
-                        ForEach(options, id: \.value) { Text(shown($0.label)).textCase(nil).tag($0.value) }
-                    }
-                    .pickerStyle(.inline)
-                } label: {
-                    HStack(spacing: KoanTheme.Space.xs) {
-                        // Cased by `shown` alone: a menu's label takes the
-                        // case of the button style around it.
-                        Text(shown(options.first { $0.value == selection }?.label ?? ""))
-                            .textCase(nil)
-                            .lineLimit(1)
-                        KoanIcon(Icon.choose).font(.koan(.fine))
-                    }
-                    .font(.koan(.control))
-                    .foregroundStyle(Color.koanInk)
-                }
-                .koanMenuButton(.bordered)
-                .tint(Color.koanInk)
-            } label: {
-                Text(title)
-            }
-        } else {
-            picker
-        }
-        #endif
     }
 
     private func shown(_ label: String) -> String {
@@ -1624,24 +1498,7 @@ struct KoanListPicker<Value: Hashable, Row: View>: View {
     @ViewBuilder let row: (Value) -> Row
 
     var body: some View {
-        #if os(iOS)
-        if KoanTheme.isOn {
-            NavigationLink {
-                KoanListPickerPage(title: title, selection: $selection, sections: sections, row: row)
-                    .koanPushedPage()
-            } label: {
-                LabeledContent(title) {
-                    Text(name(selection))
-                        .koanText(.control, .muted)
-                        .lineLimit(1)
-                }
-            }
-        } else {
-            picker.pickerStyle(.navigationLink)
-        }
-        #else
         picker
-        #endif
     }
 
     private var picker: some View {
@@ -1661,50 +1518,7 @@ struct KoanListPicker<Value: Hashable, Row: View>: View {
     }
 }
 
-#if os(iOS)
-/// The options of a `KoanListPicker`, as a page: the chosen one ticked, and
-/// back to the page before on a choice, as the platform's picker goes.
-private struct KoanListPickerPage<Value: Hashable, Row: View>: View {
-    let title: String
-    @Binding var selection: Value
-    let sections: [(title: String?, values: [Value])]
-    @ViewBuilder let row: (Value) -> Row
-    @Environment(\.dismiss) private var dismiss
 
-    var body: some View {
-        KoanForm {
-            ForEach(sections.indices, id: \.self) { i in
-                Section {
-                    ForEach(sections[i].values, id: \.self) { value in
-                        Button {
-                            selection = value
-                            dismiss()
-                        } label: {
-                            HStack(spacing: KoanTheme.Space.m) {
-                                row(value)
-                                Spacer(minLength: 0)
-                                if value == selection {
-                                    KoanIcon(Icon.check)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(value == selection ? .isSelected : [])
-                    }
-                } header: {
-                    if let heading = sections[i].title {
-                        KoanSectionHeader(KoanTheme.label(heading))
-                    }
-                }
-            }
-        }
-        .navigationTitle(KoanTheme.label(title))
-    }
-}
-#endif
-
-#if os(tvOS)
 private struct TelevisionPicker<Value: Hashable>: View {
     let title: String
     @Binding var selection: Value
@@ -1757,212 +1571,8 @@ struct TelevisionChoices<Value: Hashable>: View {
         }
     }
 }
-#endif
 
-#if os(iOS)
-/// A slider as the theme draws it: a 1-point `rule` track, a 3-point accent
-/// fill up to the value, and a square 8 × 8 `ink` thumb shown only on hover,
-/// focus or drag, in a 44-point hit area. The system's slider in the
-/// platform's look, and to assistive technologies in both.
-struct KoanSlider<End: View>: View {
-    let title: String
-    @Binding var value: Double
-    let range: ClosedRange<Double>
-    let step: Double?
-    let editing: (Bool) -> Void
-    @ViewBuilder let low: () -> End
-    @ViewBuilder let high: () -> End
-    @State private var hovering = false
-    @State private var dragging = false
-    @FocusState private var focused: Bool
-    @Environment(\.isEnabled) private var enabled
 
-    init(
-        _ title: String,
-        value: Binding<Double>,
-        in range: ClosedRange<Double>,
-        step: Double? = nil,
-        onEditingChanged editing: @escaping (Bool) -> Void = { _ in },
-        @ViewBuilder low: @escaping () -> End,
-        @ViewBuilder high: @escaping () -> End
-    ) {
-        self.title = title
-        _value = value
-        self.range = range
-        self.step = step
-        self.editing = editing
-        self.low = low
-        self.high = high
-    }
-
-    var body: some View {
-        if KoanTheme.isOn {
-            HStack(spacing: KoanTheme.Space.s) {
-                low()
-                track
-                high()
-            }
-            .opacity(enabled ? 1 : 0.4)
-            .accessibilityRepresentation { system }
-        } else {
-            system
-        }
-    }
-
-    private var system: some View {
-        Group {
-            if let step {
-                Slider(
-                    value: $value, in: range, step: step,
-                    label: { Text(title) }, minimumValueLabel: { low() }, maximumValueLabel: { high() },
-                    onEditingChanged: editing
-                )
-            } else {
-                Slider(
-                    value: $value, in: range,
-                    label: { Text(title) }, minimumValueLabel: { low() }, maximumValueLabel: { high() },
-                    onEditingChanged: editing
-                )
-            }
-        }
-    }
-
-    private var fraction: Double {
-        guard range.upperBound > range.lowerBound else { return 0 }
-        return ((value - range.lowerBound) / (range.upperBound - range.lowerBound)).clamped()
-    }
-
-    private var track: some View {
-        GeometryReader { geo in
-            let x = geo.size.width * fraction
-            ZStack(alignment: .leading) {
-                Rectangle().fill(Color.koanRule).frame(height: KoanTheme.hairline)
-                Rectangle().fill(.tint).frame(width: x, height: 3)
-                if hovering || dragging || focused {
-                    Rectangle()
-                        .fill(Color.koanInk)
-                        .frame(width: 8, height: 8)
-                        .offset(x: min(max(x - 4, 0), geo.size.width - 8))
-                }
-            }
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { drag in
-                        if !dragging {
-                            dragging = true
-                            editing(true)
-                        }
-                        set(drag.location.x / max(geo.size.width, 1))
-                    }
-                    .onEnded { drag in
-                        set(drag.location.x / max(geo.size.width, 1))
-                        dragging = false
-                        editing(false)
-                    }
-            )
-        }
-        .frame(height: 44)
-        .onHover { hovering = $0 }
-        .focusable()
-        .focused($focused)
-        .focusEffectDisabled()
-        .koanAnimation(KoanTheme.Motion.fast, value: hovering || dragging || focused)
-    }
-
-    private func set(_ share: Double) {
-        move(to: range.lowerBound + share.clamped() * (range.upperBound - range.lowerBound))
-    }
-
-    private func move(to raw: Double) {
-        var next = min(max(raw, range.lowerBound), range.upperBound)
-        if let step, step > 0 {
-            next = range.lowerBound + ((next - range.lowerBound) / step).rounded() * step
-        }
-        if next != value { value = next }
-    }
-}
-
-extension KoanSlider where End == EmptyView {
-    init(
-        _ title: String,
-        value: Binding<Double>,
-        in range: ClosedRange<Double>,
-        step: Double? = nil,
-        onEditingChanged editing: @escaping (Bool) -> Void = { _ in }
-    ) {
-        self.init(title, value: value, in: range, step: step, onEditingChanged: editing, low: { EmptyView() }, high: { EmptyView() })
-    }
-}
-#endif
-
-#if os(iOS)
-/// A stepper as the theme draws it: the label leading in `body`, then − and +
-/// as square `muted` outlines at the row's trailing edge, each within a
-/// 44-point hit area on a phone. The system's stepper in the platform's look.
-/// tvOS has no stepper.
-struct KoanStepper<Value: Strideable>: View {
-    let title: String
-    @Binding var value: Value
-    let range: ClosedRange<Value>
-    let step: Value.Stride
-    @Environment(\.isEnabled) private var enabled
-    private static var hit: CGFloat { 44 }
-
-    init(_ title: String, value: Binding<Value>, in range: ClosedRange<Value>, step: Value.Stride = 1) {
-        self.title = title
-        _value = value
-        self.range = range
-        self.step = step
-    }
-
-    var body: some View {
-        if KoanTheme.isOn {
-            HStack(spacing: KoanTheme.Space.xs) {
-                Text(title)
-                    .font(.koan(.body))
-                    .foregroundStyle(Color.koanInk)
-                    .textCase(.lowercase)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                button(Icon.subtract, by: -step, allowed: value > range.lowerBound)
-                button(Icon.add, by: step, allowed: value < range.upperBound)
-            }
-            .opacity(enabled ? 1 : 0.4)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(title)
-            .accessibilityAdjustableAction { direction in
-                switch direction {
-                case .increment: move(by: step)
-                case .decrement: move(by: -step)
-                @unknown default: break
-                }
-            }
-        } else {
-            Stepper(title, value: $value, in: range, step: step).koanControl()
-        }
-    }
-
-    private func button(_ symbol: String, by delta: Value.Stride, allowed: Bool) -> some View {
-        Button { move(by: delta) } label: {
-            KoanIcon(symbol)
-                .font(.system(size: 11))
-                .foregroundStyle(Color.koanInk)
-                .frame(width: 28, height: 28)
-                .overlay { Rectangle().strokeBorder(Color.koanMuted, lineWidth: KoanTheme.hairline) }
-                .frame(minWidth: Self.hit, minHeight: Self.hit)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!allowed)
-        .opacity(allowed ? 1 : 0.4)
-    }
-
-    private func move(by delta: Value.Stride) {
-        value = min(max(value.advanced(by: delta), range.lowerBound), range.upperBound)
-    }
-}
-#endif
 
 private struct KoanRowRole: ViewModifier {
     let selected: Bool
@@ -1972,9 +1582,6 @@ private struct KoanRowRole: ViewModifier {
             content
                 .background(fill)
                 .koanRule(.bottom)
-                #if os(iOS)
-                .listRowSeparator(.hidden)
-                #endif
                 .listRowBackground(fill)
         } else {
             content
@@ -1992,13 +1599,7 @@ private struct KoanSidebarRole: ViewModifier {
 
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
-            #if os(tvOS)
             content.background(Color.koanBg)
-            #else
-            content
-                .scrollContentBackground(.hidden)
-                .background(KoanTheme.washesWindow(appearance) ? Color.clear : Color.koanBg)
-            #endif
         } else {
             content
         }
@@ -2027,20 +1628,14 @@ private struct KoanNavRowRole: ViewModifier {
 }
 
 private struct KoanFocusRole: ViewModifier {
-    #if os(tvOS)
     @Environment(\.isFocused) private var focused
-    #endif
 
     func body(content: Content) -> some View {
-        #if os(tvOS)
         if KoanTheme.isOn {
             content.koanFocusRing(focused)
         } else {
             content
         }
-        #else
-        content
-        #endif
     }
 }
 
@@ -2061,11 +1656,7 @@ private struct KoanFocusRing: ViewModifier {
     @Environment(\.koanAccent) private var accent
 
     func body(content: Content) -> some View {
-        #if os(tvOS)
         let standoff = gap ?? 8
-        #else
-        let standoff = gap ?? 4
-        #endif
         content.overlay {
             if on {
                 Rectangle().strokeBorder(accent.color, lineWidth: 2).padding(-standoff)
@@ -2138,18 +1729,10 @@ private struct KoanBarRole: ViewModifier {
 private struct KoanFormRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
-            #if os(tvOS)
             // A television's form has no ground or separators to take over.
             content
                 .font(.koan(.body))
                 .foregroundStyle(Color.koanInk)
-            #else
-            // Rows give up their ground through `washedRow`, on the content.
-            content
-                .scrollContentBackground(.hidden)
-                .font(.koan(.body))
-                .foregroundStyle(Color.koanInk)
-            #endif
         } else {
             content.formStyle(.grouped)
         }
@@ -2159,16 +1742,7 @@ private struct KoanFormRole: ViewModifier {
 private struct KoanListRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
-            #if os(tvOS)
             content.font(.koan(.body))
-            #else
-            // Rows give up their ground through `washedRow`, on the content.
-            content
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .listRowSeparatorTint(Color.koanRowRule)
-                .font(.koan(.body))
-            #endif
         } else {
             content
         }
@@ -2184,15 +1758,12 @@ struct KoanFieldShown {
 private struct KoanFieldRole: ViewModifier {
     let shown: KoanFieldShown?
     var ground = true
-    #if os(tvOS)
     /// A plain field draws no focus of its own on a television; the ring is
     /// all that says which field the remote is on.
     @FocusState private var focused: Bool
-    #endif
 
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
-            #if os(tvOS)
             if let shown {
                 // Faint rather than hidden: UIKit's focus passes over a view
                 // all but transparent. Without the system's focus effect,
@@ -2207,9 +1778,6 @@ private struct KoanFieldRole: ViewModifier {
             } else {
                 box(content.textFieldStyle(.plain).focused($focused))
             }
-            #else
-            box(content.textFieldStyle(.plain))
-            #endif
         } else {
             content
         }
@@ -2225,9 +1793,7 @@ private struct KoanFieldRole: ViewModifier {
             // through every safe-area edge the field touches, and paints
             // whatever bar or inset lies beyond it.
             .background(ground ? Color.koanSurface : Color.clear, ignoresSafeAreaEdges: [])
-            #if os(tvOS)
             .koanFocusRing(focused)
-            #endif
     }
 
     private static func text(_ shown: KoanFieldShown) -> String {
@@ -2236,18 +1802,6 @@ private struct KoanFieldRole: ViewModifier {
     }
 }
 
-#if os(iOS)
-private struct KoanMenuButtonStyle: MenuStyle {
-    let kind: KoanButtonKind
-
-    func makeBody(configuration: Configuration) -> some View {
-        Menu(configuration) // theme: raw — the role's own menu
-            .menuStyle(.button)
-            .buttonStyle(KoanButtonStyle(kind: kind))
-            .menuIndicator(.hidden)
-    }
-}
-#endif
 
 private struct KoanControlRole: ViewModifier {
     func body(content: Content) -> some View {
@@ -2273,30 +1827,6 @@ struct KoanDivider: View {
     }
 }
 
-#if os(iOS)
-private struct KoanToolbarRole: ViewModifier {
-    let glass: Bool
-    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
-
-    func body(content: Content) -> some View {
-        let bar = ToolbarPlacement.navigationBar
-        if KoanTheme.washesWindow(appearance) {
-            // No ground and no edge: the wash runs under the toolbar, and the
-            // page stops below it rather than fading out beneath it (see
-            // `clearsTransport`).
-            content
-                .toolbarBackgroundVisibility(.hidden, for: bar)
-                .scrollEdgeEffectHidden(true, for: .top)
-        } else if KoanTheme.isOn {
-            content
-                .toolbarBackground(Color.koanBg, for: bar)
-                .toolbarBackgroundVisibility(.visible, for: bar)
-        } else {
-            content.toolbarBackgroundVisibility(glass ? .hidden : .automatic, for: bar)
-        }
-    }
-}
-#endif
 
 extension KoanTheme {
     /// Whether a toolbar item sits on a pane of glass: never in the theme.
@@ -2345,15 +1875,9 @@ private struct KoanSheetRole: ViewModifier {
             content
                 .font(.koan(.body))
                 .foregroundStyle(Color.koanInk)
-                #if os(tvOS)
                 // Only where it is presented: a settings page takes this too,
                 // and its ground is the wash.
                 .presentationBackground(Color.koanBg)
-                #else
-                .presentationBackground(Color.koanBg)
-                .presentationCornerRadius(0)
-                .scrollContentBackground(.hidden)
-                #endif
         } else {
             content
         }
@@ -2391,20 +1915,10 @@ struct KoanTabItem: View {
     /// text; the others share the bar's width.
     @ViewBuilder
     private var item: some View {
-        #if os(tvOS)
         name
             .font(.koan(.body))
             .padding(.horizontal, KoanTheme.Space.l)
             .padding(.vertical, KoanTheme.Space.s)
-        #else
-        VStack(spacing: KoanTheme.Space.xs) {
-            if icons, let icon {
-                KoanIcon(icon).font(.koan(.body))
-            }
-            name.font(.koan(.fine))
-        }
-        .frame(maxWidth: .infinity, minHeight: 44)
-        #endif
     }
 
     private var name: some View {
@@ -2431,69 +1945,10 @@ extension View {
     /// otherwise.
     @ViewBuilder
     func koanBackButton() -> some View {
-        #if os(iOS)
-        modifier(KoanBackButton())
-        #else
         self
-        #endif
     }
 }
 
-#if os(iOS)
-
-private struct KoanBackButton: ViewModifier {
-    @Environment(\.dismiss) private var dismiss
-
-    func body(content: Content) -> some View {
-        if KoanTheme.isOn {
-            content
-                .navigationBarBackButtonHidden()
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { dismiss() } label: {
-                            KoanIcon(Icon.back)
-                                .font(.koan(.titleSmall))
-                                .foregroundStyle(Color.koanInk)
-                                .frame(width: 44, height: 44, alignment: .leading)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Back")
-                    }
-                    .sharedBackgroundVisibility(.hidden)
-                }
-                .background { SwipeBack() }
-        } else {
-            content
-        }
-    }
-}
-
-/// The edge swipe a hidden back button takes with it, given back: the stack's
-/// pop gesture, answered by a delegate that allows it wherever there is a page
-/// to go back to.
-private struct SwipeBack: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> Controller { Controller() }
-    func updateUIViewController(_ controller: Controller, context: Context) {}
-
-    final class Controller: UIViewController {
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            navigationController?.interactivePopGestureRecognizer?.delegate = Allow.shared
-        }
-    }
-
-    /// One, held for good: the gesture holds its delegate weakly, and outlives
-    /// every page that set it.
-    @MainActor final class Allow: NSObject, UIGestureRecognizerDelegate {
-        static let shared = Allow()
-
-        func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
-            ((gesture.view?.next as? UINavigationController)?.viewControllers.count ?? 0) > 1
-        }
-    }
-}
-#endif
 
 extension View {
     /// A page's search field. In the theme on iOS and the Mac, a bare field on
@@ -2508,71 +1963,11 @@ extension View {
         prompt: String,
         onSubmit: @escaping () -> Void = {}
     ) -> some View {
-        #if os(iOS)
-        if KoanTheme.isOn {
-            safeAreaInset(edge: .top, spacing: 0) {
-                KoanSearchField(text: text, prompt: prompt, onSubmit: onSubmit)
-                    .padding(.horizontal, KoanTheme.Space.page)
-                    .padding(.vertical, KoanTheme.Space.s)
-            }
-        } else {
-            searchable(text: text, placement: placement, prompt: prompt)
-                .onSubmit(of: .search, onSubmit)
-        }
-        #else
         searchable(text: text, placement: placement, prompt: KoanTheme.label(prompt))
             .onSubmit(of: .search, onSubmit)
-        #endif
     }
 }
 
-#if os(iOS)
-/// The theme's search field: a glyph, the field and, once there is something
-/// to clear, a bare clear button, on the page's ground. Given a focus binding, the
-/// field takes it, for callers that move the keyboard to it.
-struct KoanSearchField: View {
-    @Binding var text: String
-    let prompt: String
-    var focus: FocusState<Bool>.Binding?
-    let onSubmit: () -> Void
-
-    var body: some View {
-        HStack(spacing: KoanTheme.Space.s) {
-            KoanIcon(Icon.search)
-                .foregroundStyle(Color.koanMuted)
-                .accessibilityHidden(true)
-            field
-                .onSubmit(onSubmit)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .submitLabel(.search)
-                .textInputAutocapitalization(.never)
-                #endif
-                .accessibilityLabel(prompt)
-            if !text.isEmpty {
-                Button { text = "" } label: {
-                    KoanIcon(Icon.close)
-                        .foregroundStyle(Color.koanMuted)
-                        .frame(minWidth: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear")
-            }
-        }
-        .koanField(ground: false)
-    }
-
-    @ViewBuilder
-    private var field: some View {
-        if let focus {
-            TextField(KoanTheme.label(prompt), text: $text).focused(focus)
-        } else {
-            TextField(KoanTheme.label(prompt), text: $text)
-        }
-    }
-}
-#endif
 
 extension View {
     /// Hides the platform's tab bar where the theme draws its own (iOS), and
@@ -2603,7 +1998,6 @@ extension View {
 
 enum KoanPageGround { case wash, sheet }
 
-#if os(tvOS)
 extension EnvironmentValues {
     /// Told as a page pushed onto a tab comes on screen and goes: the theme's
     /// tabs show at a tab's root only, as the platform's bar does.
@@ -2620,7 +2014,6 @@ private struct TelevisionPushedPage: ViewModifier {
             .onDisappear { shown(id, false) }
     }
 }
-#endif
 
 extension EnvironmentValues {
     @Entry var koanPageGround = KoanPageGround.wash
@@ -2635,21 +2028,9 @@ private struct KoanPushedPage: ViewModifier {
             .koanHidesSystemTabBar()
         switch ground {
         case .wash:
-            #if os(tvOS)
             page.roomBackground().modifier(TelevisionPushedPage())
-            #else
-            page.roomBackground()
-            #endif
         case .sheet:
-            #if os(iOS)
-            if KoanTheme.isOn {
-                page.containerBackground(Color.koanBg, for: .navigation)
-            } else {
-                page
-            }
-            #else
             page
-            #endif
         }
     }
 }
@@ -2664,16 +2045,6 @@ struct KoanForm<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        #if os(iOS)
-        if KoanTheme.isOn {
-            List { Group { content }.washedRow() }
-                .listStyle(.grouped)
-                .koanForm()
-                .labeledContentStyle(KoanRowLabelStyle())
-        } else {
-            Form { content }.koanForm()
-        }
-        #else
         // A television's `Form` draws every row on a grey platter and the
         // focused one white, whatever it is told; in the theme the sections
         // stack on the ground, as on the Mac, and each row is a control of
@@ -2695,7 +2066,6 @@ struct KoanForm<Content: View>: View {
         } else {
             Form { content }.koanForm()
         }
-        #endif
     }
 }
 
@@ -2746,31 +2116,6 @@ private struct KoanHidesSystemTabBar: ViewModifier {
     @Environment(\.koanBarHeight) private var bar
 
     func body(content: Content) -> some View {
-        #if os(iOS)
-        if KoanTheme.isOn {
-            content
-                // The page passes under the navigation bar behind a hard edge,
-                // rather than the platform's blur with it showing through. A
-                // bar background set here would replace the bar's appearance,
-                // and its Geist Mono titles with it.
-                .scrollEdgeEffectStyle(.hard, for: .top)
-                .toolbar(.hidden, for: .tabBar)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Color.clear.frame(height: bar)
-                }
-                // Room under the last row, so a page scrolled to its end
-                // stops short of the bar's rule rather than against it. On
-                // the scroll content alone: a bar a page pins to its foot
-                // still meets the mini player.
-                .contentMargins(.bottom, KoanTheme.Space.xxl, for: .scrollContent)
-                // The bar draws its own ground. The platform's edge effect
-                // would otherwise paint the inset as a grey band over the
-                // page's last rows, where content should pass under the bar.
-                .scrollEdgeEffectHidden(true, for: .bottom)
-        } else {
-            content
-        }
-        #else
         // The theme's tabs are drawn by the shell, above the pages; the
         // platform's are a glass capsule with a white platter for focus.
         if KoanTheme.isOn {
@@ -2778,7 +2123,6 @@ private struct KoanHidesSystemTabBar: ViewModifier {
         } else {
             content
         }
-        #endif
     }
 }
 

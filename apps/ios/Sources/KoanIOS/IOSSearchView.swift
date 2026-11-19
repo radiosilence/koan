@@ -23,9 +23,5 @@ struct IOSSearchView: View {
             )
     }
 
-    #if os(tvOS)
     private static let placement = SearchFieldPlacement.automatic
-    #else
-    private static let placement = SearchFieldPlacement.navigationBarDrawer(displayMode: .always)
-    #endif
 }

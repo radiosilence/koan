@@ -141,9 +141,6 @@ struct PlayableMenu: View {
             // Organize window to open.
             // The cache looks after itself on a television, which has nowhere
             // to keep a library for later.
-            #if os(iOS)
-            cacheActions
-            #endif
         }
 
         if case .track(let track) = playable, let albumId = track.albumId {
@@ -154,12 +151,6 @@ struct PlayableMenu: View {
             goToArtists(track.artistCredit)
         }
         // A television hosts no info view, and would be left a stray divider.
-        #if os(iOS)
-        if case .track(let track) = playable {
-            if track.albumId == nil { Divider() }
-            TrackInfoButton(trackId: track.id)
-        }
-        #endif
         if case .album(let album) = playable {
             Divider()
             Button { nav.open(album: album.id) } label: {
@@ -282,11 +273,7 @@ struct QueueActions: View {
 enum Share {
     /// What the share action says. A television has no pasteboard: there the
     /// link is shown as a code to scan rather than copied.
-    #if os(tvOS)
     static let label = "Share…"
-    #else
-    static let label = "Copy Share Link"
-    #endif
 
     /// Asks the remote server for a public link and copies it.
     ///
@@ -345,25 +332,12 @@ enum Share {
     private static func deliver(_ result: Result<KoanFFI.Share, Error>, to player: PlayerModel) {
         switch result {
         case .success(let share):
-            #if os(tvOS)
             player.sharedLink = share.url
             if share.skipped > 0 {
                 player.lastNotice =
                     "\(share.shared) of \(share.shared + share.skipped) tracks are shared; "
                     + "the rest aren't on your server."
             }
-            #else
-            Pasteboard.write(text: share.url)
-            // Done, so a notice rather than an error: reported as one, iOS
-            // would title the link "Something went wrong".
-            if share.skipped > 0 {
-                player.lastNotice =
-                    "Share link copied — \(share.shared) of \(share.shared + share.skipped) tracks; "
-                    + "the rest aren't on your server."
-            } else {
-                player.lastNotice = "Share link copied: \(share.url)"
-            }
-            #endif
         case .failure(let error):
             player.report("Couldn't create a share link — \(reason(for: error))")
         }
@@ -455,39 +429,10 @@ struct PlayableHeaderButton: View {
                 }
             }
         } label: {
-            #if os(tvOS)
             // A television's play is a labelled button leading the row of
             // actions, the first thing focus lands on in a record's header.
             Label(loading ? "Loading" : "Play", koan: Icon.play)
-            #else
-            ZStack {
-                // The theme's primary action: outlined in the accent, square.
-                if KoanTheme.isOn {
-                    Rectangle()
-                        .strokeBorder(.tint, lineWidth: KoanTheme.hairline)
-                        .frame(width: 44, height: 44)
-                } else {
-                    Circle()
-                        .fill(.tint)
-                        .frame(width: 44, height: 44)
-                }
-                if loading {
-                    ProgressView().controlSize(.small).tint(KoanTheme.metric(nil, system: .white))
-                } else {
-                    KoanIcon(Icon.play)
-                        .font(.system(size: 17))
-                        .foregroundStyle(KoanTheme.style(.accent, system: .white))
-                        .offset(x: 1)  // optical centring for a triangle
-                }
-            }
-            // The whole square or disc takes the click, not just the stroke
-            // and the glyph a plain button would hit-test.
-            .contentShape(KoanTheme.metric(AnyShape(Rectangle()), system: AnyShape(Circle())))
-            #endif
         }
-        #if os(iOS)
-        .buttonStyle(.plain)
-        #endif
         .help("Play \(playable.name)")
     }
 }
@@ -512,19 +457,8 @@ struct ShuffleHeaderButton: View {
                 }
             }
         } label: {
-            #if os(tvOS)
             Label("Shuffle", koan: Icon.shuffle)
-            #else
-            KoanIcon(Icon.shuffle)
-                .font(.system(size: 15))
-                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-            #endif
         }
-        #if os(iOS)
-        .buttonStyle(.plain)
-        #endif
         .disabled(player.resolving == playable.name)
         .help("Shuffle \(playable.name)")
     }
@@ -573,11 +507,6 @@ struct AddToPlaylistMenu: View {
 
     var body: some View {
         // A television plays playlists; they are made and filled elsewhere.
-        #if os(iOS)
-        Menu("Add to Playlist") { // theme: raw — a submenu
-            AddToPlaylistItems(sources: sources)
-        }
-        #endif
     }
 }
 

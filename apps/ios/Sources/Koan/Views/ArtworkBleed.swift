@@ -130,11 +130,7 @@ struct ArtworkBleed: View {
     /// saturated sleeve otherwise darkens a light page past what they read on.
     /// The Mac's wash fades out under its header and keeps its full colour.
     private var systemTone: WashTone? {
-        #if os(iOS)
-        scheme == .dark ? .dark : .light
-        #else
         nil
-        #endif
     }
 
     /// Only for a cover the cache could not already answer for. The usual path
@@ -157,13 +153,7 @@ extension View {
     /// instead of letting it fade out across the first few rows. Every list in
     /// the app sits in the wash, so every list gives its ground up.
     func washedGround() -> some View {
-        #if os(tvOS)
         // A tvOS list paints no ground of its own; the theme's sets its type.
         koanList()
-        #else
-        // And in the theme, the theme's list: rows on the ground, ruled.
-        scrollContentBackground(.hidden)
-            .koanList()
-        #endif
     }
 }

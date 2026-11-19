@@ -53,13 +53,6 @@ struct LinkDeviceSection: View {
                     caption: "Scan with your phone's camera to sign it in as \(username)."
                 )
                 .frame(maxWidth: .infinity)
-                #if os(iOS)
-                ShareLink(item: invite.qrLink) {
-                    KoanLabel("Share Link…", icon: Icon.export)
-                }
-                .koanButton(.bordered)
-                .frame(maxWidth: .infinity)
-                #endif
             } else {
                 ProgressView().frame(maxWidth: .infinity)
             }

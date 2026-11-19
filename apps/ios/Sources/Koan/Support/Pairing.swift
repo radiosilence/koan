@@ -50,8 +50,8 @@ extension AppState {
     /// typed code, and put the question to the person.
     func offerPairing(_ pair: String) async {
         let current = await engine.settings()
-        var host = URL(string: current.remoteUrl)?.host() ?? current.remoteUrl
-        var username = current.remoteUsername
+        let host = URL(string: current.remoteUrl)?.host() ?? current.remoteUrl
+        let username = current.remoteUsername
         do {
             let info = try await engine.pairingInfo(pair: pair)
             ui.pendingPairing = PairingRequest(

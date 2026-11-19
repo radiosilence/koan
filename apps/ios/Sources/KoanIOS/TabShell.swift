@@ -27,7 +27,6 @@ struct TabShell: View {
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(ActivityModel.self) private var activity
     @Environment(AppState.self) private var app
-    #if os(tvOS)
     /// Taken as signed in until the engine says otherwise, so a signed-in TV
     /// never flashes the sign-in page on launch.
     @State private var signedIn = true
@@ -38,21 +37,15 @@ struct TabShell: View {
     @State private var pushedShowing: Set<UUID> = []
     /// The bar's height as laid out, kept for the room it leaves.
     @State private var barHeight: CGFloat = 0
-    #endif
     @Environment(\.horizontalSizeClass) private var width
     @State private var showingNowPlaying = false
     @State private var showingDevices = false
     /// Which tab is showing. Held rather than derived from the navigator: a
     /// record belongs to whichever tab it was opened from, and the navigator
     /// cannot say which that was.
-    #if os(tvOS)
     @State private var selection: TabID = .nowPlaying
-    #else
-    @State private var selection: TabID = .queue
-    #endif
 
     var body: some View {
-        #if os(tvOS)
         // Signed out, the television has nothing to show but the way in: in
         // place of the tabs rather than over them, since Menu dismisses a
         // cover and would leave an empty room behind it.
@@ -66,24 +59,6 @@ struct TabShell: View {
         .toggleStyle(SystemSwitch())
         .buttonStyle(TelevisionButton())
         .task { await checkSignedIn() }
-        #else
-        // The theme's iPad draws its own sidebar beside the tabs, as the Mac's
-        // is drawn: the platform's is glass and SF, and folds into a floating
-        // capsule of tabs.
-        HStack(spacing: 0) {
-            if KoanTheme.isOn && sidebar {
-                PadSidebar(
-                    selection: tab,
-                    reselect: reselect,
-                    sections: Self.librarySections,
-                    play: { play($0, shuffled: $1) }
-                )
-                .frame(width: 260)
-                .koanRule(.trailing)
-            }
-            shell
-        }
-        #endif
     }
 
     private var shell: some View {
@@ -92,85 +67,26 @@ struct TabShell: View {
         // has no window to hang one wash on, and a stack paints its own ground
         // over anything placed behind it.
         TabView(selection: tab) {
-            #if os(tvOS)
             // The room's first page: what is playing, at the size a sofa reads.
             Tab(Self.title("Now Playing"), systemImage: Icon.nowPlaying, value: TabID.nowPlaying) { // theme: raw
                 NowPlayingPage()
                     .koanHidesSystemTabBar()
                     .onExitCommand(perform: toBar)
             }
-            #endif
             Tab(Self.title("Queue"), systemImage: Icon.queueSection, value: TabID.queue) { // theme: raw
                 stack(.queue) { QueueView() }
             }
-            #if os(tvOS)
             Tab(Self.title("Library"), systemImage: Icon.library, value: TabID.library) { // theme: raw
                 stack(.library) { LibraryTab() }
             }
-            #else
-            // Only lists what the sidebar shows as its own rows.
-            Tab("Library", systemImage: Icon.library, value: TabID.library) { // theme: raw
-                stack(.library) { LibraryTab() }
-            }
-            .hidden(sidebar)
-            TabSection {
-                ForEach(Self.librarySections, id: \.section) { item in
-                    Tab(item.title, systemImage: item.icon, value: TabID.section(item.section)) { // theme: raw
-                        stack(.section(item.section), grounded: false) { RouteView(route: .page(.section(item.section))) }
-                    }
-                    // Read only where it can show: each transfer starting or ending
-                    // would otherwise re-run the whole shell.
-                    .badge(sidebar && item.section == .downloads ? mirror.activeTransfers : 0)
-                }
-            } header: {
-                KoanSectionHeader("Library")
-            }
-            // With the sidebar folded away, the bar keeps the four tabs; its
-            // sidebar button is the way back to these.
-            .defaultVisibility(.hidden, for: .tabBar)
-            .hidden(!sidebar)
-            TabSection {
-                ForEach(playlists.playlists, id: \.id) { playlist in
-                    Tab(playlist.name, systemImage: Icon.playlist, value: TabID.section(.playlist(playlist.id))) { // theme: raw
-                        stack(.section(.playlist(playlist.id)), grounded: false) {
-                            RouteView(route: .page(.section(.playlist(playlist.id))))
-                        }
-                    }
-                    .contextMenu {
-                        Button("Play", koan: Icon.play) { play(playlist) }
-                        Button("Shuffle", koan: Icon.shuffle) { play(playlist, shuffled: true) }
-                    }
-                }
-            } header: {
-                KoanSectionHeader("Playlists")
-            }
-            // The Mac's "New Playlist…" row.
-            .sectionActions {
-                Button("New Playlist", koan: Icon.add) { playlists.naming = [] }
-            }
-            .defaultVisibility(.hidden, for: .tabBar)
-            .hidden(!sidebar)
-            Tab("Settings", systemImage: Icon.settings, value: TabID.settings) { // theme: raw
-                stack(.settings) { SettingsView() }
-            }
-            #endif
-            #if os(tvOS)
             Tab(Self.title("Search"), systemImage: Icon.search, value: TabID.search, role: .search) { // theme: raw
                 stack(.search) { IOSSearchView() }
             }
-            #else
-            Tab(value: TabID.search, role: .search) {
-                stack(.search) { IOSSearchView() }
-            }
-            #endif
             // Last on a television, where it is visited least.
-            #if os(tvOS)
             Tab(Self.title("Settings"), systemImage: Icon.settings, value: TabID.settings) { // theme: raw
                 stack(.settings) { SettingsView() }
             }
-            #endif
         }
-        #if os(tvOS)
         // Tabs across the top, as every television app has them; the sidebar
         // style folds them behind a pill a remote has to find first.
         .tabViewStyle(.tabBarOnly)
@@ -194,17 +110,10 @@ struct TabShell: View {
         }
         .defaultFocus($barFocus, selection)
         .onChange(of: app.ui.nowPlayingAsked) { selection = .nowPlaying }
-        #else
-        .modifier(AdaptableTabs(sidebar: sidebar))
-        .onChange(of: sidebar) { regroup() }
-        .onChange(of: playlists.playlists.map(\.id)) { _, ids in dropDeleted(ids) }
-        #endif
-        #if os(tvOS)
         .safeAreaInset(edge: .top, spacing: 0) {
             ServerBanner { tab.wrappedValue = .settings }
                 .koanAnimation(KoanTheme.Motion.normal, value: mirror.connection?.standing)
         }
-        #endif
         .toggleStyle(SystemSwitch())
         .modifier(Transport(
             showingNowPlaying: $showingNowPlaying,
@@ -212,7 +121,6 @@ struct TabShell: View {
             selection: tab,
             reselect: reselect
         ))
-        #if os(tvOS)
         // The remote's Play/Pause, wherever focus is.
         .onPlayPauseCommand { player.togglePlayPause() }
         .shareCodes(player)
@@ -222,7 +130,6 @@ struct TabShell: View {
         .onReceive(NotificationCenter.default.publisher(for: .koanSignedOut)) { _ in
             Task { await checkSignedIn() }
         }
-        #endif
         .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
         // sidebar; with no sidebar they float above the transport, which is
@@ -283,12 +190,10 @@ struct TabShell: View {
             }
         }
         .modifier(PlayerAlert())
-        #if os(tvOS)
         // Every button that does not choose its own style, sheets and covers
         // included, which take their environment from where they hang; see
         // `TelevisionButton`.
         .buttonStyle(TelevisionButton())
-        #endif
     }
 
     /// A tab's navigation stack. Pages are drawn from their routes — see
@@ -314,9 +219,7 @@ struct TabShell: View {
             }
             .roomBackground()
             .koanHidesSystemTabBar()
-            #if os(tvOS)
             .onExitCommand(perform: toBar)
-            #endif
             .modifier(BannerInset(signIn: openServerSettings))
             .environment(\.onStage, showing && routes.isEmpty)
             .navigationDestination(for: Route.self) { route in
@@ -405,22 +308,16 @@ struct TabShell: View {
     private func arrive(at page: Navigator.Page) {
         // First: a pop back to a page another tab owns stays in this tab.
         guard top(of: selection) != page else { return }
-        #if os(tvOS)
         let owner: TabID? = nil
-        #else
-        let owner = owner(of: page)
-        #endif
         if let owner {
             paths[owner] = []
             selection = owner
             return
         }
-        #if os(tvOS)
         // Now Playing is a page with no stack to push on, and links nowhere:
         // a move made while it is in front, as by a record opened from the
         // Top Shelf, goes on the library's.
         if selection == .nowPlaying { selection = .library }
-        #endif
         var routes = paths[selection] ?? []
         if let index = routes.lastIndex(of: .page(page)) {
             routes.removeSubrange((index + 1)...)
@@ -480,20 +377,12 @@ struct TabShell: View {
     /// A tab's title: lowercase in the theme on a television, whose tab bar
     /// is the one the theme keeps.
     private static func title(_ text: String) -> String {
-        #if os(tvOS)
         KoanTheme.label(text)
-        #else
-        text
-        #endif
     }
 
     /// Whether the sidebar is the navigation: an iPad with room for it.
     private var sidebar: Bool {
-        #if os(tvOS)
         false
-        #else
-        width == .regular
-        #endif
     }
 
     /// The sidebar's library rows, in the Mac's order. No Tracks, for the
@@ -513,7 +402,6 @@ struct TabShell: View {
         player.play(playlist: playlist.id, shuffled: shuffled)
     }
 
-    #if os(tvOS)
     /// Menu at a tab's root goes up to the tabs, as it does to the platform's
     /// bar; Menu on the tabs, which take no exit command, leaves the app.
     private var toBar: (() -> Void)? {
@@ -541,7 +429,6 @@ struct TabShell: View {
             }
         }
     }
-    #endif
 
     /// Settings, opened at Server, from wherever the banner was tapped. The
     /// TV's stacks take it too, though only the phone draws a banner there.
@@ -607,92 +494,16 @@ private struct Transport: ViewModifier {
     @Namespace private var underline
 
     func body(content: Content) -> some View {
-        #if os(tvOS)
         // Now Playing is a tab of its own there.
         content
-        #else
-        if KoanTheme.isOn {
-            // The theme's own bar in place of the platform's glass: the mini
-            // player as a row with the playhead along its top, and on a phone
-            // the tabs flat beneath it; an iPad's are its sidebar. Laid over the content and kept behind the keyboard,
-            // as the platform's tab bar is. Each page makes room for it itself,
-            // from its height (`koanHidesSystemTabBar`), less what the keyboard
-            // already covers.
-            content
-                .environment(\.koanBarHeight, max(0, barHeight - keyboardOverlap))
-                // Posted on showing, hiding and every change of size between,
-                // in the coordinates of the screen it is the object of.
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
-                    guard let frame = $0.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-                    let foot = ($0.object as? UIScreen)?.bounds.maxY ?? frame.maxY
-                    keyboardOverlap = max(0, foot - frame.minY)
-                }
-                .overlay(alignment: .bottom) {
-                    VStack(spacing: 0) {
-                        player
-                            .padding(.vertical, 8)
-                            .overlay(alignment: .top) { MiniPlayhead() }
-                            .koanRule(.top)
-                        if width == .compact {
-                            tabs
-                                .koanRule(.top)
-                        }
-                    }
-                    .koanSurface()
-                    // What a test measures a page's last row against.
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("koan-bar")
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
-                }
-        } else {
-            content.tabViewBottomAccessory { player }
-        }
-        #endif
     }
 
-    #if os(iOS)
-    private var tabs: some View {
-        HStack(spacing: 0) {
-            ForEach(Self.items, id: \.id) { item in
-                Button {
-                    if selection == item.id { reselect(item.id) } else { selection = item.id }
-                } label: {
-                    KoanTabItem(title: item.title, selected: selection == item.id, underline: underline)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        // A tab bar to VoiceOver, as the platform's bar is: a container that
-        // is not an element itself, whose items it reads as tabs and counts
-        // ("tab, 2 of 4").
-        .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(.isTabBar)
-        // The platform's bar's height, the items centred in it as its are.
-        // Below it, the home indicator's strip takes the bar's ground and
-        // nothing else.
-        .frame(minHeight: 49)
-        // Capped, as the platform's bar is, with the large content viewer
-        // past the cap.
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-        // The underline slides to the tab chosen; the page itself swaps at once.
-        .koanAnimation(KoanTheme.Motion.normal, value: selection)
-    }
-
-    private static let items: [(id: TabShell.TabID, title: String)] = [
-        (.queue, "Queue"),
-        (.library, "Library"),
-        (.settings, "Settings"),
-        (.search, "Search"),
-    ]
-    #endif
 
     private var player: some View {
         MiniPlayer(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices)
     }
 }
 
-#if os(tvOS)
 /// The theme's tabs on a television, across the top in place of the
 /// platform's glass capsule. They behave as its do: shown at a tab's root and
 /// gone from a page pushed over it, moving onto a tab chooses it, and coming
@@ -738,151 +549,8 @@ private struct TelevisionTabs: View {
         (.settings, "Settings"),
     ]
 }
-#endif
 
-#if os(iOS)
-/// The playhead along the top of the theme's mini player: two points of the
-/// accent, handed to the render server as the seek bar's is.
-private struct MiniPlayhead: View {
-    @Environment(PlayerModel.self) private var player
 
-    var body: some View {
-        SeekProgress(fraction: player.progress, remaining: runway, thickness: 2, showsHead: false)
-            .frame(height: 2)
-            .allowsHitTesting(false)
-    }
-
-    private var runway: TimeInterval {
-        guard player.scrubbing == nil, player.playhead.playing, player.durationMs > 0 else { return 0 }
-        return Double(player.durationMs - player.playhead.at(within: player.durationMs)) / 1000
-    }
-}
-#endif
-
-#if os(iOS)
-/// The tab view's layout. In the platform's look, its own iPad layout: a bar
-/// across the top that opens into a sidebar. In the theme, tabs alone, with
-/// the bar hidden on every page (`koanHidesSystemTabBar`) for the theme's bar
-/// on a phone and `PadSidebar` on an iPad.
-private struct AdaptableTabs: ViewModifier {
-    let sidebar: Bool
-    @Environment(EngineMirror.self) private var mirror
-
-    func body(content: Content) -> some View {
-        if KoanTheme.isOn {
-            content.tabViewStyle(.tabBarOnly)
-        } else {
-            content
-                .tabViewStyle(.sidebarAdaptable)
-                // Open, as the Mac's is: it is where everything but the queue lives.
-                .defaultAdaptableTabBarPlacement(.sidebar)
-                // What the Library tab says atop its list, with no Library tab to say it.
-                .tabViewSidebarHeader {
-                    if sidebar, LibraryStatus.showing(mirror) {
-                        VStack(alignment: .leading, spacing: 6) { LibraryStatus() }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-        }
-    }
-}
-
-/// The theme's iPad sidebar: the Mac's navigation rows, flat on the ground.
-/// The same tabs as the platform's sidebar, chosen the same way.
-private struct PadSidebar: View {
-    @Binding var selection: TabShell.TabID
-    let reselect: (TabShell.TabID) -> Void
-    let sections: [(section: Navigator.Section, title: String, icon: String)]
-    let play: (Playlist, _ shuffled: Bool) -> Void
-    @Environment(EngineMirror.self) private var mirror
-    @Environment(PlaylistsModel.self) private var playlists
-    @Environment(\.koanIcons) private var icons
-
-    var body: some View {
-        List {
-            if LibraryStatus.showing(mirror) {
-                VStack(alignment: .leading, spacing: 6) { LibraryStatus() }
-                    .font(.koan(.meta))
-                    .listRowBackground(Color.clear)
-            }
-            Section {
-                row(.queue, "Queue", icon: Icon.queueSection)
-                row(.search, "Search", icon: Icon.search)
-                row(.settings, "Settings", icon: Icon.settings)
-            }
-            Section {
-                ForEach(sections, id: \.section) { item in
-                    row(
-                        .section(item.section), item.title, icon: item.icon,
-                        badge: item.section == .downloads ? mirror.activeTransfers : 0
-                    )
-                }
-            } header: {
-                KoanSectionHeader("Library")
-            }
-            Section {
-                ForEach(playlists.playlists, id: \.id) { playlist in
-                    row(.section(.playlist(playlist.id)), playlist.name, icon: Icon.playlist, data: true)
-                        .contextMenu {
-                            Button("Play", koan: Icon.play) { play(playlist, false) }
-                            Button("Shuffle", koan: Icon.shuffle) { play(playlist, true) }
-                        }
-                        .listRowSeparator(.hidden)
-                }
-                #if os(iOS)
-                .onMove { playlists.move(fromOffsets: $0, toOffset: $1) }
-                #endif
-                Button { playlists.naming = [] } label: {
-                    KoanLabel("New Playlist", icon: Icon.add)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .koanNavRow(selected: false)
-                .listRowSeparator(.hidden)
-            } header: {
-                KoanSectionHeader("Playlists")
-            }
-        }
-        .listStyle(.plain)
-        .koanSidebar()
-        .environment(\.defaultMinListHeaderHeight, 0)
-        .listRowSeparator(.hidden)
-        .listSectionSeparator(.hidden)
-    }
-
-    /// A row that is a tab: chosen again, back to its root, as a tab is.
-    /// Its glyph before the name when icons are on, as the Mac's sidebar has.
-    /// A playlist's name is the person's, and keeps its case. The badge goes
-    /// on before the row's role: on the row it replaces the row's background,
-    /// the selection's rule with it, by the list's own.
-    private func row(
-        _ id: TabShell.TabID, _ title: String, icon: String, data: Bool = false, badge: Int = 0
-    ) -> some View {
-        Button {
-            if selection == id { reselect(id) } else { selection = id }
-        } label: {
-            Group {
-                let name = Text(title)
-                    .textCase(data ? nil : .lowercase)
-                    .lineLimit(1)
-                if icons {
-                    Label { name } icon: { KoanIcon(icon) }
-                } else {
-                    name
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .badge(badge)
-        .koanNavRow(selected: selection == id)
-        .listRowSeparator(.hidden)
-    }
-}
-
-#endif
 
 /// A background task begun to finish something, ended once: when it is done,
 /// or when iOS says its time is up.
@@ -904,16 +572,6 @@ private struct BannerInset: ViewModifier {
     let signIn: () -> Void
 
     func body(content: Content) -> some View {
-        #if os(iOS)
-        content.safeAreaInset(edge: .top, spacing: 0) {
-            VStack(spacing: 0) {
-                ServerBanner(signIn: signIn)
-                OutputWaitBanner()
-            }
-            .koanAnimation(KoanTheme.Motion.normal, value: mirror.connection?.standing)
-        }
-        #else
         content
-        #endif
     }
 }

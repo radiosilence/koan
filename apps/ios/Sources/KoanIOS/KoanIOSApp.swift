@@ -42,28 +42,12 @@ struct KoanIOSApp: App {
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))
                         .modifier(DspImportPrompts(dsp: state.dsp))
-                        #if os(iOS)
-                        .modifier(TvWakePrompts(state: state))
-                        // In front only: a profile read after a background
-                        // wake would ask where iOS cannot show the question.
-                        .onChange(
-                            of: scenePhase == .active && state.mirror.offers(PushDelegate.extensionName),
-                            initial: true
-                        ) { _, ask in
-                            if ask { Task { await PushDelegate.requestAlerts() } }
-                        }
-                        #endif
                         // No app-wide accent on a television: it draws focus
                         // as a white platter, and system alerts and toggle
                         // rows that take the tint put green text on it.
-                        #if os(iOS)
-                        .tint(.koanAccent)
-                        #endif
-                        #if os(tvOS)
                         // The wash is drawn for a dark room; a television set
                         // to light would grey it out.
                         .preferredColorScheme(.dark)
-                        #endif
                 } else if let startupError {
                     KoanUnavailable("kōan could not start", icon: Icon.warning, detail: startupError)
                 } else {
@@ -97,7 +81,6 @@ struct KoanIOSApp: App {
                 // with the rest of the app; link again now rather than when
                 // its retry comes round.
                 if phase == .active { state?.player.engine.linkNudge() }
-                if phase == .active, let state { ShareInbox.collect(into: state.dsp) }
             }
             .task {
                 guard state == nil, startupError == nil else { return }
@@ -166,10 +149,8 @@ struct KoanIOSApp: App {
                         playing = now
                         engine.setPlaying(playing: now)
                     }
-                    #if os(tvOS)
                     IntentTarget.set(built)
                     TopShelfWriter.start(built)
-                    #endif
                     if let pendingURL {
                         open(pendingURL, in: built)
                         self.pendingURL = nil
@@ -182,13 +163,9 @@ struct KoanIOSApp: App {
                             built.dsp.follow(route: name)
                         }
                     }
-                    ShareInbox.sweepOpened()
-                    ShareInbox.collect(into: built.dsp)
                 } catch {
                     startupError = String(describing: error)
-                    #if os(tvOS)
                     IntentTarget.fail(String(describing: error))
-                    #endif
                 }
             }
         }
@@ -197,24 +174,19 @@ struct KoanIOSApp: App {
 
 extension KoanIOSApp {
     private func open(_ url: URL, in state: AppState) {
-        #if os(tvOS)
         if url.scheme == "koan", url.host == "album" {
             openRecord(url, in: state)
             return
         }
-        #endif
         if url.isFileURL {
             // A copy iOS made in the app's Inbox for it, not opened in place.
             state.dsp.importFiles([url], copy: url)
-        } else if url.scheme == "koan", url.host == "dsp-inbox" {
-            ShareInbox.collect(into: state.dsp)
         } else {
             state.open(url: url)
         }
     }
 }
 
-#if os(tvOS)
 extension KoanIOSApp {
     /// A record chosen on the Top Shelf: `koan://album/<uid>` opens its page,
     /// `?play` plays it. Television only: on a phone or a Mac the scheme would
@@ -250,7 +222,6 @@ extension KoanIOSApp {
         }
     }
 }
-#endif
 
 /// What shows while the engine starts: the launch screen, continued.
 ///

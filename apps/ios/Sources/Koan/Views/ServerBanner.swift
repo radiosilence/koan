@@ -27,12 +27,8 @@ struct ServerBanner: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
-            #if os(tvOS)
             // tvOS has no bar material.
             .koanMaterial(.regularMaterial)
-            #else
-            .koanMaterial(.bar)
-            #endif
             .transition(.opacity)
         }
     }
@@ -91,11 +87,7 @@ struct OutputWaitBanner: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
-            #if os(tvOS)
             .koanMaterial(.regularMaterial)
-            #else
-            .koanMaterial(.bar)
-            #endif
             .transition(.opacity)
         }
     }

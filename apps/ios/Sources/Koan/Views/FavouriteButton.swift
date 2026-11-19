@@ -40,9 +40,6 @@ struct FavouriteButton: View {
                 .contentShape(inset > 0 ? AnyShape(Circle()) : AnyShape(Rectangle()))
         }
         .controlButton()
-        #if os(iOS)
-        .sensoryFeedback(trigger: isOn) { _, on in on ? .impact(weight: .light) : nil }
-        #endif
         .opacity(isOn || showing ? 1 : 0)
         .help(help)
         .accessibilityLabel(isOn ? "Remove favourite" : "Favourite")

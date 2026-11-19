@@ -23,9 +23,6 @@ struct TrackListView: View {
     @Environment(\.horizontalSizeClass) private var width
     @State private var selection: Set<Int64> = []
     @State private var headerShown = true
-    #if os(iOS)
-    @State private var editMode: EditMode = .inactive
-    #endif
 
     /// A record's tracks as the discs they carry, or `nil` when the record
     /// does not number by disc (`numbersByDisc`). Each run is a disc in the order the tracks come, `disc` nil for tracks
@@ -73,11 +70,7 @@ struct TrackListView: View {
     /// Whether the header scrolls with the tracks, as on a phone, where a
     /// fixed one would take a third of the screen from the list.
     private var headerScrolls: Bool {
-        #if os(iOS)
-        width == .compact && !tracks.isEmpty
-        #else
         false
-        #endif
     }
 
     var body: some View {
@@ -141,23 +134,6 @@ struct TrackListView: View {
                     }
                     .insetList()
                     .washedGround()
-                    #if os(iOS)
-                    .listSelectMode($editMode, selection: $selection) { ids in
-                        Self.selectionActions(ids)
-                    }
-                    // The title moves into the bar once the header has
-                    // scrolled away.
-                    .toolbar {
-                        if headerScrolls && !headerShown {
-                            ToolbarItem(placement: .principal) {
-                                Text(Format.title(title))
-                                    .font(.role(.control, system: .headline))
-                                    .lineLimit(1)
-                            }
-                            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
-                        }
-                    }
-                    #endif
 
                     // The List's own double-click hook. Wired into selection
                     // rather than the gesture system, so it doesn't steal the
@@ -184,15 +160,6 @@ struct TrackListView: View {
                 }
     }
 
-    #if os(iOS)
-    /// A pick of tracks: every verb, on the tracks themselves.
-    static func selectionActions(_ ids: [Int64]) -> SelectionBar.Actions {
-        SelectionBar.Actions(
-            favourites: ids.map { Playable.Key(kind: .track, id: $0) },
-            sources: [.tracks(ids: ids)]
-        )
-    }
-    #endif
 
     /// Only a gathered list is narrowed by the filter; a record's tracklist
     /// with nothing in it is a record with nothing in it.
@@ -247,12 +214,6 @@ struct TrackListView: View {
             PageHeader(Format.title(title)) {
                 sleeve
             } lead: {
-                #if os(iOS)
-                if let playable {
-                    PlayableHeaderButton(playable: playable)
-                    ShuffleHeaderButton(playable: playable)
-                }
-                #endif
             } detail: {
                 if let artistCredit {
                     HStack(spacing: 5) {
@@ -311,12 +272,6 @@ struct TrackListView: View {
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
             HStack(spacing: 12) {
-                #if os(iOS)
-                if let playable {
-                    PlayableHeaderButton(playable: playable)
-                    ShuffleHeaderButton(playable: playable)
-                }
-                #endif
                 HeaderActions(playable: playable)
             }
             .padding(.top, 10)
@@ -512,17 +467,9 @@ private struct TrackAvailability: View {
 /// television sets type at twice a Mac's size, is read from across a room, and
 /// grows a focused button into its neighbours.
 private enum Columns {
-    #if os(tvOS)
     static let quality = 190.0
     static let duration = 96.0
     static let compactDuration = 96.0
     static let sleeve = 260.0
     static let compactSleeve = 260.0
-    #else
-    static let quality = 92.0
-    static let duration = 48.0
-    static let compactDuration = 36.0
-    static let sleeve = 132.0
-    static let compactSleeve = 200.0
-    #endif
 }

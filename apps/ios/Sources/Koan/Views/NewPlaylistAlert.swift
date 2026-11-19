@@ -47,11 +47,7 @@ struct NewPlaylistAlert: ViewModifier {
     private var message: String {
         switch playlists.naming?.count ?? 0 {
         case 0:
-            #if os(iOS)
-                "Give it a name. Add records and tracks from their menus afterwards."
-            #else
                 "Give it a name. You can drag records and tracks onto it afterwards."
-            #endif
         case 1: "One track goes in. Give the playlist a name."
         case let count: "\(Format.count(Int64(count), "track")) go in. Give the playlist a name."
         }

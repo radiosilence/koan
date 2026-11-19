@@ -12,42 +12,14 @@ struct BrowseFilterButton: View {
         let count = library.browseFilter.activeCount
         let symbol = Icon.filters
         Button { open = true } label: {
-            #if os(tvOS)
             // In a row above the listing, with room for the name.
             KoanLabel(count > 0 ? "Filters (\(count))" : "Filters", icon: symbol)
-            #else
-            HStack(spacing: 3) {
-                KoanIcon(symbol)
-                if count > 0 {
-                    Text("\(count)").monospacedDigit()
-                }
-            }
-            .accessibilityLabel(count > 0 ? "Filters, \(count) on" : "Filters")
-            #endif
         }
         .help(count > 0 ? "Filters — \(count) on" : "Filters")
-        #if os(tvOS)
         .modifier(FilterSheet(open: $open))
-        #else
-        .formTray(isPresented: $open) {
-            NavigationStack {
-                BrowseFilterForm()
-                    .navigationTitle(KoanTheme.label("Filter"))
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        KoanSheetAction(placement: .confirmationAction) {
-                            Button("Done") { open = false }
-                                .toolbarButton()
-                        }
-                    }
-            }
-            .presentationDetents([.medium, .large])
-        }
-        #endif
     }
 }
 
-#if os(tvOS)
 /// The filters on a television: the theme's panel, or the system's sheet.
 /// Menu closes either.
 private struct FilterSheet: ViewModifier {
@@ -74,7 +46,6 @@ private struct FilterSheet: ViewModifier {
         }
     }
 }
-#endif
 
 struct BrowseFilterForm: View {
     @Environment(LibraryModel.self) private var library
@@ -170,17 +141,10 @@ private struct YearField: View {
         TextField(prompt, text: $text, prompt: Text(KoanTheme.label(prompt)))
             .labelsHidden()
             .multilineTextAlignment(.center)
-            #if os(tvOS)
             // tvOS draws a rounded platter no style removes; the theme draws
             // its own box over the field.
             .koanField(text, prompt: KoanTheme.label(prompt))
             .frame(width: KoanTheme.metric(180, system: 60))
-            #else
-            .frame(width: 60)
-            #endif
-            #if os(iOS)
-            .keyboardType(.numberPad)
-            #endif
             .onAppear { text = value.map(String.init) ?? "" }
             .onChange(of: text) { _, typed in
                 let digits = String(typed.filter(\.isASCII).filter(\.isNumber).prefix(4))

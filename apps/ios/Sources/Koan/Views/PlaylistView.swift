@@ -26,18 +26,11 @@ struct PlaylistView: View {
     /// unread here for the same reason too — see `QueueView.selection`.
     @State private var selection: Set<String> = []
     @State private var headerShown = true
-    #if os(iOS)
-    @State private var editMode: EditMode = .inactive
-    #endif
 
     /// Whether the header scrolls with the rows, as on a phone, where a fixed
     /// one would take a third of the screen from the list.
     private var headerScrolls: Bool {
-        #if os(iOS)
-        width == .compact && !entries.isEmpty
-        #else
         false
-        #endif
     }
     @State private var renaming = false
     @State private var renameTo = ""
@@ -100,20 +93,6 @@ struct PlaylistView: View {
                 }
                 .insetList()
                 .washedGround()
-                #if os(iOS)
-                .listSelectMode($editMode, selection: $selection) { selectionActions($0, rows: rows) }
-                // The name moves into the bar once the header has scrolled away.
-                .toolbar {
-                    if headerScrolls && !headerShown {
-                        ToolbarItem(placement: .principal) {
-                            Text(playlist?.name ?? "")
-                                .font(.role(.control, system: .headline))
-                                .lineLimit(1)
-                        }
-                        .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
-                    }
-                }
-                #endif
                 .selectionMenu(for: String.self) { ids in
                     menu(forRows: ids)
                 } primaryAction: { ids in
@@ -172,26 +151,17 @@ struct PlaylistView: View {
                     layoutControls
                 }
                 // A phone's pick has the select bar at the foot of the page.
-                #if os(tvOS)
                 PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
-                #endif
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             PageHeader(playlist?.name ?? "Playlist") {
                 artwork
             } lead: {
-                #if os(iOS)
-                if let playable {
-                    PlayableHeaderButton(playable: playable)
-                    ShuffleHeaderButton(playable: playable)
-                }
-                #endif
             } detail: {
                 Text(summary)
             } actions: {
                 VStack(alignment: .leading, spacing: 6) {
-                    #if os(tvOS)
                     if let playable {
                         HStack {
                             PlayableHeaderButton(playable: playable)
@@ -199,7 +169,6 @@ struct PlaylistView: View {
                         }
                         .padding(.vertical, 8)
                     }
-                    #endif
                     HStack(spacing: 10) {
                         QueueButtons(playable: playable)
                         shuffleButton
@@ -207,9 +176,7 @@ struct PlaylistView: View {
                 }
             } trailing: {
                 VStack(alignment: .trailing, spacing: 10) {
-                    #if os(tvOS)
                     PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
-                    #endif
                     layoutControls
                 }
             }
@@ -247,11 +214,6 @@ struct PlaylistView: View {
         let refusal: String? = !playlists.fillable(playlistId) ? "This playlist can't be edited here"
             : entries.count < 2 ? "Nothing to shuffle" : nil
         return HStack {
-            #if os(iOS)
-            ShuffleUndoButton(shuffles: playlists.openId == playlistId ? playlists.undoShuffles : 0) {
-                player.undo(playlist: playlistId)
-            }
-            #endif
             Button { playlists.shuffle(id: playlistId) } label: {
                 Label("Shuffle Order", koan: Icon.reshuffle)
             }
@@ -283,9 +245,7 @@ struct PlaylistView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            #if os(tvOS)
             .frame(width: 22)
-            #endif
         }
     }
 
@@ -361,29 +321,6 @@ struct PlaylistView: View {
         positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.track.id }
     }
 
-    #if os(iOS)
-    /// What the select bar does with the rows ticked: each heading's run, then
-    /// each entry, in the order ticked.
-    private func selectionActions(_ ids: [String], rows: [Row]) -> SelectionBar.Actions {
-        var seen = Set<Int>()
-        let positions = ids.flatMap { Row.positions(in: [$0], of: rows) }
-            .filter { seen.insert($0).inserted }
-        let picked = positions.compactMap { entries[safe: $0] }
-        let tracks = picked.map(\.track.id)
-        var remove: SelectionBar.Removal?
-        if playlists.fillable(playlistId) {
-            let playlists = playlists, playlistId = playlistId
-            remove = .init(title: "Remove", noun: "track", count: picked.count) {
-                playlists.remove(entryIds: picked.map(\.entryId), from: playlistId)
-            }
-        }
-        return SelectionBar.Actions(
-            favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
-            sources: [.tracks(ids: tracks)],
-            remove: remove
-        )
-    }
-    #endif
 
     private func removeSelected() {
         playlists.remove(entryIds: entryIds(in: selection), from: playlistId)

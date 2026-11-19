@@ -147,11 +147,7 @@ enum Icon {
 
     /// The point size an icon is drawn at where nothing sets one: a menu, a
     /// toolbar, a segment. The platform's body size.
-    #if os(tvOS)
     static let pointSize: CGFloat = 29
-    #else
-    static let pointSize: CGFloat = 17
-    #endif
 }
 
 extension Image {

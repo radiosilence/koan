@@ -1,8 +1,5 @@
 import KoanFFI
 import SwiftUI
-#if os(iOS)
-import UIKit
-#endif
 
 /// Everything the app needs, built once the engine is up.
 ///

@@ -57,12 +57,6 @@ struct QueueView: View {
     /// `QueueSelectionHeader`, which holds the binding and re-runs alone.
     @State private var selection: Set<String> = []
 
-    #if os(iOS)
-    /// A List with a selection binding shows its selection circles and drag
-    /// handles unless told otherwise, which on a phone is a queue permanently
-    /// in the middle of being edited. Selecting is asked for, from the menu.
-    @State private var editMode: EditMode = .inactive
-    #endif
 
     /// Album headings are rows in their own right, not decoration attached to
     /// the first track. That is what lets an album be selected and dragged as a
@@ -171,20 +165,6 @@ struct QueueView: View {
                         .onMove(perform: move)
                     }
                     .insetList()
-                    #if os(iOS)
-                    // Started from the header: the queue has no navigation bar.
-                    .listSelectMode($editMode, selection: $selection, toolbar: false) { ids in
-                        let items = Row.itemIds(in: Set(ids), of: rows)
-                        let wanted = Set(items)
-                        let tracks = mirror.queue.filter { wanted.contains($0.queueItemId) }.compactMap(\.trackId)
-                        return SelectionBar.Actions(
-                            favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
-                            sources: [.tracks(ids: tracks)],
-                            queues: false,
-                            remove: .init(title: "Remove", noun: "track", count: items.count) { player.remove(itemIds: items) }
-                        )
-                    }
-                    #endif
                     .washedGround()
                     // `g` / `G`. Watches the token rather than the edge: jumping
                     // to where you already are still has to scroll, because the
@@ -258,16 +238,12 @@ struct QueueView: View {
                     let record: LinkText.Target? = if case .album(let album) = mirror.lock { .album(album.id) } else { nil }
                     // On a phone the label leaves the name a few letters; the
                     // sleeve beside it already says the queue follows it.
-                    #if os(iOS)
-                    LinkText(text: Format.title(name), target: record, font: .role(.body, system: .headline), prominent: true)
-                    #else
                     HStack(spacing: 0) {
                         Text("\(KoanTheme.label("Playing")) ")
                             .font(.role(.body, system: .headline))
                         LinkText(text: name, target: record, font: .role(.body, system: .headline), prominent: true)
                     }
                     .lineLimit(1)
-                    #endif
                 } else if !KoanTheme.tabRootTitle("Queue").isEmpty {
                     Text("Queue").koanCase()
                         .font(.role(.body, system: .headline))
@@ -283,22 +259,10 @@ struct QueueView: View {
 
             Spacer(minLength: 12)
 
-            #if os(iOS)
-            // The bar at the foot says what is picked and what to do with it.
-            SelectButton(isOn: editMode.isEditing) {
-                editMode = editMode.isEditing ? .inactive : .active
-            }
-            .disabled(listed.isEmpty && !editMode.isEditing)
-            #else
             QueueSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
-            #endif
 
             JumpToPlayingButton()
 
-            #if os(iOS)
-            QueueDiceButton()
-                .tint(secondaryTint)
-            #endif
 
             KoanIconToggle(icon: Icon.album, label: "Group by album", isOn: $grouped)
 
@@ -307,58 +271,23 @@ struct QueueView: View {
 
             Menu {
                 // Playlists are made elsewhere; a television plays them.
-                #if os(iOS)
-                Button {
-                    playlists.naming = player.queue.compactMap(\.trackId)
-                } label: {
-                    Label("Save as Playlist…", koan: Icon.playlist)
-                }
-                Divider()
-                #endif
                 Button(role: .destructive) { player.clearQueue() } label: {
                     Label("Clear Queue", koan: Icon.clear)
                 }
             } label: {
-                #if os(tvOS)
                 KoanIcon(Icon.more)
-                #else
-                KoanIcon(KoanTheme.metric(Icon.more, system: Icon.moreCircled))
-                #endif
             }
-            #if os(tvOS)
             .accessibilityLabel("More")
-            #else
-            .tint(secondaryTint)
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            #if os(iOS)
-            .touchTarget()
-            #else
-            .frame(width: 22)
-            #endif
-            #endif
         }
         // A television's controls are the size of its other buttons: a
         // borderless glyph is too small to find from across the room.
-        #if os(tvOS)
         .buttonStyle(TelevisionButton())
-        #else
-        .buttonStyle(.borderless)
-        #endif
         // On the rows' edges: an inset list keeps 20 clear on a phone.
-        #if os(iOS)
-        .padding(.horizontal, 20)
-        #else
         .padding(.horizontal, 16)
-        #endif
         .padding(.vertical, 11)
     }
 
-    #if os(iOS)
-    private static let headerSpacing: CGFloat = 0
-    #else
     private static let headerSpacing: CGFloat = 12
-    #endif
 
     /// What the queue is, when it is still something someone chose.
     private var lockedName: String? {
@@ -431,11 +360,7 @@ struct QueueView: View {
                 player: player
             )
         } label: {
-            #if os(tvOS)
             Label("Share Album…", koan: Icon.share)
-            #else
-            Label("Copy Album Share Link", koan: Icon.share)
-            #endif
         }
     }
 
@@ -777,11 +702,7 @@ private struct QueueSelectionHeader: View {
                 }
             }
             .fixedSize()
-            #if os(iOS)
-            .labelStyle(.iconOnly)
-            #else
             .labelStyle(.titleOnly)
-            #endif
         }
         // Mirrored to the model for the Edit menu, which cannot reach a view's
         // state. The *queue item* ids, not the row ids: an album heading's id
@@ -840,62 +761,7 @@ private struct JumpToPlayingButton: View {
 ///
 /// A phone has no ⌘Z, so there Undo stands beside the dice while the queue's
 /// last edits are shuffles, and takes them back one at a time.
-#if os(iOS)
-private struct QueueDiceButton: View {
-    @Environment(PlayerModel.self) private var player
 
-    var body: some View {
-        #if os(iOS)
-        ShuffleUndoButton(shuffles: player.undoShuffles) { player.undo() }
-        #endif
-        let refusal = player.queueDiceRefusal
-        // The reason goes on a wrapper, which disabling the button does not
-        // reach.
-        HStack {
-            Button { player.shuffleQueue() } label: {
-                KoanIcon(Icon.reshuffle).touchTarget()
-            }
-            .disabled(refusal != nil)
-        }
-        .help(refusal ?? "Shuffle the rest of the queue in place")
-    }
-}
-#endif
-
-#if os(iOS)
-/// Undo for the shuffles on top of a list's history, while there are any.
-/// Hidden from a tap until the count answers, so a second tap cannot reach
-/// past the last shuffle to whatever edit came before; back after a few
-/// seconds if it never does.
-struct ShuffleUndoButton: View {
-    let shuffles: UInt32
-    let undo: () -> Void
-    @State private var tappedAt: UInt32?
-
-    var body: some View {
-        // A container that is always there, so the count is watched while
-        // the button is hidden.
-        HStack(spacing: 0) {
-            if shuffles > 0, tappedAt != shuffles {
-                Button {
-                    tappedAt = shuffles
-                    undo()
-                } label: {
-                    KoanIcon(Icon.undo).touchTarget()
-                }
-                .accessibilityLabel("Undo shuffle")
-            }
-        }
-        .onChange(of: shuffles) { tappedAt = nil }
-        // An undo that failed never moves the count: offer it again.
-        .task(id: tappedAt) {
-            guard tappedAt != nil else { return }
-            try? await Task.sleep(for: .seconds(3))
-            if !Task.isCancelled { tappedAt = nil }
-        }
-    }
-}
-#endif
 
 /// The playing row kept in view while following. Reads what is playing so the
 /// queue's own body does not, which on a long queue would regroup and diff
@@ -968,13 +834,8 @@ private struct QueueAlbumHeader: View {
 
     // A fixed size reads as a heading on a desktop; a television scales the
     // text styles beneath it and left the record smaller than its artist.
-    #if os(tvOS)
     private static let titleFont = Font.title3.weight(.semibold)
     private static let sleeve: CGFloat = 96
-    #else
-    private static let titleFont = Font.system(size: 14, weight: .semibold)
-    private static let sleeve: CGFloat = 52
-    #endif
 
     var body: some View {
         HStack(spacing: 12) {
