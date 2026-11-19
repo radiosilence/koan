@@ -5,6 +5,8 @@
 use koan_kit::app::App;
 
 use super::actions::About;
+use crate::components::{Stack, Text};
+use crate::theme::{Space, Tone};
 
 /// The version, and the commit it was built from.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -156,25 +158,21 @@ fn show(cx: &mut App) {
             cx: &mut koan_kit::app::Context<Self>,
         ) -> impl IntoElement {
             let look = Look::of(window, cx);
-            div()
+            Stack::column()
+                .space(Space::M)
                 .size_full()
-                .flex()
-                .flex_col()
                 .items_center()
                 .justify_center()
-                .gap(look.space(Space::M))
                 .bg(look.palette.bg.hsla())
                 .child(crate::components::title_text("kōan", &look))
                 .child(
-                    div()
-                        .text_role(TypeRole::Meta, &look)
+                    Text::new(TypeRole::Meta)
                         .text_color(look.text_color(Tone::Muted))
                         .child(format!("{VERSION} ({BUILD})")),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .gap(look.space(Space::L))
+                    Stack::row()
+                        .space(Space::L)
                         .child(
                             Button::new("about-site", ButtonKind::Link)
                                 .text("koan.rocks")

@@ -17,7 +17,9 @@ use super::tile::Grid;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::components::{Cover, CoverArt, RowKind, RowMetrics};
+use crate::components::{Inset, Stack, Text};
 use crate::theme::Space;
+use crate::theme::Tone;
 
 /// A line of the list: a disc's heading, or a track and the number it shows.
 enum Line {
@@ -280,18 +282,18 @@ impl AlbumPage {
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
                 // A heading to a screen reader.
-                return div()
+                return Stack::row()
+                    .inset_bottom(Space::Xs)
+                    .role(Type::Fine)
+                    .tone(Tone::Ink)
                     .id(("disc", i))
                     .role(a11y::Role::Heading)
                     .aria_label(title.clone())
                     .aria_level(3)
                     .w_full()
                     .h(height)
-                    .flex()
                     .items_end()
                     .px(RowMetrics::page_margin(&p.look))
-                    .pb(p.space(Space::Xs))
-                    .typeset(p, Type::Fine, p.ink)
                     .child(title.clone())
                     .into_any_element();
             }
@@ -510,16 +512,14 @@ impl Render for AlbumPage {
         let entity = cx.entity_id();
         let measure = crate::components::width_probe(width, entity);
         let content = match (self.width.get(), self.gone) {
-            (_, Some(failed)) => div()
+            (_, Some(failed)) => Stack::column()
+                .space(Space::M)
                 .size_full()
-                .flex()
-                .flex_col()
                 .items_center()
                 .justify_center()
-                .gap(p.space(Space::M))
                 .child(
-                    div()
-                        .typeset(p, Type::TitleSmall, p.muted)
+                    Text::new(Type::TitleSmall)
+                        .tone(Tone::Muted)
                         .child(if failed {
                             "couldn't read this album"
                         } else {

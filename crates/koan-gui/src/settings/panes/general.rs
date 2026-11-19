@@ -6,6 +6,7 @@ use crate::components::{Button, ButtonKind, Spinner, Toggle};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole};
 use koan_kit::app::*;
 
+use crate::components::Stack;
 use crate::settings::Ctx;
 use crate::settings::form::{note, page, section, text};
 
@@ -171,10 +172,9 @@ fn updates(
     if let Some((status, tone)) = status {
         let line = text(status, TypeRole::Fine, tone, look);
         rows.push(if busy {
-            div()
-                .flex()
+            Stack::row()
+                .space(Space::S)
                 .items_center()
-                .gap(look.space(Space::S))
                 .child(Spinner::new(look.font_size(TypeRole::Fine)).glow())
                 .child(line)
                 .into_any_element()

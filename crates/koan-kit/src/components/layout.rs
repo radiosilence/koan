@@ -229,7 +229,13 @@ impl Inset for Text {
     }
 }
 
-fn typeset(mut div: Div, role: Option<TypeRole>, tone: Option<Tone>, picked: bool, look: &Look) -> Div {
+fn typeset(
+    mut div: Div,
+    role: Option<TypeRole>,
+    tone: Option<Tone>,
+    picked: bool,
+    look: &Look,
+) -> Div {
     if let Some(role) = role {
         div = div.text_role(role, look);
     }
@@ -335,7 +341,16 @@ macro_rules! themed_div {
                 window: &mut Window,
                 cx: &mut App,
             ) {
-                Element::paint(&mut self.div, id, inspector_id, bounds, state, prepaint, window, cx)
+                Element::paint(
+                    &mut self.div,
+                    id,
+                    inspector_id,
+                    bounds,
+                    state,
+                    prepaint,
+                    window,
+                    cx,
+                )
             }
         }
     };
@@ -343,26 +358,34 @@ macro_rules! themed_div {
 
 themed_div!(Stack, |this, look| {
     let div = std::mem::replace(&mut this.div, div());
-    typeset(this.spacing.apply(div, &look), this.role, this.tone, false, &look)
+    typeset(
+        this.spacing.apply(div, &look),
+        this.role,
+        this.tone,
+        false,
+        &look,
+    )
 });
 
 themed_div!(Text, |this, look| {
     let div = std::mem::replace(&mut this.div, div());
-    let div = typeset(this.spacing.apply(div, &look), Some(this.role), this.tone, this.picked, &look);
+    let div = typeset(
+        this.spacing.apply(div, &look),
+        Some(this.role),
+        this.tone,
+        this.picked,
+        &look,
+    );
     match this.icon.filter(|_| look.icons) {
-        Some(icon) => div
-            .flex()
-            .items_center()
-            .gap(look.space(Space::Xs))
-            .child(
-                KoanIcon::new(icon).role(this.role).map(|glyph| {
-                    if this.picked {
-                        glyph.color(look.palette.on_selection.hsla())
-                    } else {
-                        glyph.tone(this.tone.unwrap_or(Tone::Ink))
-                    }
-                }),
-            ),
+        Some(icon) => div.flex().items_center().gap(look.space(Space::Xs)).child(
+            KoanIcon::new(icon).role(this.role).map(|glyph| {
+                if this.picked {
+                    glyph.color(look.palette.on_selection.hsla())
+                } else {
+                    glyph.tone(this.tone.unwrap_or(Tone::Ink))
+                }
+            }),
+        ),
         None => div,
     }
 });

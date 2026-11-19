@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use koan_kit::app::*;
 
+use crate::components::Inset;
 use crate::components::sheet::{screen, scrim};
 use crate::components::{Button, ButtonKind, Rise, SlideUp};
 use crate::theme::{KoanStyled, KoanTheme, Look, Space, Tone, TypeRole};

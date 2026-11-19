@@ -21,10 +21,12 @@ use crate::components::sheet as ask;
 use crate::components::{
     Button, ButtonKind, EmptyState, Page, PageHeader, ProgressBar, RowKind, ScrollArea, TableRow,
 };
+use crate::components::{Stack, Text};
 use crate::engine::{command, engine};
 use crate::mirror::{Mirror, Slice};
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
+use crate::theme::Tone;
 use crate::theme::{Icon, KoanStyled, TypeRole};
 use crate::time::bytes;
 
@@ -219,15 +221,13 @@ impl DownloadsPage {
             .cursor(self.keyed && self.cursor.at == Some(index))
             .spot(&self.spot)
             .title(
-                div()
-                    .text_role(TypeRole::Body, &p.look)
-                    .text_color(p.ink)
+                Text::new(TypeRole::Body)
+                    .tone(Tone::Ink)
                     .truncate()
                     .child(t.title.clone()),
             )
             .line(
-                div()
-                    .text_role(TypeRole::Meta, &p.look)
+                Text::new(TypeRole::Meta)
                     .text_color(if t.failure_reason.is_some() {
                         p.bad
                     } else {
@@ -238,10 +238,9 @@ impl DownloadsPage {
             )
             .map(|row| {
                 let status = |status: String| {
-                    div()
-                        .flex()
+                    Stack::row()
+                        .role(TypeRole::Fine)
                         .justify_end()
-                        .text_role(TypeRole::Fine, &p.look)
                         .text_color(if warns { p.bad } else { p.muted })
                         .truncate()
                         .child(status)

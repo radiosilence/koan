@@ -19,6 +19,7 @@ use super::format;
 use super::nav::Page;
 use super::selection::Selection;
 use super::tokens::Paint;
+use crate::components::Text;
 use crate::components::{
     AvailabilityMark, Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow,
 };
@@ -322,8 +323,7 @@ pub fn track_row<V: TrackList>(
                 let chars = length.len().max(5) as f32;
                 row.figure(
                     chars * 0.6 * TypeRole::Fine.points() + 4.0,
-                    div()
-                        .text_role(TypeRole::Fine, &p.look)
+                    Text::new(TypeRole::Fine)
                         .text_color(p.strong.opacity(0.5))
                         .child(length),
                 )

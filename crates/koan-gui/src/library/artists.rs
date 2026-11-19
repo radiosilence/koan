@@ -14,8 +14,10 @@ use super::nav::Page;
 use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
+use crate::components::Text;
 use crate::components::{ROW_GROUP, RowKind, RowNumber, TableRow};
 use crate::navigator::{Listing, Shelf};
+use crate::theme::Tone;
 use crate::theme::{Icon, KoanStyled};
 
 #[derive(Clone, PartialEq)]
@@ -370,14 +372,9 @@ impl ArtistBrowser {
         .title(name)
         .map(|row| {
             if phone {
-                row.line(
-                    div()
-                        .text_role(Type::Meta, &p.look)
-                        .text_color(p.muted)
-                        .child(albums),
-                )
-                // The heart's column narrow, its target reaching past it.
-                .figure(28.0, div().w_full().flex().justify_center().child(heart))
+                row.line(Text::new(Type::Meta).tone(Tone::Muted).child(albums))
+                    // The heart's column narrow, its target reaching past it.
+                    .figure(28.0, div().w_full().flex().justify_center().child(heart))
             } else {
                 row.figure(HEART, heart).figure(COUNT, albums).figure(
                     COUNT,

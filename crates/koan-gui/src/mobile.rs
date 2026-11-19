@@ -13,6 +13,7 @@ use koan_kit::app::*;
 
 mod tablet;
 
+use crate::components::Inset;
 use crate::components::sheet::{self as ask, Layer};
 use crate::components::{
     Clear, NavRow, ScrollArea, TabStrip, Toolbar, ToolbarButton, ToolbarTitle,

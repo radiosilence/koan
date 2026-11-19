@@ -825,8 +825,8 @@ impl Render for ProfileBody {
         // Scrolled by the kit's area, which keeps a field being typed in
         // clear of the keyboard.
         crate::components::sheet::scroll_body("profile-body", s, &look)
-        .handle(&self.scroll)
-        .into_any_element()
+            .handle(&self.scroll)
+            .into_any_element()
     }
 }
 

@@ -19,6 +19,7 @@ use crate::components::{
     Badge, Button, ButtonKind, Check, CheckItem, ChoiceCards, Steps, close_button,
     draws_decorations, moves_window,
 };
+use crate::components::{Inset, Stack};
 use crate::mirror::Mirror;
 use crate::platform::actions::{self, caption};
 use crate::settings::form::{Row, buttons, item, page, section, text};
@@ -857,16 +858,12 @@ impl SetupWindow {
             .enumerate()
             .map(|(row, (what, keys))| {
                 Row::new(*what)
-                    .control(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap(look.space(Space::Xs))
-                            .children(keys.iter().enumerate().map(|(k, key)| {
-                                Badge::new(caption(key, os))
-                                    .key((SharedString::from(format!("setup-key-{row}")), k))
-                            })),
-                    )
+                    .control(Stack::wrapping().space(Space::Xs).children(
+                        keys.iter().enumerate().map(|(k, key)| {
+                            Badge::new(caption(key, os))
+                                .key((SharedString::from(format!("setup-key-{row}")), k))
+                        }),
+                    ))
                     .into_any_element()
             })
             .collect();
@@ -894,13 +891,12 @@ impl SetupWindow {
     fn top_strip(&self, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let client = draws_decorations(window);
         let look = Look::of(window, cx);
-        let strip = div()
+        let strip = Stack::row()
+            .inset_x(Space::S)
             .id("setup-top")
-            .flex()
             .justify_end()
             .items_center()
-            .h(crate::components::SecondaryWindow::strip_height())
-            .px(look.space(Space::S));
+            .h(crate::components::SecondaryWindow::strip_height());
         let entity = cx.entity();
         moves_window(strip, window, cx).when(client, |strip| {
             strip.child(close_button(move |window, cx| {
@@ -955,13 +951,12 @@ impl SetupWindow {
                 .into_any_element(),
             );
         }
-        div()
-            .flex()
+        Stack::row()
+            .space(Space::M)
+            .inset_x(Space::Xl)
+            .inset_y(Space::L)
             .items_center()
             .justify_between()
-            .gap(look.space(Space::M))
-            .px(look.space(Space::Xl))
-            .py(look.space(Space::L))
             .border_t(look.hairline)
             .border_color(look.palette.rule.hsla())
             .child(div().children((!last).then(|| {
@@ -972,10 +967,9 @@ impl SetupWindow {
                     })
             })))
             .child(
-                div()
-                    .flex()
+                Stack::row()
+                    .space(Space::L)
                     .items_center()
-                    .gap(look.space(Space::L))
                     .children(trailing),
             )
     }
@@ -986,12 +980,10 @@ impl Render for SetupWindow {
         let look = Look::of(window, cx);
         let steps = self.steps();
         let at = steps.iter().position(|s| *s == self.step).unwrap_or(0);
-        let header = div()
-            .flex()
-            .flex_col()
-            .gap(look.space(Space::M))
-            .px(look.space(Space::Xl))
-            .pb(look.space(Space::S))
+        let header = Stack::column()
+            .space(Space::M)
+            .inset_x(Space::Xl)
+            .inset_bottom(Space::S)
             .child(Steps::new(
                 "setup-steps",
                 steps.iter().map(|s| s.name()),

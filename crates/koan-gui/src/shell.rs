@@ -22,11 +22,13 @@ use crate::platform::actions::{
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
+use crate::components::{Inset, Stack};
 use crate::library::{self, stage::LibraryStage};
 use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::session::Session;
 use crate::sidebar::Sidebar;
+use crate::theme::Tone;
 use crate::theme::{self, Icon, KoanStyled, TypeRole};
 use crate::transport::{self, Transport};
 use crate::window_state;
@@ -723,13 +725,12 @@ impl Render for Shell {
                 }
                 None => div().size_full().into_any_element(),
             },
-            _ => div()
+            _ => Stack::row()
+                .role(TypeRole::Body)
+                .tone(Tone::Muted)
                 .size_full()
-                .flex()
                 .items_center()
                 .justify_center()
-                .text_role(TypeRole::Body, &p.look)
-                .text_color(p.muted)
                 .child("not in the desktop app yet")
                 .into_any_element(),
         };

@@ -13,6 +13,7 @@ use koan_kit::app::input::{InputState, TextContentType};
 use koan_kit::app::*;
 use koan_runtime::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
 
+use crate::components::{Inset, Stack};
 use crate::settings::form::{buttons, item, page, section, text};
 use crate::settings::model::describe;
 use crate::settings::qr::Code;
@@ -507,18 +508,14 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
             invite.email_text.clone(),
             invite.mailto.clone(),
         );
-        let mut column = div()
-            .flex()
-            .flex_col()
+        let mut column = Stack::column()
+            .space(Space::S)
             .items_start()
-            .gap(look.space(Space::S))
             .children(code.as_ref().map(|code| {
-                div()
-                    .flex()
-                    .flex_col()
+                Stack::column()
+                    .space(Space::Xs)
                     .w_full()
                     .items_center()
-                    .gap(look.space(Space::Xs))
                     .child(code.element(look.sized(168.0), look.spaced(12.0)))
                     .child(text(
                         "Scan with a phone's camera to open it there.",
@@ -537,10 +534,8 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
             .child(CopyButton::new("copy-invite", "Copy Link", link).icon(Icon::Share));
         if let Some(password) = &invite.password {
             column = column.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .pt(look.space(Space::S))
+                Stack::column()
+                    .inset_top(Space::S)
                     .child(text(
                         "For other Subsonic apps",
                         TypeRole::Fine,

@@ -12,6 +12,7 @@ use super::drag::Playable;
 use super::selection::Selection;
 use super::tokens::Paint;
 use super::{Lib, actions};
+use crate::components::Stack;
 use crate::components::{
     Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, MenuSeparator, SelectionBar,
     TextField, Toggle, ToolbarButton, ToolbarMenu,
@@ -492,9 +493,8 @@ impl Render for FilterPanel {
             )
             .child(
                 FormRow::new("years").compact().control(
-                    div()
-                        .flex()
-                        .gap(p.space(Space::S))
+                    Stack::row()
+                        .space(Space::S)
                         .child(
                             div()
                                 .w(p.sized(64.0))

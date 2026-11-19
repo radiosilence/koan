@@ -1326,9 +1326,7 @@ pub fn section(
         .flex()
         .flex_col()
         .gap(look.space(Space::Xs))
-        .when_some(title, |d, t| {
-            d.child(super::SectionHeader::new(t))
-        })
+        .when_some(title, |d, t| d.child(super::SectionHeader::new(t)))
         .children(rows)
         // The section's note stands a step off its rows, as a form's does.
         .when_some(footer, |d, f| {

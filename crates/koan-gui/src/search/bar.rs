@@ -31,6 +31,7 @@ use koan_kit::app::*;
 use koan_runtime::{Placement, ShelfSummary};
 
 use super::{Kind, Results, Search, step};
+use crate::components::Inset;
 use crate::components::{CommandBar, CommandResults, Cover, CoverArt, SuggestionRow};
 use crate::library::Lib;
 use crate::library::covers::{Art, Key, Priority, UPLOAD_BYTES_PER_FRAME};

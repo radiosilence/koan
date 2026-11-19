@@ -7,6 +7,7 @@
 use koan_kit::app::*;
 
 use super::TouchShell;
+use crate::components::Inset;
 use crate::components::{Clear, NavRow, RowMetrics, ScrollArea, Slide, SplitView};
 use crate::navigator::Route;
 use crate::paint::Paint;

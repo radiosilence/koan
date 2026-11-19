@@ -7,6 +7,8 @@
 use super::*;
 use crate::components::KoanContextMenu as _;
 use crate::components::KoanInsets as _;
+use crate::components::{Inset, Stack, Text};
+use crate::theme::{Space, Tone};
 
 /// What the transport is drawn as.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -135,17 +137,16 @@ impl Transport {
         let has_entry = entry.is_some();
         let album_id = entry.and_then(|e| e.album_id).unwrap_or(0) as u64;
         let track_id = entry.and_then(|e| e.track_id).unwrap_or(0) as u64;
-        let bar = div()
+        let bar = Stack::row()
+            .space(Space::M)
+            .inset_left(Space::L)
+            .inset_right(Space::S)
             .id("mini-player")
             .relative()
             .w_full()
             .h(p.look.spaced(MINI_HEIGHT))
             .flex_shrink_0()
-            .flex()
             .items_center()
-            .gap(p.space(Space::M))
-            .pl(p.space(Space::L))
-            .pr(p.space(Space::S))
             // The playhead, along the top: where the track is, at a glance.
             .child(
                 div().absolute().top_0().left_0().right_0().child(
@@ -172,16 +173,14 @@ impl Transport {
                             .flex()
                             .flex_col()
                             .child(
-                                div()
-                                    .text_role(TypeRole::Meta, &p.look)
-                                    .text_color(p.strong)
+                                Text::new(TypeRole::Meta)
+                                    .tone(Tone::Strong)
                                     .truncate()
                                     .child(title),
                             )
                             .children(detail.map(|detail| {
-                                div()
-                                    .text_role(TypeRole::Fine, &p.look)
-                                    .text_color(p.muted)
+                                Text::new(TypeRole::Fine)
+                                    .tone(Tone::Muted)
                                     .truncate()
                                     .child(detail)
                             })),
@@ -369,25 +368,20 @@ impl Transport {
                 &self.nav,
                 p.ink,
             );
-            div()
+            Stack::column()
+                .space(Space::S)
                 .w_full()
-                .flex()
-                .flex_col()
-                .gap(p.space(Space::S))
                 .children(actions.take())
                 .child(
-                    div()
+                    Stack::column()
+                        .space(Space::Xs)
                         .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(p.space(Space::Xs))
                         // The title opens the track's details, as on iOS.
                         .child(
-                            div()
+                            Text::new(TypeRole::TitleSmall)
+                                .tone(Tone::Strong)
                                 .id("np-full-title")
                                 .w_full()
-                                .text_role(TypeRole::TitleSmall, &p.look)
-                                .text_color(p.strong)
                                 .truncate()
                                 .child(e.title.clone())
                                 .when_some(e.track_id, |d, track| {
@@ -469,13 +463,11 @@ impl Transport {
         let format = now.format.as_ref().map(format_badge);
         // The system's insets are padding of their own: the page's margins
         // go inside them.
-        let page = div()
+        let page = Stack::column()
+            .space(Space::L)
+            .inset_bottom(Space::L)
             .size_full()
-            .flex()
-            .flex_col()
-            .gap(p.space(Space::L))
             .px(margin)
-            .pb(p.space(Space::L))
             .child(
                 div().flex().items_center().child(
                     Button::icon_only("np-close", Icon::Expand, "close")
@@ -549,12 +541,11 @@ impl Transport {
             )
             // What is playing as it reaches the output.
             .children(format.map(|format| {
-                div()
+                Stack::row()
+                    .role(TypeRole::Fine)
+                    .tone(Tone::Muted)
                     .w_full()
-                    .flex()
                     .justify_center()
-                    .text_role(TypeRole::Fine, &p.look)
-                    .text_color(p.muted)
                     .child(format)
             }));
         // Pulled down by a finger it follows, and closes once let go past a

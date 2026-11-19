@@ -21,6 +21,7 @@ use koan_runtime::{DspBand, DspBandKind, DspPoint};
 
 use super::menu::{Item, Trigger, menu};
 use super::model::{Commit, Dsp};
+use crate::components::Stack;
 use crate::components::sheet::note;
 use crate::components::{Align, Column, DenseRow, DenseTable, TextField};
 use crate::theme::{Look, Space, Tone};
@@ -545,10 +546,7 @@ pub fn points<V: 'static>(
                     .cell(fields.field(index, Part::PointDb(i), band, stamp, window, cx))
             }),
     );
-    div()
-        .flex()
-        .flex_col()
-        .gap(look.space(Space::Xs))
+    Stack::column().space(Space::Xs)
         .child(table)
         .child(note(
             "Edits play at once. Frequency and gain are held to 10 Hz–22 kHz and ±30 dB; a point moved past another takes its place in order.",

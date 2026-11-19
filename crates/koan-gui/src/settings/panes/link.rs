@@ -17,6 +17,7 @@ use crate::theme::{Look, Space, Tone, TypeRole};
 use koan_kit::app::*;
 use koan_runtime::{ConnectionInfo, Invite, KoanEngine, KoanError};
 
+use crate::components::{Inset, Stack};
 use crate::mirror::Slice;
 use crate::settings::form::{section, text};
 use crate::settings::qr::Code;
@@ -164,12 +165,10 @@ impl Render for LinkDevice {
                 .into_any_element(),
         };
         let rows = vec![
-            div()
-                .flex()
-                .flex_col()
+            Stack::column()
+                .space(Space::S)
+                .inset_y(Space::S)
                 .items_center()
-                .gap(look.space(Space::S))
-                .py(look.space(Space::S))
                 .child(code)
                 .child(
                     text(

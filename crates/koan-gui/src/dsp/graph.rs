@@ -28,6 +28,7 @@ use super::model::{Commit, Done, Dsp, Ended, GRAPH_RATE, Outcome};
 use crate::components::Segmented;
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label, observe_accent};
 // a stroke's colour, and the default height, given to the chart.
+use crate::components::Stack;
 use koan_kit::raw::{Hsla, px};
 
 /// How a curve is drawn, the same in its stage's block and on the graph.
@@ -671,10 +672,9 @@ impl Render for Graph {
 
         let compact = self.compact;
         let this = cx.weak_entity();
-        div()
+        Stack::column()
+            .space(Space::M)
             .relative()
-            .flex()
-            .flex_col()
             .w_full()
             .when(self.fills, |d| d.h_full())
             .when(!self.fills, |d| {
@@ -689,7 +689,6 @@ impl Render for Graph {
                     .ok();
                 }))
             })
-            .gap(look.space(Space::M))
             .when(measured && !compact, |d| {
                 d.child(
                     Segmented::new(
@@ -715,14 +714,13 @@ impl Render for Graph {
                     .when(self.fills, |d| d.flex().flex_col().flex_1().min_h_0())
                     .child(chart)
                     .children(self.flat_note.clone().filter(|_| !compact).map(|note| {
-                        div()
+                        Stack::row()
+                            .role(TypeRole::Meta)
                             .absolute()
                             .top(look.space(Space::Xl))
                             .left_0()
                             .right_0()
-                            .flex()
                             .justify_center()
-                            .text_role(TypeRole::Meta, &look)
                             .text_color(look.text_color(Tone::Muted))
                             .child(label(note))
                     })),

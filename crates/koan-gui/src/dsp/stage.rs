@@ -13,6 +13,7 @@ use super::model::{Dsp, Placement, Stage, describe_profile};
 use super::page::EqPage;
 use super::sheet::{Sheets, body, choice_row, content, head, note, section};
 use crate::components::{Badge, Button, ButtonKind, FormRow, Segmented, TextField};
+use crate::components::{Stack, Text};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// What fills a stage, chosen: a correction, with the target it aims at and
@@ -329,10 +330,8 @@ impl Render for StagePicker {
             section(
                 Some("Add…"),
                 vec![
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(look.space(Space::M))
+                    Stack::wrapping()
+                        .space(Space::M)
                         .children(adds)
                         .into_any_element(),
                 ],
@@ -466,10 +465,8 @@ impl StagePicker {
                 );
             }
         }
-        div()
-            .flex()
-            .flex_col()
-            .gap(look.space(Space::Xs))
+        Stack::column()
+            .space(Space::Xs)
             .child(crate::components::SectionHeader::new(name))
             .children(rows)
             .into_any_element()
@@ -546,18 +543,13 @@ impl Render for Explainer {
             .child(
                 body("explain-body", &look)
                     .child(
-                        div()
-                            .text_role(TypeRole::Body, &look)
-                            .text_color(look.palette.ink.hsla())
+                        Text::new(TypeRole::Body).tone(Tone::Ink)
                             .child("Music plays through the correction, then the filters' EQs in order, then out to the device. Each device has its own."),
                     )
                     .child(crate::components::SectionHeader::new("Words"))
                     .children(WORDS.iter().map(|(word, meaning)| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(look.space(Space::Xs))
-                            .child(div().text_role(TypeRole::Body, &look).text_color(look.palette.strong.hsla()).child(label(word)))
+                        Stack::column().space(Space::Xs)
+                            .child(Text::new(TypeRole::Body).tone(Tone::Strong).child(label(word)))
                             .child(note(*meaning, Tone::Muted, &look))
                     }))
                     .child(note(

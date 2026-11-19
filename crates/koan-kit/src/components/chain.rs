@@ -134,7 +134,11 @@ impl RenderOnce for ChainEnd {
             .text_role(TypeRole::Meta, &look)
             .text_color(look.text_color(Tone::Muted))
             .when(look.icons, |d| {
-                d.child(KoanIcon::new(self.icon).role(TypeRole::Meta).tone(Tone::Muted))
+                d.child(
+                    KoanIcon::new(self.icon)
+                        .role(TypeRole::Meta)
+                        .tone(Tone::Muted),
+                )
             })
             .child(self.title)
     }
@@ -347,7 +351,11 @@ impl RenderOnce for ChainSlot {
                     .text_role(TypeRole::Body, &look)
                     .text_color(look.text_color(Tone::Accent))
                     .when(look.icons, |d| {
-                        d.child(KoanIcon::new(Icon::Add).role(TypeRole::Body).tone(Tone::Accent))
+                        d.child(
+                            KoanIcon::new(Icon::Add)
+                                .role(TypeRole::Body)
+                                .tone(Tone::Accent),
+                        )
                     })
                     .child(self.prompt),
             )

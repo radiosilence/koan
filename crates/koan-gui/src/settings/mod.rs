@@ -20,6 +20,7 @@ use crate::theme::{self, Icon, KoanTheme, Look, Space, Tone};
 use koan_kit::app::*;
 use koan_runtime::{ConnectionInfo, KoanEngine};
 
+use crate::components::{Inset, Stack};
 use crate::mirror::{Mirror, Slice};
 use model::SettingsModel;
 use panes::Pane;
@@ -762,13 +763,12 @@ impl SettingsWindow {
     ) -> Stateful<Div> {
         let client = crate::components::draws_decorations(window);
         let look = Look::of(window, cx);
-        let strip = div()
+        let strip = Stack::row()
+            .inset_x(Space::S)
             .id("settings-top")
-            .flex()
             .justify_end()
             .items_center()
-            .h(crate::components::SecondaryWindow::strip_height())
-            .px(look.space(Space::S));
+            .h(crate::components::SecondaryWindow::strip_height());
         crate::components::moves_window(strip, window, cx).when(client, |strip| {
             let sheets = self.ctx.sheets.clone();
             strip.child(crate::components::close_button(move |window, cx| {

@@ -31,6 +31,8 @@ use super::tile::{Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::components::{Cover, CoverArt, FadeIn, Reveal, RowMetrics, SectionHeading, Spinner};
+use crate::components::{Inset, Stack, Text};
+use crate::theme::Tone;
 use crate::theme::{Motion, Space, TypeRole};
 
 /// A biography longer than this opens clamped, with "more" under it.
@@ -768,12 +770,12 @@ impl ArtistPage {
             if !self.looking_up {
                 return div().into_any_element();
             }
-            return div()
-                .pt(p.space(Space::L))
-                .flex()
+            return Stack::row()
+                .inset_top(Space::L)
+                .space(Space::S)
+                .role(Type::Control)
+                .tone(Tone::Muted)
                 .items_center()
-                .gap(p.space(Space::S))
-                .typeset(p, Type::Control, p.muted)
                 .child(Spinner::new(p.look.font_size(TypeRole::Control)))
                 .child("looking up biography…")
                 .into_any_element();
@@ -782,19 +784,19 @@ impl ArtistPage {
         let long = bio.len() > BIO_CLAMP;
         // As wide as the page, up to a reading measure, so it wraps on a
         // phone too.
-        let mut text = div()
+        let mut text = Text::new(Type::Control)
+            .tone(Tone::Muted)
             .w_full()
             .min_w_0()
             .max_w(p.look.spaced(680.0))
-            .typeset(p, Type::Control, p.muted)
             .child(bio.replace('\n', "\n\n"));
         if long && !self.expanded {
             text = text.line_clamp(4);
         }
-        let links = div()
-            .flex()
-            .gap(p.space(Space::M))
-            .typeset(p, Type::Fine, p.muted)
+        let links = Stack::row()
+            .space(Space::M)
+            .role(Type::Fine)
+            .tone(Tone::Muted)
             .when(long && !self.expanded, |d| {
                 d.child(
                     div()
@@ -828,11 +830,9 @@ impl ArtistPage {
             .pb(RowMetrics::page_top(&p.look))
             .child(SectionHeading::new("about"))
             .child({
-                let body = div()
+                let body = Stack::column()
+                    .space(Space::S)
                     .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(p.space(Space::S))
                     .child(text)
                     .child(links);
                 if self.bio_arriving {
