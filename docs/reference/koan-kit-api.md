@@ -88,6 +88,52 @@ Every component is a `RenderOnce` element that reads the window's `Look`
 as it renders. Interactive ones take an id, under which they keep what
 the pointer is doing and the state of their transitions.
 
+### components::accessory_bar
+
+A bar over the foot of a touch window, above its tabs: something going
+on that the person can reach from any page.
+
+#### `AccessoryBar`
+
+*struct* · A bar over a touch window's tabs, on the page's ground, laying out what
+it is given in a row on the page's steps, centred down it, with an
+optional progress line along its top edge, `AccessoryBar::height` tall.
+A tap on the bar, or a finger pushing it up, calls `on_open`, which
+opens what the bar stands for.
+
+It holds no parts of its own: an app composes it, typically a picture,
+`TwoLines` and a `ControlGroup`, whose presses stay the controls'.
+
+```rust
+#[derive(IntoElement)]
+pub struct AccessoryBar { /* private fields */ }
+```
+
+- `pub fn height(look: &Look) -> Pixels`
+
+  The bar's height, as iOS draws a phone's bar over the tabs: 56
+  points.
+
+- `pub fn picture(look: &Look) -> Pixels`
+
+  The side of a picture leading the bar, such as a cover: 30 points.
+
+- `pub fn new(id: impl Into<SharedString>) -> Self`
+
+  An empty bar, its gestures kept under `id`.
+
+- `pub fn progress(self, share: f32, glide: Option<&Glide>) -> Self`
+
+  A line along the top, `share` of the way across (0 to 1), moved on
+  the GPU between reports by `glide` when one is given.
+
+- `pub fn on_open(self, on_open: impl Fn(&mut Window, &mut App) + 'static) -> Self`
+
+  What a tap on the bar, or a finger pushing it up, does. Without it
+  the bar takes neither.
+
+Implements `ParentElement`, `RenderOnce`.
+
 ### components::animated
 
 Animation the GPU draws: an element whose pixels come from a fragment
@@ -1350,6 +1396,58 @@ pub struct Banner { /* private fields */ }
 
 Implements `RenderOnce`.
 
+### components::bar_control
+
+A control in a bar of glyphs, such as a player's shuffle, previous,
+next and repeat: the glyph in `body`, or its word where the look hides
+icons, 44 points wide to hit and as tall as the controls' row, but only
+the glyph's width in the layout, so the bar sets the gaps between the
+glyphs while the hit area reaches into them. One that toggles is `ink`
+underlined in the accent while on and `muted` off. A press is answered
+with a ring.
+
+#### `BarControl`
+
+*struct* · A control in a bar of glyphs: a glyph, or its word where icons are
+hidden, with a finger's target.
+
+```rust
+#[derive(IntoElement)]
+pub struct BarControl { /* private fields */ }
+```
+
+- `pub fn new(id: impl Into<ElementId>, icon: Icon, text: impl AsRef<str>, help: impl Into<SharedString>) -> Self`
+
+  `text` is its word where the look hides icons; `help` what its
+  tooltip says, its shortcut included.
+
+- `pub fn answer(self, answer: Answer) -> Self`
+
+  What a press draws, where a ring would not say it: a skip's streak.
+
+- `pub fn on(self, on: bool) -> Self`
+
+  A control that toggles, and whether it is on.
+
+- `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press does.
+
+Implements `RenderOnce`.
+
+#### `bar_item`
+
+*function* · An item in a bar's trailing group (a badge, a menu's glyph) around
+`base`: centred across a finger's height, in `meta`,
+reaching half `TransportMetrics::trailing_gap` either side, and a glyph
+alone further, to `HIT`. A glyph's reach can pass its neighbour's at
+small gaps: each item blocks the ones drawn before it, so a press in the
+overlap goes to one item, never two.
+
+```rust
+pub fn bar_item(base: Stateful<Div>, glyph_only: bool, look: &Look) -> Stateful<Div>
+```
+
 ### components::bars
 
 The playing bars: three bars standing as high as the music's low, middle
@@ -2371,6 +2469,33 @@ pub struct CommandResults { /* private fields */ }
 - `pub fn empty(self, text: impl AsRef<str>) -> Self`
 
   What it says when no section has a row.
+
+Implements `RenderOnce`.
+
+### components::control_group
+
+Controls side by side on one rhythm, each a touch target wide.
+
+#### `ControlGroup`
+
+*struct* · Controls side by side, each in a slot a touch target wide (`HIT`) with
+none between, so the targets touch and the glyphs, whatever their
+widths, sit an even step apart with no gap of their own. A press in a
+slot is the control's: it does not reach what the group sits in, such
+as a bar that opens on a tap. It never shrinks.
+
+```rust
+#[derive(IntoElement, Default)]
+pub struct ControlGroup { /* private fields */ }
+```
+
+- `pub fn new() -> Self`
+
+  An empty group.
+
+- `pub fn control(self, control: impl IntoElement) -> Self`
+
+  A control after those already given.
 
 Implements `RenderOnce`.
 
@@ -3481,7 +3606,7 @@ pub struct ShellFoot { /* private fields */ }
 
 - `pub fn phone(player: impl IntoElement, tabs: impl IntoElement) -> Self`
 
-  A phone's foot: `player` at `TransportMetrics::mini_height`, over
+  A phone's foot: `player` at `AccessoryBar::height`, over
   `tabs`.
 
 - `pub fn tablet(player: impl IntoElement) -> Self`
@@ -5435,14 +5560,6 @@ controls 22 apart over the seek bar.
 ```rust
 pub struct TransportMetrics;
 ```
-
-- `pub fn mini_height(look: &Look) -> Pixels`
-
-  A phone's mini player over the tabs, the iOS app's: 56 points.
-
-- `pub fn mini_sleeve(look: &Look) -> Pixels`
-
-  The mini player's sleeve, 30 points.
 
 - `pub fn control_gap(look: &Look) -> Pixels`
 
@@ -8532,61 +8649,32 @@ for a program's `prepare`.
 pub fn track_at(u: &[f32; gpui::SHADER_UNIFORMS], k: usize, time: f32) -> f32
 ```
 
-### components::transport_control
+### components::two_lines
 
-A transport control (shuffle, previous, next, repeat): the glyph in
-`body`, or its word where the look hides icons, 44 points wide to hit
-and as tall as the controls' row, but only the glyph's width in the
-layout, so the controls sit as far apart as the
-Mac's while the hit area reaches into the gaps. One that toggles is `ink`
-underlined in the accent while on and `muted` off. A press is answered
-with a ring.
+A title over a line of detail, each cut to the width it is given.
 
-#### `TransportControl`
+#### `TwoLines`
 
-*struct* · A transport control (shuffle, previous, next, repeat): a glyph, or its
-word where icons are hidden, with a finger's target.
+*struct* · A title over an optional subtitle, each on one line and cut short where
+it does not fit: what is playing over its artist, a device's name over
+its state. In a row it takes the width the row's other parts leave, so a
+row of a picture, `TwoLines` and a `ControlGroup` gives the words the
+rest of the room.
 
 ```rust
 #[derive(IntoElement)]
-pub struct TransportControl { /* private fields */ }
+pub struct TwoLines { /* private fields */ }
 ```
 
-- `pub fn new(id: impl Into<ElementId>, icon: Icon, text: impl AsRef<str>, help: impl Into<SharedString>) -> Self`
+- `pub fn new(title: impl Into<SharedString>) -> Self`
 
-  `text` is its word where the look hides icons; `help` what its
-  tooltip says, its shortcut included.
+  The title, strong.
 
-- `pub fn answer(self, answer: Answer) -> Self`
+- `pub fn subtitle(self, subtitle: impl Into<SharedString>) -> Self`
 
-  What a press draws, where a ring would not say it: a skip's streak.
-
-- `pub fn on(self, on: bool) -> Self`
-
-  A control that toggles, and whether it is on.
-
-- `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
-
-  What a press does.
+  The line under the title, smaller and muted.
 
 Implements `RenderOnce`.
-
-#### `transport_item`
-
-*function* · One of a transport bar's trailing items (a format badge, sleep, play on,
-output, EQ) around `base`: centred across a finger's height, in `meta`,
-reaching half `TransportMetrics::trailing_gap` either side, and a glyph
-alone further, to `HIT`. A glyph's reach can pass its neighbour's at
-small gaps: each item blocks the ones drawn before it, so a press in the
-overlap goes to one item, never two.
-
-```rust
-pub fn transport_item(
-    base: Stateful<Div>,
-    glyph_only: bool,
-    look: &Look,
-) -> Stateful<Div>
-```
 
 ### components::viewer
 

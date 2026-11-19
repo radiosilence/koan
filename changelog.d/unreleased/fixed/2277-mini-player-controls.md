@@ -1,0 +1,1 @@
+- **The phone's mini player keeps its controls on one even step.** Play on, play and next sit in touch-sized slots with no gap between, so the title and the line under it get the width that is freed.

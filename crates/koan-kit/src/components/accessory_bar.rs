@@ -112,7 +112,7 @@ impl RenderOnce for AccessoryBar {
             let tapped = open.clone();
             bar = bar
                 .on_click(move |_, window, cx| tapped(window, cx))
-                .on_scroll_wheel(move |event: &ScrollEvent, window, cx| {
+                .on_scroll(move |event: &ScrollEvent, window, cx| {
                     if event.source != ScrollSource::Touch {
                         return;
                     }
