@@ -1808,6 +1808,128 @@ pub struct Button { /* private fields */ }
 
 Implements `RenderOnce`.
 
+### components::chain
+
+A signal chain drawn down the page: where it starts and ends
+(`ChainEnd`), the stages it passes through (`ChainStage`, and
+`ChainSlot` for one not filled yet), and the line joining them
+(`ChainLink`, `ChainJoin` with words along it). The line is drawn in the
+accent while the chain is lit (a match, say) and as a rule otherwise.
+kōan's EQ page draws a device's chain with it.
+
+#### `ChainLink`
+
+*struct* · A step of the line between two parts of the chain.
+
+```rust
+#[derive(IntoElement)]
+pub struct ChainLink { /* private fields */ }
+```
+
+- `pub fn new(lit: bool) -> Self`
+
+  A link, in the accent when `lit`.
+
+Implements `RenderOnce`.
+
+#### `ChainJoin`
+
+*struct* · The line between two stages with what is said about the join beside it:
+at least a link's height, as tall as its lines.
+
+```rust
+#[derive(IntoElement)]
+pub struct ChainJoin { /* private fields */ }
+```
+
+- `pub fn new(lit: bool) -> Self`
+
+  A join, its line in the accent when `lit`.
+
+Implements `ParentElement`, `RenderOnce`.
+
+#### `ChainEnd`
+
+*struct* · Where the chain starts or ends: a glyph over the line and its name.
+
+```rust
+#[derive(IntoElement)]
+pub struct ChainEnd { /* private fields */ }
+```
+
+- `pub fn new(icon: Icon, title: impl Into<SharedString>) -> Self`
+
+  An end named `title`, its glyph `icon` drawn when icons are shown.
+
+Implements `RenderOnce`.
+
+#### `ChainStage`
+
+*struct* · A stage of the chain, outlined: its title, what fills it and a detail,
+a picture of what it does, and its controls. Pressing the words or the
+picture chooses what fills it. Below the compact width the words take
+the whole width, over a row of the picture and the controls; beside them
+they would be cut to a word.
+
+```rust
+#[derive(IntoElement)]
+pub struct ChainStage { /* private fields */ }
+```
+
+- `pub fn new(id: impl Into<ElementId>, title: impl Into<SharedString>, name: impl Into<SharedString>) -> Self`
+
+  A stage titled `title`, filled by `name`.
+
+- `pub fn detail(self, detail: Option<impl Into<SharedString>>) -> Self`
+
+  A line under the name; an empty one is left out.
+
+- `pub fn art(self, art: Option<impl IntoElement>) -> Self`
+
+  What the stage does, drawn small beside its words.
+
+- `pub fn control(self, control: impl IntoElement) -> Self`
+
+  A control at the stage's trailing edge.
+
+- `pub fn lit(self, lit: bool) -> Self`
+
+  Outlined in the accent, as the line is when the chain is lit.
+
+- `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What pressing the stage's words does.
+
+Implements `RenderOnce`.
+
+#### `ChainSlot`
+
+*struct* · A stage not filled yet: a dashed place, with its title and a prompt to
+choose what fills it, which pressing does.
+
+```rust
+#[derive(IntoElement)]
+pub struct ChainSlot { /* private fields */ }
+```
+
+- `pub fn new(id: impl Into<ElementId>, prompt: impl Into<SharedString>) -> Self`
+
+  A slot asking for what fills it with `prompt`.
+
+- `pub fn title(self, title: impl Into<SharedString>) -> Self`
+
+  The stage's title, over the prompt.
+
+- `pub fn lit(self, lit: bool) -> Self`
+
+  Outlined in the accent, as the line is when the chain is lit.
+
+- `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What pressing the slot does.
+
+Implements `RenderOnce`.
+
 ### components::chart
 
 A chart: axes, series, rules and points over a plot, drawn by the GPU
@@ -1825,8 +1947,11 @@ drew and writes only what changed, as keyframes:
   from one to the other: eased (`DataMotion::Ease`), interpolated over a
   sample interval and so drawn one sample behind (`DataMotion::Interpolate`),
   or drawn current and carried on along its last rate until the next
-  sample corrects it (`DataMotion::Extrapolate`). Samples arriving at their
-  own rate are drawn at the display's.
+  sample corrects it (`DataMotion::Extrapolate`), or, for a series that
+  takes one new sample at its right and drops its oldest, slid left by a
+  sample over the interval as the newest enters from the right edge
+  (`DataMotion::Scroll`). Samples arriving at their own rate are drawn at
+  the display's.
 - **Axes.** A range change eases each axis's affine map; every mark
   reads it as tracks, so the series, the grid, the points and the labels
   move together with no frame drawn.
@@ -1856,6 +1981,15 @@ pub enum DataMotion {
     /// A sample every interval, drawn as it lands and carried on along the
     /// rate of the last two for one more interval; the next corrects it.
     Extrapolate(Duration),
+    /// A sample every interval, evenly spaced in x, the newest at the right
+    /// and the oldest dropped off the left, against an x axis that stays
+    /// put: each new set slides the whole series left by one sample,
+    /// linearly over the interval, as the newest enters from the right
+    /// edge, rather than easing each value to its neighbour's. A series
+    /// shorter than the axis stands at its right. Drawn as a smooth curve
+    /// through the samples that rounds peaks off without passing beyond
+    /// them.
+    Scroll(Duration),
 }
 ```
 
@@ -2789,6 +2923,10 @@ pub struct TextField { /* private fields */ }
 
   A field over `state`, which its owner keeps and listens to.
 
+- `pub fn width(self, width: FieldWidth) -> Self`
+
+  Drawn as wide as what it takes (`FieldWidth`).
+
 - `pub fn label(self, label: impl Into<SharedString>) -> Self`
 
   What a screen reader names it, where no visible label beside it
@@ -2814,6 +2952,23 @@ pub struct TextField { /* private fields */ }
   keyboard, rather than its line of text alone.
 
 Implements `RenderOnce`.
+
+#### `FieldWidth`
+
+*enum* · How wide a field is drawn for what it takes, on the size scale so it
+grows with the text; without one it takes the width it is given.
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldWidth {
+    /// A short figure: a year. 64 points.
+    Figure,
+    /// A number of a few digits: a port, a size. 120 points.
+    Number,
+    /// A name: a username. 200 points.
+    Name,
+}
+```
 
 #### `TextArea`
 
@@ -2916,6 +3071,28 @@ pub struct FilterButton { /* private fields */ }
 
   What a press anywhere on it does: usually opening the search it stands
   for.
+
+Implements `RenderOnce`.
+
+#### `FieldLead`
+
+*struct* · What leads a phone's list: its filter or search field, at the page's
+margin, scrolled away with the list as an iOS list's search field is. A
+page whose field stays put under the bar (a search tab) sets `under_bar`.
+
+```rust
+#[derive(IntoElement)]
+pub struct FieldLead { /* private fields */ }
+```
+
+- `pub fn new(field: impl IntoElement) -> Self`
+
+  A lead holding `field`.
+
+- `pub fn under_bar(self) -> Self`
+
+  Below the bar the page runs under, a step clear of it and of what
+  follows, rather than a step under the list's top.
 
 Implements `RenderOnce`.
 
@@ -3352,6 +3529,60 @@ pub struct Push(_);
   goes when `fades`.
 
 Implements `Default`.
+
+### components::foot_card
+
+What stands over the foot of a touch window's pages: the foot itself,
+the player over the tabs (`ShellFoot`), and a card floating above it
+(`FootCard`).
+
+#### `FootCard`
+
+*struct* · A card over the foot of the pages, a step above what the shell draws
+there, with the page's margin either side: what the app is busy with,
+where a phone has no sidebar foot to hold it. Even padding on every
+side, as the iOS app's card. It rises into place, fades in, and fades
+out while `leaving`.
+
+```rust
+#[derive(IntoElement)]
+pub struct FootCard { /* private fields */ }
+```
+
+- `pub fn new(id: impl Into<SharedString>, child: impl IntoElement) -> Self`
+
+  A card holding `child`, its motion kept under `id`.
+
+- `pub fn leaving(self, leaving: bool) -> Self`
+
+  Fading out, on its way off the page.
+
+Implements `RenderOnce`.
+
+#### `ShellFoot`
+
+*struct* · The foot a touch shell draws over its pages, running on under the home
+indicator and measured for the pages' foot inset (`foot_probe`). A
+phone's (`phone`) is the mini player, its playhead along the foot's
+edge, over the tabs under a rule, solid: only the bar at the top is
+frosted. A tablet's (`tablet`) is the full transport, frosted as the
+desktop's is.
+
+```rust
+#[derive(IntoElement)]
+pub struct ShellFoot { /* private fields */ }
+```
+
+- `pub fn phone(player: impl IntoElement, tabs: impl IntoElement) -> Self`
+
+  A phone's foot: `player` at `TransportMetrics::mini_height`, over
+  `tabs`.
+
+- `pub fn tablet(player: impl IntoElement) -> Self`
+
+  A tablet's foot: `player` at `TransportMetrics::HEIGHT`, frosted.
+
+Implements `RenderOnce`.
 
 ### components::form
 
@@ -4273,6 +4504,146 @@ pub struct AnimatedLayer { /* private fields */ }
 
 Implements `Element`, `IntoElement`.
 
+### components::layout
+
+Layout and type on the theme's scale, for what a page lays out itself:
+`Stack`, a flex container whose gap and insets are steps of `Space`, and
+`Text`, a run of text in a type role and a tone. Each is a `div` that
+reads the window's `Look` as it lays out, so a page names a step or a
+role and never a length or a colour; everything else a `div` takes
+(flex, alignment, ids, handlers) goes on as it would on the `div`.
+
+#### `Inset`
+
+*trait* · Insets on the spacing scale, shared by `Stack` and `Text`.
+
+```rust
+pub trait Inset: Sized {
+    /// The element's spacing, which the methods below set.
+    #[doc(hidden)]
+    fn spacing(&mut self) -> &mut Spacing;
+    /// The same inset on every edge.
+    fn inset_all(mut self, space: Space) -> Self;
+    /// The same inset on the leading and trailing edges.
+    fn inset_x(mut self, space: Space) -> Self;
+    /// The same inset on the top and bottom edges.
+    fn inset_y(mut self, space: Space) -> Self;
+    /// The inset on the top edge.
+    fn inset_top(mut self, space: Space) -> Self;
+    /// The inset on the bottom edge.
+    fn inset_bottom(mut self, space: Space) -> Self;
+    /// The inset on the left edge.
+    fn inset_left(mut self, space: Space) -> Self;
+    /// The inset on the right edge.
+    fn inset_right(mut self, space: Space) -> Self;
+    /// The page's margin either side (`RowMetrics::page_margin`): what a
+    /// page's content keeps to.
+    fn page_margins(mut self) -> Self;
+    /// A page header's insets above and below (`RowMetrics::page_top`,
+    /// `RowMetrics::header_gap`): clear of the page's top, and a step off
+    /// what follows it.
+    fn page_head(mut self) -> Self;
+}
+```
+
+#### `Stack`
+
+*struct* · A flex container on the spacing scale: `Stack::column().space(Space::L)`.
+
+```rust
+pub struct Stack { /* private fields */ }
+```
+
+- `pub fn column() -> Self`
+
+  Children one under another.
+
+- `pub fn block() -> Self`
+
+  Children laid out as a plain `div` lays them out, one under another
+  at their own heights: for insets around content that is not a list
+  of parts.
+
+- `pub fn row() -> Self`
+
+  Children side by side.
+
+- `pub fn wrapping() -> Self`
+
+  Children side by side, wrapping onto further lines when they do not
+  fit: a set of buttons on a narrow window.
+
+- `pub fn space(self, space: Space) -> Self`
+
+  The gap between children.
+
+- `pub fn measure(self, measure: Measure) -> Self`
+
+  As wide as its parent up to `measure`, centred in what is left.
+
+- `pub fn type_role(self, role: TypeRole) -> Self`
+
+  The type role its text takes, unless a child says otherwise.
+
+- `pub fn tone(self, tone: Tone) -> Self`
+
+  The tone its text takes, unless a child says otherwise.
+
+Implements `Inset`.
+
+#### `Text`
+
+*struct* · A run of text in a type role, in a tone or the one it sits in:
+`Text::new(TypeRole::Meta).tone(Tone::Muted).child(words)`.
+
+```rust
+pub struct Text { /* private fields */ }
+```
+
+- `pub fn new(role: TypeRole) -> Self`
+
+  Text in `role`, in the tone it sits in until `tone` says otherwise.
+
+- `pub fn in_tone(tone: Tone) -> Self`
+
+  Text in the role of what it sits in (a table's cell), in `tone`.
+
+- `pub fn tone(self, tone: Tone) -> Self`
+
+  The tone it is drawn in.
+
+- `pub fn measure(self, measure: Measure) -> Self`
+
+  As wide as its parent up to `measure`, from the leading edge.
+
+- `pub fn icon(self, icon: Icon) -> Self`
+
+  A glyph before the words, in their role and tone, where icons are
+  shown: a mark that says what kind of line it is (a check, a warning).
+
+- `pub fn picked(self, picked: bool) -> Self`
+
+  On a picked row: in `on_selection`, whatever the tone.
+
+Implements `Inset`.
+
+#### `Divider`
+
+*struct* · A hairline in `rule` between two parts of a page: across it
+(`horizontal`) or down it (`vertical`). Placed as a `div` is.
+
+```rust
+pub struct Divider { /* private fields */ }
+```
+
+- `pub fn horizontal() -> Self`
+
+  A rule across: the hairline's height, its parent's width.
+
+- `pub fn vertical() -> Self`
+
+  A rule down: the hairline's width, as tall as it is placed.
+
 ### components::level
 
 A level between two glyphs: a renderer's volume.
@@ -4947,6 +5318,46 @@ pub struct MenuSlot<K> { /* private fields */ }
 
 Implements `Default`.
 
+### components::meter
+
+A horizontal bar filled from the left to a fraction: a speed, a latency,
+a share. Where the renderer draws shaders the GPU eases the fill to each
+new fraction from where it stood, so a meter fed at a poll moves between
+the values without a frame drawn for it. The fill is kept by the meter's
+id from one render to the next, so callers hold no state of their own.
+
+#### `Meter`
+
+*struct* · A bar filled to `fraction`, from 0 to 1, in the accent over the rule's
+colour, unless given others.
+
+```rust
+#[derive(IntoElement)]
+pub struct Meter { /* private fields */ }
+```
+
+- `pub fn new(id: impl Into<ElementId>, fraction: f32) -> Self`
+
+  A fraction that is not finite is drawn as 0; one outside 0..1 is
+  clamped.
+
+- `pub fn color(self, color: Hsla) -> Self`
+
+  The fill's colour.
+
+- `pub fn track(self, track: Hsla) -> Self`
+
+  The colour of the bar behind the fill.
+
+- `pub fn height(self, height: Pixels) -> Self`
+
+- `pub fn ease(self, ease: Duration) -> Self`
+
+  How long the fill takes to reach a new fraction. A meter fed at a
+  poll takes the poll's interval, so it moves without stopping.
+
+Implements `RenderOnce`.
+
 ### components::metrics
 
 Where rows and pages stand: the Mac's `RowMetrics`, and the page margin
@@ -5046,6 +5457,11 @@ pub struct RowMetrics;
   `page_margin` for a layout that has the scale and not the look: a
   tile grid working out its columns.
 
+- `pub fn below_bar(look: &Look) -> Pixels`
+
+  Between the bar a list scrolls under and the header it scrolls away
+  with the rows (a phone's filter field): 10 points.
+
 - `pub fn page_top(look: &Look) -> Pixels`
 
   Above a page's header: the page's margin, as the spec has it on
@@ -5089,6 +5505,14 @@ controls 22 apart over the seek bar.
 ```rust
 pub struct TransportMetrics;
 ```
+
+- `pub fn mini_height(look: &Look) -> Pixels`
+
+  A phone's mini player over the tabs, the iOS app's: 56 points.
+
+- `pub fn mini_sleeve(look: &Look) -> Pixels`
+
+  The mini player's sleeve, 30 points.
 
 - `pub fn control_gap(look: &Look) -> Pixels`
 
@@ -6579,7 +7003,7 @@ lays a `Scrollbar` over itself the same way.
 pub struct ScrollArea { /* private fields */ }
 ```
 
-- `pub fn new(id: impl Into<ElementId>, content: Div) -> Self`
+- `pub fn new(id: impl Into<ElementId>, content: impl IntoElement + Styled + 'static) -> Self`
 
   `content` is the column that scrolls, styled as the page needs.
 
@@ -8130,6 +8554,23 @@ pub struct TransportControl { /* private fields */ }
 
 Implements `RenderOnce`.
 
+#### `transport_item`
+
+*function* · One of a transport bar's trailing items (a format badge, sleep, play on,
+output, EQ) around `base`: centred across a finger's height, in `meta`,
+reaching half `TransportMetrics::trailing_gap` either side, and a glyph
+alone further, to `HIT`. A glyph's reach can pass its neighbour's at
+small gaps: each item blocks the ones drawn before it, so a press in the
+overlap goes to one item, never two.
+
+```rust
+pub fn transport_item(
+    base: Stateful<Div>,
+    glyph_only: bool,
+    look: &Look,
+) -> Stateful<Div>
+```
+
 ### components::viewer
 
 A picture as large as the window allows, over everything: the Mac's
@@ -8218,6 +8659,13 @@ pub struct SecondaryWindow { /* private fields */ }
 
   The content runs to the top edge, under the title bar's buttons on
   macOS; the window draws its top `strip_height` itself.
+
+- `pub fn top_strip(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> Stateful<Div>`
+
+  The strip itself, under `id`: as tall as `strip_height`, a step in
+  from either side, its contents (a close button where the app draws
+  its decorations) at its trailing end, and dragging it moves the
+  window.
 
 - `pub fn strip_height() -> Pixels`
 
@@ -8331,8 +8779,11 @@ drew and writes only what changed, as keyframes:
   from one to the other: eased (`DataMotion::Ease`), interpolated over a
   sample interval and so drawn one sample behind (`DataMotion::Interpolate`),
   or drawn current and carried on along its last rate until the next
-  sample corrects it (`DataMotion::Extrapolate`). Samples arriving at their
-  own rate are drawn at the display's.
+  sample corrects it (`DataMotion::Extrapolate`), or, for a series that
+  takes one new sample at its right and drops its oldest, slid left by a
+  sample over the interval as the newest enters from the right edge
+  (`DataMotion::Scroll`). Samples arriving at their own rate are drawn at
+  the display's.
 - **Axes.** A range change eases each axis's affine map; every mark
   reads it as tracks, so the series, the grid, the points and the labels
   move together with no frame drawn.
@@ -9169,6 +9620,76 @@ pub fn name_when(
 pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement>
 ```
 
+#### `section`
+
+*function* · A section of a sheet: its heading, its rows, and a footer saying what
+they mean, a step off them as a form's is.
+
+```rust
+pub fn section(
+    title: Option<&str>,
+    rows: Vec<AnyElement>,
+    footer: Option<SharedString>,
+    look: &Look,
+) -> impl IntoElement
+```
+
+#### `choice_row`
+
+*function* · A row a click acts on: what it is, a line beneath, and what trails, lit
+under the pointer as the kit's controls are. The fill reaches past the
+text by the space it is set in by, so the text lines up with the sheet's.
+
+```rust
+pub fn choice_row(
+    id: impl Into<ElementId>,
+    title: impl Into<SharedString>,
+    detail: Option<SharedString>,
+    trailing: Option<AnyElement>,
+    look: &Look,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> ChoiceRow
+```
+
+#### `ChoiceRow`
+
+*struct* · A row a click acts on, made by `choice_row`.
+
+```rust
+#[derive(IntoElement)]
+pub struct ChoiceRow { /* private fields */ }
+```
+
+Implements `RenderOnce`.
+
+#### `confirmation`
+
+*function* · A confirmation's panel body: its title, what will happen, and its
+buttons trailing, wrapping on a narrow window.
+
+```rust
+pub fn confirmation(
+    title: impl Into<SharedString>,
+    message: impl Into<SharedString>,
+    buttons: Vec<AnyElement>,
+    look: &Look,
+) -> Div
+```
+
+#### `scroll_body`
+
+*function* · A sheet's body scrolled by the kit's `ScrollArea`, which keeps a field
+being typed in clear of the keyboard: `body`'s insets and gap around
+`rows`.
+
+```rust
+pub fn scroll_body(
+    id: impl Into<ElementId>,
+    rows: Vec<AnyElement>,
+    look: &Look,
+) -> super::ScrollArea
+```
+
 ## `koan_kit::theme`
 
 The kōan theme for GPUI: tokens, Geist Mono, the icon set, the record
@@ -9610,6 +10131,10 @@ pub struct Look {
   A width that holds text, in points at 100 %, grown with the text
   size rather than the spacing.
 
+- `pub fn measure(&self, measure: Measure) -> Pixels`
+
+  The widest a column of content runs (`Measure`).
+
 - `pub fn font_size(&self, role: TypeRole) -> Pixels`
 
   A type role's size, at the text size.
@@ -9741,6 +10266,23 @@ View or Stage Manager once a sidebar would leave its page too little.
 pub const COMPACT_WIDTH: Pixels = px(660.0);
 ```
 
+#### `Measure`
+
+*enum* · The widest a column of content runs, however wide the window: past it a
+line is too long to read and a page's parts drift apart. `Look::measure`
+gives it on the window's scale.
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Measure {
+    /// Prose: a biography, a long note. 680 points on the spacing scale.
+    Prose,
+    /// A page of controls and their notes, the EQ page's: 720 points on the
+    /// size scale, so it grows with the text it holds.
+    Page,
+}
+```
+
 #### `TOOLBAR_BUTTON`
 
 *constant* · A toolbar button's cell, the size of the platform's own.
@@ -9780,6 +10322,9 @@ pub struct Scale {
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Space {
+    /// Two points: between a line and the one under it that belongs to it,
+    /// a title and its name, say.
+    Xxs,
     Xs,
     S,
     M,
