@@ -1,0 +1,1 @@
+- **Phones and tablets no longer fetch every cover ahead.** On iOS and Android, "Fetch every record's cover ahead" (Settings → Server) is off unless turned on, so a large library's covers no longer cost data and storage for records that are never opened; pages still fetch the covers they show. A device that set it keeps its choice, and computers and the Apple TV still preload.
