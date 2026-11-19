@@ -716,6 +716,7 @@ impl SyncedLines {
 #[cfg(test)]
 mod cue_tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn the_line_sung_is_the_last_one_started_and_the_wait_is_to_the_next() {
