@@ -14,10 +14,10 @@
 //! anchor, and sets nothing while paused. A seek, a pause or a new track
 //! moves the anchor, which sets it again.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use koan_kit::app::*;
-use koan_runtime::{LyricLine, Lyrics};
+use koan_runtime::Lyrics;
 
 use crate::components::{EmptyState, Inspector, ScrollArea, Spinner, SyncedLines, plain_text};
 use crate::engine::{command, engine};
@@ -174,25 +174,14 @@ impl LyricsPanel {
             return;
         }
         let position = anchor.at(Instant::now(), 0) as f64 / 1000.0;
-        let (active, next) = place(&lyrics.lines, position);
-        let now = Instant::now();
-        let since = active
-            .filter(|_| anchor.playing)
-            .and_then(|line| lyrics.lines.get(line))
-            .and_then(|line| {
-                now.checked_sub(Duration::from_secs_f64(
-                    (position - line.time_secs).max(0.0),
-                ))
-            });
-        if active != self.active {
-            self.active = active;
-            self.since = since;
+        let starts: Vec<f64> = lyrics.lines.iter().map(|line| line.time_secs).collect();
+        let cue = SyncedLines::cue(&starts, position, anchor.playing, Instant::now());
+        if cue.active != self.active {
+            self.active = cue.active;
+            self.since = cue.since;
             cx.notify();
         }
-        let Some(wait) = next
-            .filter(|_| anchor.playing)
-            .and_then(|wait| Duration::try_from_secs_f64(wait).ok())
-        else {
+        let Some(wait) = cue.next_in else {
             return;
         };
         self._follow = Some(cx.spawn(async move |this, cx| {
@@ -260,35 +249,5 @@ impl Render for LyricsPanel {
             .into_any_element(),
         };
         panel.body(body)
-    }
-}
-
-/// The line being sung at `position` seconds, the last one started, and how
-/// long until the next starts.
-fn place(lines: &[LyricLine], position: f64) -> (Option<usize>, Option<f64>) {
-    let active = lines.iter().rposition(|l| l.time_secs <= position);
-    let next = lines
-        .iter()
-        .find(|l| l.time_secs > position)
-        .map(|l| l.time_secs - position);
-    (active, next)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_line_sung_is_the_last_one_started_and_the_wait_is_to_the_next() {
-        let lines: Vec<LyricLine> = [0.5, 2.5, 7.0]
-            .into_iter()
-            .map(|time_secs| LyricLine {
-                time_secs,
-                text: String::new(),
-            })
-            .collect();
-        assert_eq!(place(&lines, 0.0), (None, Some(0.5)));
-        assert_eq!(place(&lines, 3.0), (Some(1), Some(4.0)));
-        assert_eq!(place(&lines, 9.0), (Some(2), None));
     }
 }

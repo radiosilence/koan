@@ -33,12 +33,6 @@ const CONFETTI: usize = 0;
 const SWEEP: usize = 1;
 const STICKER: usize = 2;
 
-/// The mirror ball's side, and where it hangs: under the toolbar, in the
-/// window's top right corner, in points.
-const MIRROR_BALL: f32 = 72.0;
-const MIRROR_BALL_TOP: f32 = 56.0;
-const MIRROR_BALL_RIGHT: f32 = 18.0;
-
 pub struct WindowRoot {
     wash: Entity<Wash>,
     content: AnyView,
@@ -255,19 +249,23 @@ impl WindowRoot {
                 // readers, which would otherwise keep it running.
                 cx.on_release(|this, cx| {
                     if this.prism_fed {
-                        crate::levels::prism(this.window, None, cx);
+                        crate::components::bars_prism(this.window, None, cx);
                     }
                     Prisms::set(this.window, None, cx);
                 }),
             ],
             _levels: [
-                crate::levels::feed(window.window_handle().window_id(), cx)
+                crate::components::bars_feed(window.window_handle().window_id(), cx)
                     .map(|feed| cx.observe(&feed, |_, _, cx| cx.notify())),
                 // A hidden window's bars leave the analyser at rest.
                 Some(
                     cx.observe_window_visibility(window, |this, visibility, window, cx| {
                         let visible = visibility == WindowVisibility::Visible;
-                        crate::levels::visibility(window.window_handle().window_id(), visible, cx);
+                        crate::components::bars_visibility(
+                            window.window_handle().window_id(),
+                            visible,
+                            cx,
+                        );
                         this.visible = visible;
                         this.feed_prism(cx);
                     }),
@@ -311,7 +309,7 @@ impl WindowRoot {
         self.prism.run(running);
         if running != self.prism_fed {
             self.prism_fed = running;
-            crate::levels::prism(self.window, running.then(|| self.prism.clone()), cx);
+            crate::components::bars_prism(self.window, running.then(|| self.prism.clone()), cx);
         }
     }
 
@@ -516,10 +514,7 @@ impl Render for WindowRoot {
             // spacing, as the ball laid out below does.
             self.prism
                 .style(look.dark, brat, self.scale * look.scale.space);
-            self.prism.ball_at(
-                MIRROR_BALL_RIGHT + MIRROR_BALL / 2.0,
-                MIRROR_BALL_TOP + MIRROR_BALL / 2.0,
-            );
+            self.prism.hang_ball();
             self.prism.window(
                 f32::from(self.viewport.width),
                 f32::from(self.viewport.height),
@@ -547,17 +542,9 @@ impl Render for WindowRoot {
                     .child(self.content.clone().cached(fill())),
             )
             .when_some(prism, |root, look| {
-                let side = look.spaced(MIRROR_BALL);
                 root.child(layer(self.prism.disco().size_full().into_any_element()))
                     .child(layer(self.prism.party().size_full().into_any_element()))
-                    .child(
-                        div()
-                            .absolute()
-                            .top(look.spaced(MIRROR_BALL_TOP))
-                            .right(look.spaced(MIRROR_BALL_RIGHT))
-                            .size(side)
-                            .child(self.prism.ball().size_full()),
-                    )
+                    .child(self.prism.hung_ball(&look))
                     // A burst only while it flies.
                     .children(
                         [&self.sweep, &self.sticker, &self.confetti]
@@ -566,7 +553,7 @@ impl Render for WindowRoot {
                             .map(|burst| layer(burst.element().size_full().into_any_element())),
                     )
             })
-            .child(crate::levels::paint(cx))
+            .child(crate::components::paint_bars(cx))
     }
 }
 

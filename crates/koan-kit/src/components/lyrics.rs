@@ -673,3 +673,71 @@ mod tests {
         assert_eq!(clicked.get(), Some(2));
     }
 }
+
+/// Where a set of timed lines stands at a moment (`SyncedLines::cue`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cue {
+    /// The line being sung: the last one started.
+    pub active: Option<usize>,
+    /// When it started, while playing: what `SyncedLines::since` takes.
+    pub since: Option<Instant>,
+    /// How long until the next line starts, while playing: when to look
+    /// again, so following the song costs one wake per line.
+    pub next_in: Option<std::time::Duration>,
+}
+
+impl SyncedLines {
+    /// Where lines starting at `starts` seconds stand at `position` seconds
+    /// in, at `now`.
+    pub fn cue(starts: &[f64], position: f64, playing: bool, now: Instant) -> Cue {
+        let active = starts.iter().rposition(|&start| start <= position);
+        let next = starts
+            .iter()
+            .find(|&&start| start > position)
+            .map(|start| start - position);
+        let since = active
+            .filter(|_| playing)
+            .and_then(|line| starts.get(line))
+            .and_then(|start| {
+                now.checked_sub(std::time::Duration::from_secs_f64(
+                    (position - start).max(0.0),
+                ))
+            });
+        Cue {
+            active,
+            since,
+            next_in: next
+                .filter(|_| playing)
+                .and_then(|wait| std::time::Duration::try_from_secs_f64(wait).ok()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod cue_tests {
+    use super::*;
+
+    #[test]
+    fn the_line_sung_is_the_last_one_started_and_the_wait_is_to_the_next() {
+        let starts = [0.5, 2.5, 7.0];
+        let now = Instant::now();
+        let at = |position| SyncedLines::cue(&starts, position, true, now);
+        assert_eq!(at(0.0).active, None);
+        assert_eq!(
+            at(0.0).next_in,
+            Some(std::time::Duration::from_secs_f64(0.5))
+        );
+        assert_eq!(at(3.0).active, Some(1));
+        assert_eq!(
+            at(3.0).next_in,
+            Some(std::time::Duration::from_secs_f64(4.0))
+        );
+        assert_eq!(at(9.0).active, Some(2));
+        assert_eq!(at(9.0).next_in, None);
+        let paused = SyncedLines::cue(&starts, 3.0, false, now);
+        assert_eq!(
+            (paused.active, paused.since, paused.next_in),
+            (Some(1), None, None)
+        );
+    }
+}
