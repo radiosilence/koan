@@ -399,7 +399,6 @@ pub fn table<V: 'static>(
     window: &mut Window,
     cx: &mut Context<V>,
 ) -> AnyElement {
-    let look = Look::of(window, cx);
     let dsp = fields.dsp.clone();
     let profile = fields.profile.clone();
     let kinds = dsp.read(cx).bounds.kinds.clone();
