@@ -52,6 +52,8 @@ fn height() -> f32 {
 enum Step {
     Page(Route),
     NowPlaying,
+    /// A track's details over Now Playing, as its menu opens them.
+    NowPlayingInfo(i64),
     /// The queue while picking: ticks and the selection bar.
     QueuePick,
     /// The "add to playlist" sheet.
@@ -135,6 +137,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             Step::Page(route) => cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx))),
             Step::NowPlaying => cx.update_window(window, |_, window, cx| {
                 shell.update(cx, |s, cx| s.open_now_playing(window, cx))
+            })?,
+            Step::NowPlayingInfo(track) => cx.update_window(window, |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    s.open_now_playing(window, cx);
+                    s.walk_track_info(track, cx);
+                })
             })?,
             Step::QueuePick => {
                 cx.update(|cx| shell.update(cx, |s, cx| s.show(Route::Queue, cx)));
@@ -234,6 +242,9 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
     // A tablet has the transport bar and no Now Playing screen.
     if width() < f32::from(koan_kit::theme::COMPACT_WIDTH) {
         steps.push(("now-playing".into(), Step::NowPlaying));
+        if let Some(&track) = ids.first() {
+            steps.push(("now-playing-info".into(), Step::NowPlayingInfo(track)));
+        }
     }
     if !ids.is_empty() {
         steps.push(("queue-pick".into(), Step::QueuePick));

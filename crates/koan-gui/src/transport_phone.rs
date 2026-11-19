@@ -278,6 +278,53 @@ impl Transport {
         if !self.lyrics_shown {
             self.lyrics = None;
         }
+        // The heart and the track's menu, compact, on a line of their own
+        // under the art, so the names below have the page's width.
+        let heart =
+            entry
+                .and_then(|e| e.track_id)
+                .zip(self.feed.as_ref())
+                .map(|(track, (feed, _))| {
+                    let item = crate::library::drag::Playable::Track(track);
+                    let on = feed.read(cx).is_favourite(item);
+                    let feed = feed.clone();
+                    crate::components::Heart::new(("np-full-heart", track as u64), on)
+                        .role(TypeRole::Meta)
+                        .on_click(move |_, _, cx| {
+                            feed.update(cx, |feed, cx| feed.toggle_favourite(item, cx))
+                        })
+                });
+        // The track's menu, as the rows' hold opens it: its record, its
+        // artist, a playlist, the queue, its details.
+        let more = entry
+            .and_then(|e| e.track_id.map(|track| (track, e.album_id)))
+            .zip(self.lib.clone())
+            .map(|((track, album), lib)| {
+                div()
+                    .koan_menu_on_press("np-more", window, cx, move |m, _, cx| {
+                        crate::library::actions::menu(
+                            m,
+                            &lib,
+                            std::sync::Arc::from([crate::library::drag::Playable::Track(track)]),
+                            album,
+                            None,
+                            cx,
+                        )
+                    })
+                    .child(
+                        Button::icon_only("np-more-button", Icon::More, "more")
+                            .role(TypeRole::Meta),
+                    )
+            });
+        let mut actions = (heart.is_some() || more.is_some()).then(|| {
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_end()
+                .children(heart)
+                .children(more)
+        });
         let stage = match (self.lyrics_shown, &self.lyrics) {
             (true, Some(lyrics)) => lyrics
                 .clone()
@@ -300,29 +347,20 @@ impl Transport {
                     }
                     None => Cover::new(self.cover.clone(), side).into_any_element(),
                 };
+                // At the stage's foot, so the actions and the names follow
+                // it closely.
                 div()
                     .size_full()
                     .flex()
+                    .flex_col()
                     .items_center()
-                    .justify_center()
+                    .justify_end()
                     .child(art)
+                    .children(actions.take().map(|actions| actions.w(side)))
                     .into_any_element()
             }
         };
         let titles = entry.map(|e| {
-            let heart = e
-                .track_id
-                .zip(self.feed.as_ref())
-                .map(|(track, (feed, _))| {
-                    let item = crate::library::drag::Playable::Track(track);
-                    let on = feed.read(cx).is_favourite(item);
-                    let feed = feed.clone();
-                    crate::components::Heart::new(("np-full-heart", track as u64), on)
-                        .role(TypeRole::Body)
-                        .on_click(move |_, _, cx| {
-                            feed.update(cx, |feed, cx| feed.toggle_favourite(item, cx))
-                        })
-                });
             let album = e.album_id.map(crate::navigator::Route::Album);
             let credit = links::credit(
                 &e.artist_credit,
@@ -331,41 +369,12 @@ impl Transport {
                 &self.nav,
                 p.ink,
             );
-            // The track's menu, as the rows' hold opens it: its record, its
-            // artist, a playlist, the queue.
-            let more = e.track_id.zip(self.lib.clone()).map(|(track, lib)| {
-                let album = e.album_id;
-                div()
-                    .koan_menu_on_press("np-more", window, cx, move |m, _, cx| {
-                        crate::library::actions::menu(
-                            m,
-                            &lib,
-                            std::sync::Arc::from([crate::library::drag::Playable::Track(track)]),
-                            album,
-                            None,
-                            cx,
-                        )
-                    })
-                    .child(Button::icon_only("np-more-button", Icon::More, "more"))
-            });
-            // The heart and the menu on a line of their own, so the names
-            // below have the page's width.
-            let actions = (heart.is_some() || more.is_some()).then(|| {
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(p.space(Space::M))
-                    .children(heart)
-                    .children(more)
-            });
             div()
                 .w_full()
                 .flex()
                 .flex_col()
                 .gap(p.space(Space::S))
-                .children(actions)
+                .children(actions.take())
                 .child(
                     div()
                         .w_full()

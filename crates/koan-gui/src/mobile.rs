@@ -951,6 +951,14 @@ impl TouchShell {
         }
     }
 
+    /// A track's details over whatever shows, Now Playing included, as its
+    /// menu opens them; for tools that walk the pages headlessly too.
+    pub fn walk_track_info(&mut self, track: i64, cx: &mut Context<Self>) {
+        if let Some(lib) = self.library.as_ref().map(|l| l.read(cx).lib()) {
+            lib.nav.update(cx, |nav, cx| nav.show_info(track, cx));
+        }
+    }
+
     /// The page in front; for tools that walk the pages headlessly.
     pub fn route(&self, cx: &App) -> Route {
         self.nav.read(cx).current()
@@ -998,14 +1006,10 @@ impl TouchShell {
             }));
             cx.notify();
         });
-        // The title asks for the track's details, over the page Now Playing
-        // closes to.
+        // The title asks for the track's details, a sheet over Now Playing
+        // that closes back to it.
         let info = cx.subscribe(&full, |this, _, asked: &transport::ShowInfo, cx| {
-            this.now_playing = None;
-            if let Some(lib) = this.library.as_ref().map(|l| l.read(cx).lib()) {
-                lib.nav.update(cx, |nav, cx| nav.show_info(asked.0, cx));
-            }
-            cx.notify();
+            this.walk_track_info(asked.0, cx);
         });
         self.closing = None;
         self.start_flight(&full, window, cx);

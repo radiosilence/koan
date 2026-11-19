@@ -123,6 +123,8 @@ pub struct Button {
     destructive: bool,
     disabled: bool,
     selected: bool,
+    /// The type its glyph and word are sized to, in place of the kind's.
+    role: Option<TypeRole>,
     /// What the tooltip says in place of the label: what it does, and the
     /// keys that do the same.
     help: Option<SharedString>,
@@ -140,6 +142,7 @@ impl Button {
             destructive: false,
             disabled: false,
             selected: false,
+            role: None,
             help: None,
             on_click: None,
         }
@@ -206,6 +209,14 @@ impl Button {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Sized to `role` rather than the kind's type: a glyph button at
+    /// `Meta` is the compact one, for a line of secondary controls. The hit
+    /// area keeps the kind's least size.
+    pub fn role(mut self, role: TypeRole) -> Self {
+        self.role = Some(role);
         self
     }
 
@@ -314,7 +325,7 @@ impl RenderOnce for Button {
             !glyph_only || self.help.is_some() || self.label.is_some(),
             "a glyph-only button says what it does in a tooltip: make it with Button::icon_only"
         );
-        let role = kind.role();
+        let role = self.role.unwrap_or_else(|| kind.role());
         // Play and pause fold into each other as the state they show moves,
         // whoever moved it; the glyph is drawn by the program meanwhile.
         // Only a glyph alone, a toggle's face, or copy turning to its tick
