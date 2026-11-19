@@ -12,10 +12,14 @@
 //! `--check` writes nothing and fails when either file differs from what it
 //! would write: CI runs it, so the reference cannot drift from the code.
 //! `--missing` lists the public items that have no doc comment.
+//!
+//! It reads and writes the workspace at `--root DIR`, or the current
+//! directory, rather than the one it was built from: the crew's worktrees
+//! share a target directory, so a binary built in one is run from another.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use syn::{Attribute, Expr, ImplItem, Item, Lit, Meta, TraitItem, Type, UseTree, Visibility};
@@ -49,7 +53,23 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let check = args.iter().any(|a| a == "--check");
     let missing = args.iter().any(|a| a == "--missing");
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = match args.iter().position(|a| a == "--root") {
+        Some(i) => match args.get(i + 1) {
+            Some(dir) => PathBuf::from(dir),
+            None => {
+                eprintln!("kit-reference: --root needs a directory");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => PathBuf::from("."),
+    };
+    if !root.join("crates/koan-kit/src/lib.rs").is_file() {
+        eprintln!(
+            "kit-reference: {} is not the kōan workspace; run it from there or pass --root",
+            root.display()
+        );
+        return ExitCode::FAILURE;
+    }
     let src = root.join("crates/koan-kit/src");
 
     let mut modules = Vec::new();

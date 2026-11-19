@@ -292,7 +292,7 @@ tv_deployment_target := "26.0"
 # and fails on a difference, as CI runs it; `--missing` lists the public
 # items with no doc comment.
 kit-reference *args:
-    cargo run -q -p kit-reference -- {{args}}
+    cargo run -q -p kit-reference -- --root {{justfile_directory()}} {{args}}
 
 # koan-gui's pages choosing a look by hand rather than from koan-kit, against
 # a baseline that only falls (`--update` lowers it). docs/design/koan-kit.md.
