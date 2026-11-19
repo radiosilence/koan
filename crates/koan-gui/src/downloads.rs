@@ -251,9 +251,13 @@ impl DownloadsPage {
                 if p.look.compact {
                     let short = match bar {
                         Some(bar) => div().w_full().child(bar).into_any_element(),
+                        // The header says what the queue waits for.
+                        None if t.state == TransferState::Queued => {
+                            status("waiting".to_owned()).into_any_element()
+                        }
                         None => status(status_text).into_any_element(),
                     };
-                    row.figure(COMPACT_STATUS, short)
+                    row.figure_fitted(COMPACT_STATUS, short)
                         .figure(COMPACT_VERB, verb(t, true))
                 } else {
                     row.figure(BAR, div().w_full().children(bar))

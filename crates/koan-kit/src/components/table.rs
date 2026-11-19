@@ -26,6 +26,8 @@ struct Cell {
 enum Width {
     Points(f32),
     Exact(Pixels),
+    /// At least this many points, wider where its content needs it.
+    AtLeast(f32),
 }
 
 /// A virtualised list of `TableRow`s: only the rows on screen are made, so a
@@ -161,6 +163,17 @@ impl TableRow {
     pub fn figure(mut self, points: f32, content: impl IntoElement) -> Self {
         self.trailing.push(Cell {
             width: Width::Points(points),
+            content: content.into_any_element(),
+        });
+        self
+    }
+
+    /// A figure column at least `points` wide that grows to fit its
+    /// content, taking the room from the title: for a figure whose words
+    /// vary, which a fixed column would clip at a large text size.
+    pub fn figure_fitted(mut self, points: f32, content: impl IntoElement) -> Self {
+        self.trailing.push(Cell {
+            width: Width::AtLeast(points),
             content: content.into_any_element(),
         });
         self
@@ -370,16 +383,16 @@ impl RenderOnce for TableRow {
         let selected = self.selected;
         let on = p.on_selection.hsla();
         let cell = |cell: Cell| {
-            div()
-                .w(match cell.width {
-                    Width::Points(points) => px(points * scale),
-                    Width::Exact(width) => width,
-                })
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_end()
-                .child(cell.content)
+            match cell.width {
+                Width::Points(points) => div().w(px(points * scale)),
+                Width::Exact(width) => div().w(width),
+                Width::AtLeast(points) => div().min_w(px(points * scale)),
+            }
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_end()
+            .child(cell.content)
         };
         let heading = self.kind == RowKind::Heading;
         let mut base = self.base;
