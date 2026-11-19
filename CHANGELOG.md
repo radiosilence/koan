@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.73.0
+
+### Added
+
+- **koan-kit has documentation on koan.rocks.** A guide to building an app on the design system, an API reference generated from its sources and checked in CI, and both as one plain-text file for a reader that takes a single document.
+
+### Changed
+
+- **The Homebrew cask's app updates itself.** A copy installed with `brew install --cask radiosilence/tap/koan-app` was only told that a new version was out, with a link to the release notes. It now downloads, checks and installs each release as the DMG's app does, and the cask declares `auto_updates` so `brew upgrade` leaves it alone.
+- **Phones and tablets no longer fetch every cover ahead.** On iOS and Android, "Fetch every record's cover ahead" (Settings → Server) is off unless turned on, so a large library's covers no longer cost data and storage for records that are never opened; pages still fetch the covers they show. A device that set it keeps its choice, and computers and the Apple TV still preload.
+
+### Removed
+
+- **The SwiftUI iPhone and iPad app.** The GPUI app takes its place; the Apple TV app stays SwiftUI.
+
+### Fixed
+
+- **Now Playing on the phone.** Swiping it down no longer scrolls the page beneath, the seek bar takes a drag as soon as the sheet opens, and the heart and track menu sit on their own row so the title, artist and record lines use the full width.
+- **Library taps play what they show after a sync.** A sync that deleted and re-added rows could leave a record page holding ids that now named other tracks, so a tap played an unrelated record; plays from library pages now name tracks by uid, a record page follows its record by uid, and history no longer leads to records the library lost and keeps at most 50 pages per tab.
+- **EQ on the phone.** The graph's legend no longer runs into the chain when it wraps, the chain's gaps are even, and each stage card gives its name and detail the full width, with its curve and controls on a row beneath.
+- **Now Playing on a phone keeps the heart and menu under the art, and a track's details open over it.** The heart and ⋯ sit as a compact row directly under the sleeve, so the names move up. A track's details, opened from the title or the ⋯ menu, now layer over Now Playing and close back to it instead of closing it.
+- **The downloads page on a phone shows each track and its record.** The rows kept the desktop's wide status and verb columns, which left the track's name no room; on a phone each row now gives its width to the track and record, with the progress bar or size beside them and the verb as its glyph.
+- **The downloads page's status on a phone is never cut off.** The column beside each track grows to fit what it says at large text sizes, and a queued download says "waiting", the header saying what for.
+- **The phone's mini player keeps its controls on one even step.** Play on, play and next sit in touch-sized slots with no gap between, so the title and the line under it get the width that is freed.
+- **Now Playing on the phone closes as it opens.** The art rises with the screen instead of growing out of the mini player's sleeve, and closing runs the same motion in reverse, over the same length.
+
+### Internal
+
+- **koan-kit has a meter and a scrolling chart.** `Meter` is a bar whose fill the GPU eases to each new fraction, kept by its id so callers hold no state. `DataMotion::Scroll` slides a time series left by one sample per interval as the newest enters from the right, drawn as a monotone curve that rounds peaks off without overshooting, while the y axis keeps easing as it rescales. Both replace components sbr drew for itself.
+- **A scrolling chart series keeps every sample.** Thinned to the plot's width, a narrow one slid two samples at each step while its data moved one.
+- **A download-cache clear reaches every download queue in the process.** Each queue reads the tracks still owed instead of the first to wake taking them, which also fixes an intermittently failing test.
+
 ## 0.72.4
 
 ### Added
