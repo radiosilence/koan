@@ -26,9 +26,9 @@ use koan_runtime::{DspBand, DspBrush, DspPoint, DspResponse};
 
 use super::model::{Commit, Done, Dsp, Ended, GRAPH_RATE, Outcome};
 use crate::components::Segmented;
+use crate::components::Stack;
 use crate::theme::{Look, Space, Tone, TypeRole, label, observe_accent};
 // a stroke's colour, and the default height, given to the chart.
-use crate::components::Stack;
 use koan_kit::raw::{Hsla, px};
 
 /// How a curve is drawn, the same in its stage's block and on the graph.
