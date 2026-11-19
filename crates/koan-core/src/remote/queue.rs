@@ -835,13 +835,21 @@ pub(crate) fn still_owed(owed: HashSet<i64>) {
     crate::signal::engine_changed().bump();
 }
 
+/// Applies the last clear to this queue. The set is read, not taken: every
+/// queue in the process hears a clear, not only the first to wake for it.
 fn drop_unowed(inner: &Inner) {
-    let Some(owed) = STILL_OWED.lock().take() else {
+    let Some(owed) = STILL_OWED.lock().clone() else {
         return;
     };
+    drop_unowed_from(inner, &owed);
+}
+
+/// Drops every ask not in `owed`: the cache's asks waiting, and transfers
+/// kept for the cache alone.
+fn drop_unowed_from(inner: &Inner, owed: &HashSet<i64>) {
     let mut q = inner.queue.lock();
     q.cache.retain(|track| owed.contains(track));
-    inner.state.downloads().unkeep_unless(&owed);
+    inner.state.downloads().unkeep_unless(owed);
 }
 
 /// Send the cursor's track, and the one after it, down the priority lane, if
@@ -1359,8 +1367,9 @@ mod tests {
         let store = inner.state.downloads();
         store.claim(2, None);
         inner.queue.lock().cache.extend([3, 4]);
-        still_owed([4].into_iter().collect());
-        drop_unowed(&inner);
+        // Through the set rather than `still_owed`, whose clear every other
+        // test's queue in this process hears too.
+        drop_unowed_from(&inner, &[4].into_iter().collect());
         let cache: Vec<i64> = inner.queue.lock().cache.iter().copied().collect();
         assert_eq!(cache, vec![4]);
         assert!(
