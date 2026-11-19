@@ -1,0 +1,10 @@
+[package]
+name = "kit-reference"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+description = "Generates koan-kit's API reference from its sources and doc comments."
+
+[dependencies]
+prettyplease = "0.2"
+syn = { version = "2", default-features = false, features = ["full", "parsing", "printing", "clone-impls"] }

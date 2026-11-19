@@ -12,12 +12,14 @@ use gpui::*;
 
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
 
+/// Where a dense table's cell sits in its column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Align {
     Start,
     End,
 }
 
+/// A column of a `DenseTable`: fixed at a width or taking what is left.
 #[derive(Clone, Copy, Debug)]
 pub struct Column {
     /// Points at 100 %, or `None` to take what is left.
@@ -26,6 +28,7 @@ pub struct Column {
 }
 
 impl Column {
+    /// `points` wide at 100 % text, its cells aligned as `align` says.
     pub fn fixed(points: f32, align: Align) -> Self {
         Self {
             width: Some(points),
@@ -33,6 +36,7 @@ impl Column {
         }
     }
 
+    /// Taking the width the fixed columns leave, its cells at its start.
     pub fn flex() -> Self {
         Self {
             width: None,
@@ -49,10 +53,12 @@ pub struct DenseRow {
 }
 
 impl DenseRow {
+    /// A row with no cells yet.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// A cell in the next column.
     pub fn cell(mut self, content: impl IntoElement) -> Self {
         self.cells.push((1, content.into_any_element()));
         self
@@ -72,6 +78,8 @@ impl DenseRow {
     }
 }
 
+/// A dense table for an editor: columns of fixed or flexible width, an
+/// optional header, and tight rows of cells.
 #[derive(IntoElement)]
 pub struct DenseTable {
     columns: Rc<[Column]>,
@@ -81,6 +89,7 @@ pub struct DenseTable {
 }
 
 impl DenseTable {
+    /// A table of `columns`.
     pub fn new(columns: impl Into<Rc<[Column]>>) -> Self {
         Self {
             columns: columns.into(),
@@ -105,11 +114,13 @@ impl DenseTable {
         self
     }
 
+    /// A row, under the last.
     pub fn row(mut self, row: DenseRow) -> Self {
         self.rows.push(row);
         self
     }
 
+    /// Rows, under the last.
     pub fn rows(mut self, rows: impl IntoIterator<Item = DenseRow>) -> Self {
         self.rows.extend(rows);
         self

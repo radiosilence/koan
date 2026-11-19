@@ -25,6 +25,8 @@ pub struct CommandSection {
     pub rows: Vec<SuggestionRow>,
 }
 
+/// The command bar over the window: the owner's field and the results
+/// under it, closed by a press on the dimmed window behind.
 #[derive(IntoElement)]
 pub struct CommandBar {
     id: ElementId,
@@ -160,6 +162,7 @@ pub struct CommandResults {
 }
 
 impl CommandResults {
+    /// Results with no sections yet.
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -189,6 +192,7 @@ impl CommandResults {
         self
     }
 
+    /// The row the keyboard is on, counted across the sections.
     pub fn lit(mut self, lit: Option<usize>) -> Self {
         self.lit = lit;
         self
@@ -200,6 +204,7 @@ impl CommandResults {
         self
     }
 
+    /// What it says when no section has a row.
     pub fn empty(mut self, text: impl AsRef<str>) -> Self {
         self.empty = Some(label(text));
         self

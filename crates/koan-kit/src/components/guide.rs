@@ -72,6 +72,7 @@ impl ChoiceCards {
         self
     }
 
+    /// What choosing a card does, given its index.
     pub fn on_change(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
         self
@@ -316,11 +317,13 @@ impl CheckItem {
         }
     }
 
+    /// A line under the title saying more.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
         self.detail = Some(detail.into());
         self
     }
 
+    /// A button beside the item, such as one that does the step.
     pub fn action(mut self, action: impl IntoElement) -> Self {
         self.actions.push(action.into_any_element());
         self

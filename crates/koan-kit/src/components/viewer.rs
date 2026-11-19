@@ -10,6 +10,8 @@ use gpui::*;
 use super::{Cover, CoverArt};
 use crate::theme::{KoanStyled, Look, Space, TypeRole};
 
+/// A picture as large as the window allows, over everything, with a
+/// caption under it.
 #[derive(IntoElement)]
 pub struct Viewer {
     base: Stateful<Div>,
@@ -25,6 +27,7 @@ impl Viewer {
     const MARGIN: f32 = 48.0;
     const LEAST: f32 = 320.0;
 
+    /// `art` captioned with `title`.
     pub fn new(id: impl Into<ElementId>, art: CoverArt, title: impl Into<SharedString>) -> Self {
         Self {
             base: div().id(id),
@@ -41,6 +44,7 @@ impl Viewer {
         self
     }
 
+    /// A line under the title.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
         self.detail = Some(detail.into());
         self

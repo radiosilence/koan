@@ -239,11 +239,13 @@ impl KoanIcon {
         self
     }
 
+    /// In `tone` rather than `ink`.
     pub fn tone(mut self, tone: Tone) -> Self {
         self.tone = Colour::Tone(tone);
         self
     }
 
+    /// In `color`, for a glyph drawn on a ground of its own.
     pub fn color(mut self, color: Hsla) -> Self {
         self.tone = Colour::Exact(color);
         self

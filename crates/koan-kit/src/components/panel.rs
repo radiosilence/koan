@@ -23,6 +23,7 @@ pub struct MenuPanel {
 }
 
 impl MenuPanel {
+    /// An empty panel, given its rows as children.
     pub fn new() -> Self {
         Self {
             children: Vec::new(),
@@ -206,6 +207,7 @@ impl ActionColumns {
 }
 
 impl MenuRow {
+    /// A row saying `text`, an app word drawn lowercase.
     pub fn new(id: impl Into<ElementId>, text: impl AsRef<str>) -> Self {
         Self {
             id: id.into(),
@@ -312,6 +314,7 @@ impl MenuRow {
         }
     }
 
+    /// A glyph before the label.
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
         self
@@ -375,16 +378,19 @@ impl MenuRow {
         self
     }
 
+    /// A small glyph after the label saying how a place is reached.
     pub fn reach(mut self, reach: Icon) -> Self {
         self.reach = Some(reach);
         self
     }
 
+    /// In `bad`, for a row that destroys something.
     pub fn destructive(mut self, destructive: bool) -> Self {
         self.destructive = destructive;
         self
     }
 
+    /// What choosing the row does.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -813,6 +819,7 @@ pub struct Tooltip {
 }
 
 impl Tooltip {
+    /// A tooltip saying `text`.
     pub fn new(text: impl Into<SharedString>) -> Self {
         Self { text: text.into() }
     }

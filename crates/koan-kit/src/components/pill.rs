@@ -12,6 +12,8 @@ use gpui::*;
 
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, TypeRole};
 
+/// A thing named as a chip in a collection: a glyph or a selection tick,
+/// and its name on one line.
 #[derive(IntoElement)]
 pub struct Pill {
     base: Stateful<Div>,

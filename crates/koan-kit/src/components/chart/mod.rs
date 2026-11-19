@@ -102,10 +102,12 @@ pub struct Axis {
 }
 
 impl Axis {
+    /// An axis from `lo` to `hi`, evenly spaced.
     pub fn linear(lo: f64, hi: f64) -> Self {
         Self::new(Scale::Linear, lo, hi)
     }
 
+    /// An axis from `lo` to `hi` on a logarithmic scale, as frequency is.
     pub fn log(lo: f64, hi: f64) -> Self {
         Self::new(Scale::Log, lo, hi)
     }
@@ -122,6 +124,7 @@ impl Axis {
         }
     }
 
+    /// Where the ticks fall, rather than chosen from the range.
     pub fn ticks(mut self, ticks: Ticks) -> Self {
         self.ticks = ticks;
         self
@@ -140,6 +143,7 @@ impl Axis {
         self
     }
 
+    /// Ticks with no labels.
     pub fn no_labels(mut self) -> Self {
         self.labels = false;
         self
@@ -285,11 +289,13 @@ impl Series {
         self
     }
 
+    /// In `color` rather than the next of the chart's colours.
     pub fn color(mut self, color: Hsla) -> Self {
         self.color = Some(color);
         self
     }
 
+    /// How a change of its data moves.
     pub fn motion(mut self, motion: DataMotion) -> Self {
         self.motion = motion;
         self
@@ -323,6 +329,7 @@ impl Rule {
         }
     }
 
+    /// In `color` rather than `muted`.
     pub fn color(mut self, color: Hsla) -> Self {
         self.color = Some(color);
         self
@@ -334,6 +341,7 @@ impl Rule {
         self
     }
 
+    /// Dashed: lengths of dash and gap, in points, up to four.
     pub fn dash(mut self, pattern: &[f32]) -> Self {
         self.dash = pattern.iter().take(4).copied().collect();
         self
@@ -377,6 +385,7 @@ impl ChartPoint {
         }
     }
 
+    /// In `color` rather than the accent.
     pub fn color(mut self, color: Hsla) -> Self {
         self.color = Some(color);
         self
@@ -452,6 +461,8 @@ pub struct Chart {
 }
 
 impl Chart {
+    /// A chart over `x` and `y`, given its series, rules and points by the
+    /// methods.
     pub fn new(id: impl Into<ElementId>, x: Axis, y: Axis) -> Self {
         Self {
             id: id.into(),
@@ -502,6 +513,7 @@ impl Chart {
         self
     }
 
+    /// A legend under the plot.
     pub fn legend(mut self, legend: Legend) -> Self {
         self.legend = Some(legend);
         self
@@ -532,6 +544,8 @@ impl Chart {
         self
     }
 
+    /// Where each point is drawn, written to `places` every frame, for a page
+    /// that lays something out beside them.
     pub fn report_points(mut self, places: PointPlaces) -> Self {
         self.places = Some(places);
         self

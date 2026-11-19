@@ -20,6 +20,7 @@ impl Sparkline {
     /// The stroke's width, in pixels.
     const STROKE: f32 = 1.5;
 
+    /// `values` as a line across its bounds, scaled to `range`, in `color`.
     pub fn new(values: Vec<f64>, range: f64, color: Hsla) -> Self {
         Self {
             values,

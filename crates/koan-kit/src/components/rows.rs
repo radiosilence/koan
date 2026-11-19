@@ -51,6 +51,7 @@ impl InteractiveElement for NavRow {
 impl StatefulInteractiveElement for NavRow {}
 
 impl NavRow {
+    /// A place in a navigation list, named by an app word drawn lowercase.
     pub fn new(id: impl Into<ElementId>, text: impl AsRef<str>) -> Self {
         Self::data(id, label(text))
     }
@@ -144,16 +145,19 @@ impl NavRow {
         self
     }
 
+    /// The place's glyph, leading.
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
         self
     }
 
+    /// The place showing: on the selection's ground.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
 
+    /// What a press does: usually going to the place.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -308,6 +312,7 @@ pub struct NavHeading {
 }
 
 impl NavHeading {
+    /// A heading over a navigation list's group, an app word drawn lowercase.
     pub fn new(title: impl AsRef<str>) -> Self {
         Self {
             title: label(title),
@@ -358,6 +363,8 @@ pub struct NavNote {
 }
 
 impl NavNote {
+    /// A line in a navigation list that says something and does nothing, in
+    /// `tone`.
     pub fn new(text: impl Into<SharedString>, tone: crate::theme::Tone) -> Self {
         Self {
             text: text.into(),
@@ -436,6 +443,7 @@ pub struct ListRow {
 }
 
 impl ListRow {
+    /// A row with nothing in it yet.
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -449,11 +457,13 @@ impl ListRow {
         }
     }
 
+    /// Picked: on the selection's ground.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
 
+    /// The current track: the playing bars in place of its number.
     pub fn playing(mut self, playing: bool) -> Self {
         self.playing = playing;
         self
@@ -485,6 +495,7 @@ impl ListRow {
         self
     }
 
+    /// What a press does.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,

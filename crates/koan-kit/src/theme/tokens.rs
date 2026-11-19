@@ -11,14 +11,17 @@ use gpui::{FontWeight, Hsla, Pixels, Rgba, px, rgb};
 pub struct Hex(pub u32);
 
 impl Hex {
+    /// The token as GPUI's colour.
     pub fn hsla(self) -> Hsla {
         rgb(self.0).into()
     }
 
+    /// The token as GPUI's colour, in RGB.
     pub fn rgba(self) -> Rgba {
         rgb(self.0)
     }
 
+    /// Its red, green and blue, 0 to 255.
     pub fn channels(self) -> [u8; 3] {
         [(self.0 >> 16) as u8, (self.0 >> 8) as u8, self.0 as u8]
     }
@@ -31,6 +34,7 @@ impl Hex {
 pub struct Veil(pub u32, pub u8);
 
 impl Veil {
+    /// The token as GPUI's colour, at its opacity.
     pub fn hsla(self) -> Hsla {
         let mut colour: Hsla = rgb(self.0).into();
         colour.a = self.1 as f32 / 255.0;
@@ -124,6 +128,7 @@ impl Palette {
         on_selection: Hex(0xFFFFFF),
     };
 
+    /// The palette for the dark or the light appearance.
     pub fn of(dark: bool) -> Palette {
         Self::for_look(dark, false)
     }
@@ -182,6 +187,7 @@ pub const MAC_FIT: f32 = if cfg!(any(target_os = "ios", target_os = "android")) 
 
 /// The text size steps, in percent.
 pub const TEXT_SIZES: std::ops::RangeInclusive<u32> = 80..=130;
+/// How far the text size moves at a step, in percent.
 pub const TEXT_SIZE_STEP: u32 = 5;
 
 /// The scales the text size gives: type at `MAC_FIT` times the size chosen,
@@ -194,6 +200,7 @@ pub struct Scale {
 }
 
 impl Scale {
+    /// The scales for a text size in percent, with the system's at 1.
     pub fn of(text_size: u32) -> Scale {
         Self::at(text_size, 1.0)
     }
@@ -225,6 +232,7 @@ pub enum Space {
 }
 
 impl Space {
+    /// The step in points at 100 %.
     pub fn points(self) -> f32 {
         match self {
             Space::Xs => 4.0,
@@ -273,6 +281,8 @@ impl TypeRole {
         }
     }
 
+    /// The role's weight: thin for display, extra light for titles, normal
+    /// otherwise.
     pub fn weight(self) -> FontWeight {
         match self {
             TypeRole::Display => FontWeight::THIN,
@@ -292,6 +302,7 @@ impl TypeRole {
         }
     }
 
+    /// The role's name, as the storybook labels it.
     pub fn name(self) -> &'static str {
         match self {
             TypeRole::Display => "display",

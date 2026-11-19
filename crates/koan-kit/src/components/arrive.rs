@@ -43,6 +43,7 @@ pub struct Arrival {
 }
 
 impl Arrival {
+    /// An arrival that begins now and lasts `length`.
     pub fn new(length: Duration) -> Self {
         Self::since(Animated::now(), length)
     }
@@ -64,6 +65,7 @@ impl Arrival {
         self.lands
     }
 
+    /// Whether it has finished, so its owner can draw the picture plainly.
     pub fn landed(&self) -> bool {
         Animated::now() >= self.lands
     }

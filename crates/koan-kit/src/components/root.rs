@@ -17,11 +17,14 @@ pub(crate) fn bind(cx: &mut App) {
     ]);
 }
 
+/// What every window's content sits in, made by `host`: Tab kept inside
+/// an open sheet or menu, under the `Root` key context.
 pub struct Root {
     view: AnyView,
 }
 
 impl Root {
+    /// A root over `view`.
     pub fn new(view: impl Into<AnyView>) -> Self {
         Self { view: view.into() }
     }

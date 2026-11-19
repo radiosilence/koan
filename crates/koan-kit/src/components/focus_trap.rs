@@ -11,6 +11,8 @@ struct Traps(Vec<WeakFocusHandle>);
 
 impl Global for Traps {}
 
+/// Keeping Tab and Shift-Tab inside an element, for a sheet or menu that
+/// holds the keyboard.
 pub trait FocusTrap: InteractiveElement + Sized {
     /// This element takes `focus` and keeps Tab and Shift-Tab among its
     /// own controls while the focus is inside it.

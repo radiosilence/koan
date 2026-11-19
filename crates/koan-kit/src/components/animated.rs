@@ -121,6 +121,7 @@ struct Inner {
 pub struct WeakAnimated(std::sync::Weak<Inner>);
 
 impl WeakAnimated {
+    /// The handle again, while something still holds it.
     pub fn upgrade(&self) -> Option<Animated> {
         self.0.upgrade().map(Animated)
     }
@@ -132,10 +133,13 @@ impl WeakAnimated {
 }
 
 impl Animated {
+    /// A handle that does not keep the uniforms alive, for a closure or a
+    /// thread that should stop writing once the element is gone.
     pub fn downgrade(&self) -> WeakAnimated {
         WeakAnimated(Arc::downgrade(&self.0))
     }
 
+    /// Uniforms with their clock started now.
     pub fn new() -> Self {
         let animated = Self::default();
         animated.0.uniforms.set_origin(Instant::now());
@@ -688,6 +692,7 @@ pub struct AnimatedQuad {
 }
 
 impl AnimatedQuad {
+    /// A quad drawn by `program`, reading its keyframes from `animated`.
     pub fn new(program: &'static ShaderProgram, animated: &Animated) -> Self {
         Self {
             program,

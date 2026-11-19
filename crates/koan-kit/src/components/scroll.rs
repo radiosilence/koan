@@ -16,6 +16,7 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// A page that scrolls, with the kōan scrollbar over its edge.
 #[derive(IntoElement)]
 pub struct ScrollArea {
     id: ElementId,

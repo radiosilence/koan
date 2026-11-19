@@ -26,6 +26,8 @@ const TURN: Duration = Duration::from_millis(1000);
 /// The ring's stroke, as a share of its side.
 const STROKE: f32 = 0.125;
 
+/// How far something has come, as a ring filling from twelve o'clock, or
+/// turning while there is no measure.
 #[derive(IntoElement)]
 pub struct ProgressRing {
     progress: Option<f32>,

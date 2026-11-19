@@ -597,12 +597,15 @@ impl WindowWash {
         };
     }
 
+    /// The wash `window` draws, while it has one.
     pub fn shared(window: &Window, cx: &App) -> Option<Entity<Wash>> {
         let id = window.window_handle().window_id();
         cx.try_global::<Self>()?.0.get(&id)?.upgrade()
     }
 }
 
+/// The record wash for a window: the sleeve it is painted from, its bake
+/// and its drift.
 pub struct Wash {
     sleeve: Option<Sleeve>,
     /// Which sleeve is set: a bake for an earlier one is dropped.
@@ -635,6 +638,7 @@ pub struct Wash {
 }
 
 impl Wash {
+    /// A wash with no sleeve yet: the bare ground.
     pub fn new() -> Self {
         let now = Instant::now();
         Self {

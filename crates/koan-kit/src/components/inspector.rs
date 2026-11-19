@@ -12,6 +12,7 @@ use gpui::*;
 
 use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
 
+/// A panel beside the page: its title, what trails it, and its body.
 #[derive(IntoElement)]
 pub struct Inspector {
     title: SharedString,
@@ -21,6 +22,7 @@ pub struct Inspector {
 }
 
 impl Inspector {
+    /// A panel titled `title`, an app word drawn lowercase.
     pub fn new(title: impl AsRef<str>) -> Self {
         Self {
             title: label(title),
@@ -37,6 +39,7 @@ impl Inspector {
         self
     }
 
+    /// What the panel shows under its head.
     pub fn body(mut self, body: impl IntoElement) -> Self {
         self.body = Some(body.into_any_element());
         self

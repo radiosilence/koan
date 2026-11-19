@@ -33,6 +33,7 @@ pub struct Form {
 }
 
 impl Form {
+    /// A form with no sections yet.
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -40,11 +41,13 @@ impl Form {
         }
     }
 
+    /// A section, under the last.
     pub fn section(mut self, section: impl IntoElement) -> Self {
         self.sections.push(section.into_any_element());
         self
     }
 
+    /// Sections, under the last.
     pub fn sections(mut self, sections: impl IntoIterator<Item = AnyElement>) -> Self {
         self.sections.extend(sections);
         self
@@ -79,6 +82,7 @@ pub struct FormSection {
 }
 
 impl FormSection {
+    /// A section with no heading.
     pub fn new() -> Self {
         Self::default()
     }
@@ -91,16 +95,20 @@ impl FormSection {
         }
     }
 
+    /// A row, under the last: a `FormRow`, a control that is a row of its own
+    /// (a `Toggle`), or a button.
     pub fn row(mut self, row: impl IntoElement) -> Self {
         self.rows.push(row.into_any_element());
         self
     }
 
+    /// Rows, under the last.
     pub fn rows(mut self, rows: impl IntoIterator<Item = AnyElement>) -> Self {
         self.rows.extend(rows);
         self
     }
 
+    /// A note under the rows saying what the section means, in `muted`.
     pub fn footer(mut self, footer: impl Into<SharedString>) -> Self {
         self.footer = Some(footer.into());
         self
@@ -171,11 +179,14 @@ impl FormRow {
         self
     }
 
+    /// A value shown in `muted` at the trailing edge, for a row that is read
+    /// rather than edited.
     pub fn value(mut self, value: impl Into<SharedString>) -> Self {
         self.value = Some(value.into());
         self
     }
 
+    /// The control at the trailing edge, or under the label when `stacked`.
     pub fn control(mut self, control: impl IntoElement) -> Self {
         self.control = Some(control.into_any_element());
         self
@@ -279,10 +290,12 @@ pub struct SectionHeader {
 }
 
 impl SectionHeader {
+    /// A header saying `title`, an app word drawn lowercase.
     pub fn new(title: impl AsRef<str>) -> Self {
         Self::data(label(title))
     }
 
+    /// A header saying `title` as it is, for data.
     pub fn data(title: impl Into<SharedString>) -> Self {
         Self {
             title: title.into(),

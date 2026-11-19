@@ -29,6 +29,8 @@ pub struct EmptyState {
 }
 
 impl EmptyState {
+    /// An empty state with the place's `icon` and `title`, an app word drawn
+    /// lowercase.
     pub fn new(icon: Icon, title: impl AsRef<str>) -> Self {
         Self {
             id: None,

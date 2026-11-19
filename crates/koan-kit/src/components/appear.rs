@@ -72,6 +72,7 @@ pub struct Veil {
 }
 
 impl Veil {
+    /// A dim in `color` fading in over the window behind a sheet.
     pub fn new(color: Hsla) -> Self {
         Self {
             color,
@@ -172,6 +173,7 @@ impl SlideUp {
     /// How long it takes to come up.
     pub const RISE: Duration = Duration::from_millis(Motion::SETTLE.as_millis() as u64 * 2);
 
+    /// `child` rising from the window's foot as it is first drawn.
     pub fn new(child: impl IntoElement) -> Self {
         Self {
             child: child.into_any_element(),
@@ -188,6 +190,7 @@ impl SlideUp {
         self
     }
 
+    /// Going back down, inert, before its owner drops it.
     pub fn leaving(mut self, leaving: bool) -> Self {
         self.leaving = leaving;
         self
@@ -256,6 +259,7 @@ pub struct Flying {
 }
 
 impl Flying {
+    /// `child` drawn over the window, moving from `from` to `to` over `length`.
     pub fn new(
         id: impl Into<ElementId>,
         from: Bounds<Pixels>,
@@ -332,6 +336,7 @@ pub struct Shifted {
 }
 
 impl Shifted {
+    /// `child` drawn `delta` from where it is laid out, gliding to its place.
     pub fn new(id: impl Into<ElementId>, delta: Point<Pixels>, child: impl IntoElement) -> Self {
         Self {
             id: id.into(),
@@ -403,6 +408,7 @@ pub struct ZoomIn {
 impl ZoomIn {
     const FROM: f32 = 0.82;
 
+    /// `child` growing out of `at`, the point that was pressed.
     pub fn new(at: Point<Pixels>, child: impl IntoElement) -> Self {
         Self {
             child: child.into_any_element(),
@@ -462,6 +468,7 @@ pub struct Hang {
 impl Hang {
     pub const LEAVE: Duration = Motion::SETTLE;
 
+    /// `child` dropping in from behind the bar above it.
     pub fn new(child: impl IntoElement) -> Self {
         Self {
             child: child.into_any_element(),
@@ -469,6 +476,7 @@ impl Hang {
         }
     }
 
+    /// Going back behind the bar, inert, before its owner drops it.
     pub fn leaving(mut self, leaving: bool) -> Self {
         self.leaving = leaving;
         self

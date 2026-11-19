@@ -81,6 +81,8 @@ pub(super) struct Line {
 /// What `TextField` and `TextArea` edit.
 type Highlighter = std::rc::Rc<dyn Fn(&str) -> Vec<(Range<usize>, crate::theme::Tone)>>;
 
+/// A text field's state, kept by its owner: the text, the caret and
+/// selection, the history, focus and how the field takes input.
 pub struct FieldState {
     pub(super) focus: FocusHandle,
     pub(super) text: String,
@@ -143,6 +145,7 @@ impl Focusable for FieldState {
 }
 
 impl FieldState {
+    /// An empty field that takes the keyboard on Tab.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle().tab_stop(true);
         let focused = cx.on_focus(&focus, window, |this, window, cx| {
@@ -243,6 +246,7 @@ impl FieldState {
         self
     }
 
+    /// Its text can be selected and copied but not changed.
     pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
         self.read_only = read_only;
         cx.notify();
@@ -273,6 +277,7 @@ impl FieldState {
         self
     }
 
+    /// The text as it stands.
     pub fn value(&self) -> SharedString {
         SharedString::from(self.text.clone())
     }
@@ -325,6 +330,7 @@ impl FieldState {
         self.edit(0..self.text.len(), &value, Kind::Other, window, cx);
     }
 
+    /// Gives the field the keyboard.
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         window.focus(&self.focus, cx);
     }

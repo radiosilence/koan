@@ -19,6 +19,8 @@ use super::child;
 use super::grip::{Edge, GRIP, Grip, OnWidth};
 use crate::theme::{Look, Motion};
 
+/// A leading column the person can resize beside the rest, as the Mac's
+/// sidebar.
 #[derive(IntoElement)]
 pub struct SplitView {
     id: ElementId,
@@ -70,6 +72,7 @@ impl SplitView {
         self
     }
 
+    /// What sits beside the column.
     pub fn trailing(mut self, trailing: impl IntoElement) -> Self {
         self.trailing = Some(trailing.into_any_element());
         self

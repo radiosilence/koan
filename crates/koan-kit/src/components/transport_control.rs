@@ -14,6 +14,8 @@ use gpui::*;
 use super::{Answer, Answerer, Handler, Tooltip, accessible, answers_click, focus, ring, toggled};
 use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, TypeRole, label};
 
+/// A transport control (shuffle, previous, next, repeat): a glyph, or its
+/// word where icons are hidden, with a finger's target.
 #[derive(IntoElement)]
 pub struct TransportControl {
     id: ElementId,
@@ -57,6 +59,7 @@ impl TransportControl {
         self
     }
 
+    /// What a press does.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,

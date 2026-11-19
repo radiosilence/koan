@@ -20,6 +20,7 @@ pub struct Banner {
 }
 
 impl Banner {
+    /// A banner with `icon` and `message`, in `tone`.
     pub fn new(icon: Icon, message: impl Into<SharedString>, tone: Tone) -> Self {
         Self {
             icon,

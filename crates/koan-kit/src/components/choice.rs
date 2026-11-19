@@ -31,6 +31,7 @@ pub enum Item {
 }
 
 impl Item {
+    /// A choice, ticked while `checked`, that runs `run`.
     pub fn choice(
         label: impl Into<SharedString>,
         checked: bool,
@@ -44,6 +45,7 @@ impl Item {
         }
     }
 
+    /// An action that runs `run`, with no tick.
     pub fn action(
         label: impl Into<SharedString>,
         run: impl Fn(&mut Window, &mut App) + 'static,
@@ -56,6 +58,7 @@ impl Item {
         }
     }
 
+    /// An action in `bad` that destroys something.
     pub fn destructive(
         label: impl Into<SharedString>,
         run: impl Fn(&mut Window, &mut App) + 'static,

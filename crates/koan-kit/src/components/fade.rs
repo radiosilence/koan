@@ -55,6 +55,7 @@ fn arrival(id: ElementId, reveal: bool, window: &mut Window, cx: &mut App) -> An
         .clone()
 }
 
+/// `child` fading in when its id changes, and out when `leaving`.
 #[derive(IntoElement)]
 pub struct FadeIn {
     id: ElementId,
@@ -152,6 +153,7 @@ impl Reveal {
         }
     }
 
+    /// Fading in, rather than standing as it is.
     pub fn arriving(mut self, arriving: bool) -> Self {
         self.arriving = arriving;
         self

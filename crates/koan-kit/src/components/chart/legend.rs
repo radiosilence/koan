@@ -16,6 +16,7 @@ pub struct Swatch {
 }
 
 impl Swatch {
+    /// A solid line in `color`.
     pub fn line(color: Hsla) -> Self {
         Self {
             color,
@@ -24,6 +25,7 @@ impl Swatch {
         }
     }
 
+    /// Dashed rather than solid.
     pub fn dashed(mut self, dashed: bool) -> Self {
         self.dashed = dashed;
         self
@@ -63,15 +65,18 @@ pub struct Legend {
 }
 
 impl Legend {
+    /// A legend with no keys yet.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// A key: `name` beside its swatch.
     pub fn key(mut self, name: impl Into<SharedString>, swatch: Swatch) -> Self {
         self.keys.push((name.into(), swatch));
         self
     }
 
+    /// Something more after the keys, such as a control.
     pub fn child(mut self, child: impl IntoElement) -> Self {
         self.extra.push(child.into_any_element());
         self

@@ -117,6 +117,7 @@ impl TileArt {
         self
     }
 
+    /// A mark over the sleeve's corner, or none.
     pub fn mark(mut self, mark: Option<TileMark>) -> Self {
         self.mark = mark;
         self

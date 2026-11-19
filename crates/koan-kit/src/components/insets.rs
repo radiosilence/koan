@@ -38,6 +38,8 @@ pub fn system_insets(clear: Clear, window: &Window) -> gpui::Edges<Pixels> {
     }
 }
 
+/// Padding that keeps an element's content clear of what the system draws
+/// over the window, for any element.
 pub trait KoanInsets: Styled + Sized {
     /// Padding that holds the element's children clear of what the system
     /// draws over the window, while the element's own ground fills it.
@@ -394,6 +396,8 @@ impl RenderOnce for Frost {
     }
 }
 
+/// A frosted ground for any element: what lies under it blurred and
+/// tinted, or opaque where less transparency is asked for.
 pub trait KoanFrosted: Styled + Sized {
     /// A frosted ground standing as it is, whatever is under it: what lies
     /// under blurred. With less

@@ -33,6 +33,7 @@ impl Default for RowListState {
 }
 
 impl RowListState {
+    /// A list at its top with no rows yet.
     pub fn new() -> Self {
         // How far past the screen rows are made ahead of a scroll.
         Self(
@@ -71,6 +72,7 @@ impl RowListState {
         }
     }
 
+    /// Scrolls to `at`, a row and an offset into it.
     pub fn scroll_to(&self, at: RowOffset) {
         if at == RowOffset::default() {
             return self.scroll_to_top();
@@ -81,6 +83,7 @@ impl RowListState {
         });
     }
 
+    /// Scrolls to the first row.
     pub fn scroll_to_top(&self) {
         self.0.scroll_to(RowOffset::default());
     }
@@ -147,6 +150,8 @@ impl RowListState {
 /// Makes row `ix` as it comes on screen.
 type MakeRow = Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>;
 
+/// A long list of rows of differing heights, made only while on screen and
+/// measured as drawn, under the kōan scrollbar.
 #[derive(IntoElement)]
 pub struct RowList {
     state: RowListState,

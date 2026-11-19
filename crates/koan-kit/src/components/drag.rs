@@ -25,6 +25,7 @@ pub struct DragChip {
 }
 
 impl DragChip {
+    /// A chip naming what is carried.
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             sleeve: None,
@@ -32,6 +33,7 @@ impl DragChip {
         }
     }
 
+    /// The first record's sleeve beside the name.
     pub fn sleeve(mut self, sleeve: CoverArt) -> Self {
         self.sleeve = Some(sleeve);
         self
