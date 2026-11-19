@@ -52,6 +52,9 @@ fn height() -> f32 {
 enum Step {
     Page(Route),
     NowPlaying,
+    /// The downloads page with a transfer in each state, which a library
+    /// on this machine never has.
+    Downloads(Vec<koan_runtime::Transfer>),
     /// A track's details over Now Playing, as its menu opens them.
     NowPlayingInfo(i64),
     /// The queue while picking: ticks and the selection bar.
@@ -135,6 +138,28 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         match step {
             Step::Page(route) => cx.update(|cx| shell.update(cx, |s, cx| s.show(route, cx))),
+            Step::Downloads(transfers) => cx.update(|cx| {
+                let mirror = cx.global::<koan_gui::mirror::Mirror>().clone();
+                let figures = transfers
+                    .iter()
+                    .map(|t| koan_runtime::TransferFigure {
+                        track_id: t.track_id,
+                        progress: Some(0.4),
+                        bytes_written: 12_400_000,
+                        total_bytes: 31_000_000,
+                        bytes_per_second: 2_100_000,
+                    })
+                    .collect();
+                mirror.transfers.update(cx, |held, cx| {
+                    held.0 = transfers;
+                    cx.notify();
+                });
+                mirror.figures.update(cx, |held, cx| {
+                    held.0 = figures;
+                    cx.notify();
+                });
+                shell.update(cx, |s, cx| s.show(Route::Downloads, cx));
+            }),
             Step::NowPlaying => cx.update_window(window, |_, window, cx| {
                 shell.update(cx, |s, cx| s.open_now_playing(window, cx))
             })?,
@@ -183,6 +208,36 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// One transfer in each state, from the library's tracks.
+fn sample_transfers(tracks: &[koan_runtime::Track]) -> Vec<koan_runtime::Transfer> {
+    use koan_runtime::{Transfer, TransferState};
+    let states = [
+        (TransferState::Running, None),
+        (TransferState::Queued, None),
+        (
+            TransferState::Failed,
+            Some("the server answered 503".to_owned()),
+        ),
+        (TransferState::Done, None),
+        (TransferState::Done, None),
+    ];
+    tracks
+        .iter()
+        .zip(states)
+        .map(|(t, (state, failure_reason))| Transfer {
+            track_id: t.id,
+            album_id: t.album_id,
+            artist_id: t.artist_id,
+            title: t.title.clone(),
+            artist: t.artist_name.clone(),
+            artist_credit: Vec::new(),
+            album: t.album_title.clone(),
+            state,
+            failure_reason,
+        })
+        .collect()
+}
+
 /// Scans the configured folders and fills a queue and a playlist, so the
 /// pages have something to show. Returns the steps, by name.
 fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, Box<dyn Error>> {
@@ -199,7 +254,10 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
         page("favourites", Route::Favourites),
         page("recent", Route::RecentlyPlayed),
         page("history", Route::History),
-        page("downloads", Route::Downloads),
+        (
+            "downloads".into(),
+            Step::Downloads(sample_transfers(&tracks)),
+        ),
         page("playlists", Route::Playlists),
         page("search", Route::SearchTab),
         page("settings", Route::Settings),
