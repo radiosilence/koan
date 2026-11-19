@@ -15,7 +15,7 @@ GPUI gives a page `div()`s, and each one accepts any padding, size and colour. A
 - **The system's settings.** Reduce Motion, Increase Contrast, Reduce Transparency and the system text size are read where the platform provides them and applied by every component.
 - **Touch.** On a touch screen every control keeps a 44-point target, a long press opens the context menu, and a window narrower than 660 points takes the compact layout (`Look::touch`, `Look::compact`).
 
-![The storybook's buttons page, dark and light](../../site/public/kit/buttons.png)
+![The storybook's buttons page: each kind, and the destructive, disabled and toolbar states](../../site/public/kit/buttons.jpg)
 
 ## Depending on it
 
@@ -122,7 +122,7 @@ fn main() {
 
 Controls report through handlers, and `cx.listener` turns a view method into one: the view changes its own state and calls `cx.notify()`, and the next render shows the change. Words a control draws are the caller's. App words are passed lowercase, as the kit draws them (`theme::label` does the lowering), and data such as a record's title keeps its case through the `data` constructors (`PageHeader::data`, `FormRow::data`).
 
-![The storybook's fields and forms page](../../site/public/kit/forms.png)
+![The storybook's fields and forms page](../../site/public/kit/forms.jpg)
 
 ## Pages decide what, the kit decides how
 
@@ -151,7 +151,9 @@ A page chooses its content, its order, which verbs a header or menu offers, whic
 | A list of choices under a control | `Menu`, `KoanContextMenu`, `opens_panel` |
 | A step-by-step flow | `Steps`, `ChoiceCards`, `CheckItem` |
 
-![The storybook's tables and lists page](../../site/public/kit/lists.png)
+![The storybook's tables and lists page](../../site/public/kit/lists.jpg)
+
+![The storybook's toolbars and headers page](../../site/public/kit/toolbars.jpg)
 
 ## Tokens and the look
 
@@ -173,8 +175,6 @@ Motion in the kit is written as keyframes and drawn by the GPU: a component writ
 - `Glide` moves a value on its own between renders, such as a seek bar's playhead or a download's bar.
 - `Animated` and `AnimatedQuad` are the base the others are built on, for a component of an app's own.
 - `settle_length` says how long a transition takes, for an app that waits for one to finish.
-
-![The storybook's motion and drag page](../../site/public/kit/motion.png)
 
 ## Touch and narrow windows
 

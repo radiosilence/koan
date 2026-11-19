@@ -166,7 +166,12 @@ pub struct Animated(_);
 
 - `pub fn downgrade(&self) -> WeakAnimated`
 
+  A handle that does not keep the uniforms alive, for a closure or a
+  thread that should stop writing once the element is gone.
+
 - `pub fn new() -> Self`
+
+  Uniforms with their clock started now.
 
 - `pub fn set(&self, index: usize, value: f32)`
 
@@ -274,6 +279,8 @@ pub struct WeakAnimated(_);
 
 - `pub fn upgrade(&self) -> Option<Animated>`
 
+  The handle again, while something still holds it.
+
 - `pub fn is(&self, animated: &Animated) -> bool`
 
   Whether it is the handle `animated` was taken from.
@@ -289,6 +296,8 @@ pub struct AnimatedQuad { /* private fields */ }
 ```
 
 - `pub fn new(program: &'static ShaderProgram, animated: &Animated) -> Self`
+
+  A quad drawn by `program`, reading its keyframes from `animated`.
 
 - `pub fn image(self, image: Arc<RenderImage>) -> Self`
 
@@ -973,16 +982,12 @@ pub struct Veil { /* private fields */ }
 
 - `pub fn new(color: Hsla) -> Self`
 
+  A dim in `color` fading in over the window behind a sheet.
+
 - `pub fn leaving(self, leaving: bool) -> Self`
 
   Lifting, over `Motion::SETTLE`, for a panel going back down under
   touch.
-
-- `pub fn hsla(self) -> Hsla`
-
-- `pub fn over(self, ground: Hex) -> Hex`
-
-  The opaque colour it makes over `ground`.
 
 Implements `RenderOnce`.
 
@@ -1024,6 +1029,8 @@ pub struct SlideUp { /* private fields */ }
 
 - `pub fn new(child: impl IntoElement) -> Self`
 
+  `child` rising from the window's foot as it is first drawn.
+
 - `pub fn fits(self) -> Self`
 
   Going back down, over `Motion::SETTLE`; the owner lets it go after.
@@ -1031,6 +1038,8 @@ pub struct SlideUp { /* private fields */ }
   the room above the keyboard and the system's insets.
 
 - `pub fn leaving(self, leaving: bool) -> Self`
+
+  Going back down, inert, before its owner drops it.
 
 Implements `RenderOnce`.
 
@@ -1048,6 +1057,8 @@ pub struct Flying { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, from: Bounds<Pixels>, to: Bounds<Pixels>, length: Duration, child: impl IntoElement) -> Self`
 
+  `child` drawn over the window, moving from `from` to `to` over `length`.
+
 Implements `RenderOnce`.
 
 #### `Shifted`
@@ -1063,6 +1074,8 @@ pub struct Shifted { /* private fields */ }
 ```
 
 - `pub fn new(id: impl Into<ElementId>, delta: Point<Pixels>, child: impl IntoElement) -> Self`
+
+  `child` drawn `delta` from where it is laid out, gliding to its place.
 
 Implements `RenderOnce`.
 
@@ -1082,6 +1095,8 @@ pub struct ZoomIn { /* private fields */ }
 
 - `pub fn new(at: Point<Pixels>, child: impl IntoElement) -> Self`
 
+  `child` growing out of `at`, the point that was pressed.
+
 Implements `RenderOnce`.
 
 #### `Hang`
@@ -1098,7 +1113,11 @@ pub struct Hang { /* private fields */ }
 
 - `pub fn new(child: impl IntoElement) -> Self`
 
+  `child` dropping in from behind the bar above it.
+
 - `pub fn leaving(self, leaving: bool) -> Self`
+
+  Going back behind the bar, inert, before its owner drops it.
 
 Implements `RenderOnce`.
 
@@ -1158,6 +1177,8 @@ pub struct Arrival { /* private fields */ }
 
 - `pub fn new(length: Duration) -> Self`
 
+  An arrival that begins now and lasts `length`.
+
 - `pub fn since(start: Instant, length: Duration) -> Self`
 
   An arrival that began at `start`: a picture decoded a moment before
@@ -1169,6 +1190,8 @@ pub struct Arrival { /* private fields */ }
   what stood beneath it.
 
 - `pub fn landed(&self) -> bool`
+
+  Whether it has finished, so its owner can draw the picture plainly.
 
 #### `arriving`
 
@@ -1196,7 +1219,7 @@ pub type RingGlide = Rc<dyn Fn(Hsla, &mut App) -> Glide>;
 
 #### `Availability`
 
-*enum*
+*enum* · Where a track's file is, as `AvailabilityMark` draws it.
 
 ```rust
 #[derive(Clone)]
@@ -1247,6 +1270,8 @@ pub struct AvailabilityMark { /* private fields */ }
 
 - `pub fn picked(self, picked: bool) -> Self`
 
+  Drawn on a picked row's selection colours.
+
 Implements `RenderOnce`.
 
 ### components::badge
@@ -1263,6 +1288,8 @@ pub struct Badge { /* private fields */ }
 
 - `pub fn new(text: impl Into<SharedString>) -> Self`
 
+  A badge saying `text`, in `muted`.
+
 - `pub fn key(self, key: impl Into<ElementId>) -> Self`
 
   Tells it from badges saying the same beside it in rows that have no
@@ -1271,6 +1298,8 @@ pub struct Badge { /* private fields */ }
   text, and must not be shared.
 
 - `pub fn accent(self, accent: bool) -> Self`
+
+  In the accent rather than `muted`.
 
 Implements `RenderOnce`.
 
@@ -1288,6 +1317,8 @@ pub struct Chip { /* private fields */ }
   A chip names a thing (a device, a preset), so its text keeps its case.
 
 - `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press does.
 
 Implements `RenderOnce`.
 
@@ -1309,6 +1340,8 @@ pub struct Banner { /* private fields */ }
 ```
 
 - `pub fn new(icon: Icon, message: impl Into<SharedString>, tone: Tone) -> Self`
+
+  A banner with `icon` and `message`, in `tone`.
 
 - `pub fn action(self, label: impl Into<SharedString>, run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
 
@@ -1391,6 +1424,8 @@ pub struct BarLevels(_);
 
 - `pub fn new() -> Self`
 
+  Levels at rest, all bars down.
+
 - `pub fn hold(&self, bands: [f32; 3])`
 
   Each bar standing at its band, 0 to 1, low band to high.
@@ -1434,6 +1469,9 @@ pub struct PlayingBars { /* private fields */ }
 ```
 
 - `pub fn new(color: Hsla, attach: impl Fn(BarsPlace, &mut Window, &mut App) -> Option<BarLevels> + 'static) -> Self`
+
+  Bars in `color`. `attach` is asked for the levels once the bars know
+  where they are drawn; returning `None` draws them still.
 
 - `pub fn prism(self, prism: Option<bool>) -> Self`
 
@@ -1504,7 +1542,9 @@ pub enum ButtonKind {
 
 #### `Button`
 
-*struct*
+*struct* · A button: its kind's weight and shape, a label or a glyph or both, and
+its states (hover, press, focus, disabled, selected). Made with `new` or
+`icon_only`.
 
 ```rust
 #[derive(IntoElement)]
@@ -1512,6 +1552,8 @@ pub struct Button { /* private fields */ }
 ```
 
 - `pub fn new(id: impl Into<ElementId>, kind: ButtonKind) -> Self`
+
+  A button of `kind`, given its label or glyph by the methods below.
 
 - `pub fn icon_only(id: impl Into<ElementId>, icon: Icon, help: impl Into<SharedString>) -> Self`
 
@@ -1554,6 +1596,8 @@ pub struct Button { /* private fields */ }
 
 - `pub fn disabled(self, disabled: bool) -> Self`
 
+  Drawn at 40 % and taking no press or focus.
+
 - `pub fn role(self, role: TypeRole) -> Self`
 
   Sized to `role` rather than the kind's type: a glyph button at
@@ -1565,6 +1609,8 @@ pub struct Button { /* private fields */ }
   A toolbar toggle's on state (the lyrics, the sidebar): the pressed fill.
 
 - `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press, Enter or Space on the focused button does.
 
 Implements `RenderOnce`.
 
@@ -1649,9 +1695,15 @@ pub struct Axis { /* private fields */ }
 
 - `pub fn linear(lo: f64, hi: f64) -> Self`
 
+  An axis from `lo` to `hi`, evenly spaced.
+
 - `pub fn log(lo: f64, hi: f64) -> Self`
 
+  An axis from `lo` to `hi` on a logarithmic scale, as frequency is.
+
 - `pub fn ticks(self, ticks: Ticks) -> Self`
+
+  Where the ticks fall, rather than chosen from the range.
 
 - `pub fn format(self, format: impl Fn(f64) -> String + 'static) -> Self`
 
@@ -1663,6 +1715,8 @@ pub struct Axis { /* private fields */ }
   No rule across the plot at each tick.
 
 - `pub fn no_labels(self) -> Self`
+
+  Ticks with no labels.
 
 #### `Base`
 
@@ -1710,7 +1764,11 @@ pub struct Series { /* private fields */ }
 
 - `pub fn color(self, color: Hsla) -> Self`
 
+  In `color` rather than the next of the chart's colours.
+
 - `pub fn motion(self, motion: DataMotion) -> Self`
+
+  How a change of its data moves.
 
 #### `Rule`
 
@@ -1728,11 +1786,15 @@ pub struct Rule { /* private fields */ }
 
 - `pub fn color(self, color: Hsla) -> Self`
 
+  In `color` rather than `muted`.
+
 - `pub fn width(self, points: f32) -> Self`
 
   Its width in points, rather than a hairline.
 
 - `pub fn dash(self, pattern: &[f32]) -> Self`
+
+  Dashed: lengths of dash and gap, in points, up to four.
 
 - `pub fn label(self, label: impl Into<SharedString>, below: bool) -> Self`
 
@@ -1757,6 +1819,8 @@ pub struct ChartPoint {
   A disc of 4 points' radius, in the accent.
 
 - `pub fn color(self, color: Hsla) -> Self`
+
+  In `color` rather than the accent.
 
 - `pub fn radius(self, rest: f32, held: f32) -> Self`
 
@@ -1823,6 +1887,9 @@ pub struct Chart { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, x: Axis, y: Axis) -> Self`
 
+  A chart over `x` and `y`, given its series, rules and points by the
+  methods.
+
 - `pub fn series(self, series: impl IntoIterator<Item = Series>) -> Self`
 
   Drawn in order, each over the last.
@@ -1847,6 +1914,8 @@ pub struct Chart { /* private fields */ }
 
 - `pub fn legend(self, legend: Legend) -> Self`
 
+  A legend under the plot.
+
 - `pub fn y_gutter(self, width: Pixels) -> Self`
 
   The y labels' column, rather than as wide as its widest label.
@@ -1865,6 +1934,9 @@ pub struct Chart { /* private fields */ }
   The drag's end: let go, or the button seen up.
 
 - `pub fn report_points(self, places: PointPlaces) -> Self`
+
+  Where each point is drawn, written to `places` every frame, for a page
+  that lays something out beside them.
 
 Implements `RenderOnce`.
 
@@ -1927,7 +1999,8 @@ pub struct CollectionSection { /* private fields */ }
 
 #### `Collection`
 
-*struct*
+*struct* · Sections of pills or tiles in rows that wrap, under an optional page
+header, with an empty state when there are no sections.
 
 ```rust
 #[derive(IntoElement)]
@@ -1935,6 +2008,8 @@ pub struct Collection { /* private fields */ }
 ```
 
 - `pub fn new(id: impl Into<ElementId>, width: &CollectionWidth) -> Self`
+
+  A collection at `width`, the page's measure of how many fit a row.
 
 - `pub fn under_bar(self) -> Self`
 
@@ -1952,6 +2027,8 @@ pub struct Collection { /* private fields */ }
   wherever it is laid out: a pill in its flow, a tile in its row.
 
 - `pub fn header(self, header: PageHeader) -> Self`
+
+  The page header above the sections.
 
 - `pub fn section(self, section: CollectionSection) -> Self`
 
@@ -1992,7 +2069,8 @@ pub struct CommandSection {
 
 #### `CommandBar`
 
-*struct*
+*struct* · The command bar over the window: the owner's field and the results
+under it, closed by a press on the dimmed window behind.
 
 ```rust
 #[derive(IntoElement)]
@@ -2037,6 +2115,8 @@ pub struct CommandResults { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>) -> Self`
 
+  Results with no sections yet.
+
 - `pub fn last(self, row: SuggestionRow) -> Self`
 
   The row after every section, under no heading: what goes further
@@ -2048,11 +2128,15 @@ pub struct CommandResults { /* private fields */ }
 
 - `pub fn lit(self, lit: Option<usize>) -> Self`
 
+  The row the keyboard is on, counted across the sections.
+
 - `pub fn key(self, keys: impl Into<SharedString>, verb: impl AsRef<str>) -> Self`
 
   A key and what it does, along the foot, in the app's words.
 
 - `pub fn empty(self, text: impl AsRef<str>) -> Self`
+
+  What it says when no section has a row.
 
 Implements `RenderOnce`.
 
@@ -2067,7 +2151,7 @@ for it.
 
 #### `CopyButton`
 
-*struct*
+*struct* · A button that copies a value to the clipboard and says so with a tick.
 
 ```rust
 #[derive(IntoElement)]
@@ -2083,6 +2167,8 @@ pub struct CopyButton { /* private fields */ }
   Nothing to copy yet: the link is still being made.
 
 - `pub fn kind(self, kind: ButtonKind) -> Self`
+
+  Drawn as `kind` rather than a compact button.
 
 - `pub fn icon(self, icon: Icon) -> Self`
 
@@ -2102,6 +2188,8 @@ pub struct CopyText { /* private fields */ }
 ```
 
 - `pub fn new(id: impl Into<ElementId>, value: impl Into<SharedString>) -> Self`
+
+  `value`, which a press copies.
 
 - `pub fn help(self, help: impl Into<SharedString>) -> Self`
 
@@ -2139,7 +2227,7 @@ pub enum CoverArt {
 
 #### `Cover`
 
-*struct*
+*struct* · A sleeve at a size, or the placeholder while there is none.
 
 ```rust
 #[derive(IntoElement)]
@@ -2147,6 +2235,8 @@ pub struct Cover { /* private fields */ }
 ```
 
 - `pub fn new(art: CoverArt, side: Pixels) -> Self`
+
+  `art` as a square of `side`.
 
 - `pub fn id(self, id: impl Into<ElementId>) -> Self`
 
@@ -2172,6 +2262,8 @@ pub struct Mosaic { /* private fields */ }
 
 - `pub fn new(arts: Vec<CoverArt>, side: Pixels) -> Self`
 
+  Up to four sleeves in a square of `side`, as a playlist's cover.
+
 Implements `RenderOnce`.
 
 ### components::dense
@@ -2185,7 +2277,7 @@ row may end in a trailing cell (an options menu) past the columns.
 
 #### `Align`
 
-*enum*
+*enum* · Where a dense table's cell sits in its column.
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2197,7 +2289,7 @@ pub enum Align {
 
 #### `Column`
 
-*struct*
+*struct* · A column of a `DenseTable`: fixed at a width or taking what is left.
 
 ```rust
 #[derive(Clone, Copy, Debug)]
@@ -2206,7 +2298,11 @@ pub struct Column { /* private fields */ }
 
 - `pub fn fixed(points: f32, align: Align) -> Self`
 
+  `points` wide at 100 % text, its cells aligned as `align` says.
+
 - `pub fn flex() -> Self`
+
+  Taking the width the fixed columns leave, its cells at its start.
 
 #### `DenseRow`
 
@@ -2219,7 +2315,11 @@ pub struct DenseRow { /* private fields */ }
 
 - `pub fn new() -> Self`
 
+  A row with no cells yet.
+
 - `pub fn cell(self, content: impl IntoElement) -> Self`
+
+  A cell in the next column.
 
 - `pub fn span(self, columns: usize, content: impl IntoElement) -> Self`
 
@@ -2231,7 +2331,8 @@ pub struct DenseRow { /* private fields */ }
 
 #### `DenseTable`
 
-*struct*
+*struct* · A dense table for an editor: columns of fixed or flexible width, an
+optional header, and tight rows of cells.
 
 ```rust
 #[derive(IntoElement)]
@@ -2239,6 +2340,8 @@ pub struct DenseTable { /* private fields */ }
 ```
 
 - `pub fn new(columns: impl Into<Rc<[Column]>>) -> Self`
+
+  A table of `columns`.
 
 - `pub fn header(self, titles: impl IntoIterator<Item = impl Into<SharedString>>) -> Self`
 
@@ -2253,7 +2356,11 @@ pub struct DenseTable { /* private fields */ }
 
 - `pub fn row(self, row: DenseRow) -> Self`
 
+  A row, under the last.
+
 - `pub fn rows(self, rows: impl IntoIterator<Item = DenseRow>) -> Self`
+
+  Rows, under the last.
 
 Implements `RenderOnce`.
 
@@ -2266,7 +2373,7 @@ wrapping. Both in `fine`.
 
 #### `DetailGroup`
 
-*struct*
+*struct* · A titled group of name and value pairs, for reading a value off.
 
 ```rust
 #[derive(IntoElement)]
@@ -2279,7 +2386,11 @@ pub struct DetailGroup { /* private fields */ }
 
 - `pub fn row(self, name: impl Into<SharedString>, value: impl Into<SharedString>) -> Self`
 
+  A name and its value.
+
 - `pub fn rows(self, rows: impl IntoIterator<Item = (impl Into<SharedString>, impl Into<SharedString>)>) -> Self`
+
+  Names and their values.
 
 Implements `RenderOnce`.
 
@@ -2311,7 +2422,11 @@ pub struct DragChip { /* private fields */ }
 
 - `pub fn new(label: impl Into<SharedString>) -> Self`
 
+  A chip naming what is carried.
+
 - `pub fn sleeve(self, sleeve: CoverArt) -> Self`
+
+  The first record's sleeve beside the name.
 
 Implements `RenderOnce`.
 
@@ -2341,6 +2456,9 @@ pub struct EmptyState { /* private fields */ }
 ```
 
 - `pub fn new(icon: Icon, title: impl AsRef<str>) -> Self`
+
+  An empty state with the place's `icon` and `title`, an app word drawn
+  lowercase.
 
 - `pub fn warning(self) -> Self`
 
@@ -2388,7 +2506,7 @@ as it would unwrapped.
 
 #### `FadeIn`
 
-*struct*
+*struct* · `child` fading in when its id changes, and out when `leaving`.
 
 ```rust
 #[derive(IntoElement)]
@@ -2429,6 +2547,8 @@ pub struct Reveal { /* private fields */ }
   `id` names the arrival: it runs once per id.
 
 - `pub fn arriving(self, arriving: bool) -> Self`
+
+  Fading in, rather than standing as it is.
 
 Implements `RenderOnce`.
 
@@ -2473,6 +2593,8 @@ pub struct TextField { /* private fields */ }
 
 - `pub fn new(state: &Entity<FieldState>) -> Self`
 
+  A field over `state`, which its owner keeps and listens to.
+
 - `pub fn label(self, label: impl Into<SharedString>) -> Self`
 
   What a screen reader names it, where no visible label beside it
@@ -2512,6 +2634,8 @@ pub struct TextArea { /* private fields */ }
 
 - `pub fn new(state: &Entity<AreaState>) -> Self`
 
+  A field of several lines over `state`, which its owner keeps.
+
 - `pub fn label(self, label: impl Into<SharedString>) -> Self`
 
   What a screen reader names it, as `TextField::label`.
@@ -2531,7 +2655,7 @@ pub fn labelled(label: impl Into<SharedString>, child: impl IntoElement) -> Labe
 
 #### `Labelled`
 
-*struct*
+*struct* · What `labelled` makes: its child, with the label its text fields take.
 
 ```rust
 pub struct Labelled { /* private fields */ }
@@ -2552,7 +2676,8 @@ leftward for a moment, a layer the GPU moves, so the clear is seen.
 
 #### `FilterField`
 
-*struct*
+*struct* · The filter field: the search glyph and a lowercase prompt, no box, and
+a clear mark while it holds text.
 
 ```rust
 #[derive(IntoElement)]
@@ -2560,6 +2685,9 @@ pub struct FilterField { /* private fields */ }
 ```
 
 - `pub fn new(input: &Entity<InputState>) -> Self`
+
+  A field over `input`, which its owner keeps and listens to; it prompts
+  "filter" until `label` says what it narrows.
 
 - `pub fn label(self, label: &str) -> Self`
 
@@ -2591,6 +2719,9 @@ pub struct FilterButton { /* private fields */ }
   keeps its case.
 
 - `pub fn on_click(self, run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press anywhere on it does: usually opening the search it stands
+  for.
 
 Implements `RenderOnce`.
 
@@ -2638,6 +2769,8 @@ pub struct Follow(_);
 
 - `pub fn new() -> Self`
 
+  A layer standing in place.
+
 - `pub fn follow(&self, by: Point<Pixels>, window: &Window)`
 
   The offset standing at `by`, as a gesture event reports it.
@@ -2658,6 +2791,8 @@ pub struct Follow(_);
   a finger or a settle moves it.
 
 - `pub fn animated(&self) -> &Animated`
+
+  The uniforms the layer reads, for an element that draws it.
 
 Implements `Default`.
 
@@ -2715,6 +2850,8 @@ pub struct Elastic { /* private fields */ }
 ```
 
 - `pub fn new() -> Self`
+
+  A page's edges at rest, with no refresh.
 
 - `pub fn wrap(&self, page: impl IntoElement, window: &mut Window, _: &mut App) -> AnyElement`
 
@@ -2874,6 +3011,8 @@ pub struct SwipeAction { /* private fields */ }
 
 - `pub fn new(follow: &Follow, row: impl IntoElement, action: impl IntoElement) -> Self`
 
+  `row` over `action`, both moved by `follow`.
+
 Implements `RenderOnce`.
 
 #### `PUSH_FRONT`
@@ -2983,6 +3122,8 @@ pub struct Push(_);
 
 - `pub fn new() -> Self`
 
+  A push at rest, the page in front in place.
+
 - `pub fn moves(cx: &App) -> bool`
 
   Whether a push moves at all: where it would land at once, its owner
@@ -3038,9 +3179,15 @@ pub struct Form { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>) -> Self`
 
+  A form with no sections yet.
+
 - `pub fn section(self, section: impl IntoElement) -> Self`
 
+  A section, under the last.
+
 - `pub fn sections(self, sections: impl IntoIterator<Item = AnyElement>) -> Self`
+
+  Sections, under the last.
 
 - `pub fn build(self, look: &Look) -> ScrollArea`
 
@@ -3057,15 +3204,24 @@ pub struct FormSection { /* private fields */ }
 
 - `pub fn new() -> Self`
 
+  A section with no heading.
+
 - `pub fn titled(title: impl AsRef<str>) -> Self`
 
   Headed, in the app's words.
 
 - `pub fn row(self, row: impl IntoElement) -> Self`
 
+  A row, under the last: a `FormRow`, a control that is a row of its own
+  (a `Toggle`), or a button.
+
 - `pub fn rows(self, rows: impl IntoIterator<Item = AnyElement>) -> Self`
 
+  Rows, under the last.
+
 - `pub fn footer(self, footer: impl Into<SharedString>) -> Self`
+
+  A note under the rows saying what the section means, in `muted`.
 
 Implements `RenderOnce`.
 
@@ -3102,7 +3258,12 @@ pub struct FormRow { /* private fields */ }
 
 - `pub fn value(self, value: impl Into<SharedString>) -> Self`
 
+  A value shown in `muted` at the trailing edge, for a row that is read
+  rather than edited.
+
 - `pub fn control(self, control: impl IntoElement) -> Self`
+
+  The control at the trailing edge, or under the label when `stacked`.
 
 Implements `RenderOnce`.
 
@@ -3117,7 +3278,11 @@ pub struct SectionHeader { /* private fields */ }
 
 - `pub fn new(title: impl AsRef<str>) -> Self`
 
+  A header saying `title`, an app word drawn lowercase.
+
 - `pub fn data(title: impl Into<SharedString>) -> Self`
+
+  A header saying `title` as it is, for data.
 
 Implements `RenderOnce`.
 
@@ -3449,6 +3614,8 @@ pub struct ChoiceCards { /* private fields */ }
 
 - `pub fn on_change(self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self`
 
+  What choosing a card does, given its index.
+
 Implements `RenderOnce`.
 
 #### `Steps`
@@ -3502,7 +3669,11 @@ pub struct CheckItem { /* private fields */ }
 
 - `pub fn detail(self, detail: impl Into<SharedString>) -> Self`
 
+  A line under the title saying more.
+
 - `pub fn action(self, action: impl IntoElement) -> Self`
+
+  A button beside the item, such as one that does the step.
 
 Implements `RenderOnce`.
 
@@ -3523,7 +3694,8 @@ or only under the pointer) is its styling, set as on a `div`.
 
 #### `Heart`
 
-*struct*
+*struct* · The heart: an outline when off, filled in the accent when on, answering
+its own press on the GPU.
 
 ```rust
 #[derive(IntoElement)]
@@ -3538,6 +3710,8 @@ pub struct Heart { /* private fields */ }
   it until the answer has run.
 
 - `pub fn new(id: impl Into<ElementId>, on: bool) -> Self`
+
+  A heart, on or off; a click does what `on_click` says.
 
 - `pub fn role(self, role: TypeRole) -> Self`
 
@@ -3594,7 +3768,8 @@ pub fn system_insets(clear: Clear, window: &Window) -> gpui::Edges<Pixels>
 
 #### `KoanInsets`
 
-*trait*
+*trait* · Padding that keeps an element's content clear of what the system draws
+over the window, for any element.
 
 ```rust
 pub trait KoanInsets: Styled + Sized {
@@ -3738,7 +3913,8 @@ Implements `RenderOnce`.
 
 #### `KoanFrosted`
 
-*trait*
+*trait* · A frosted ground for any element: what lies under it blurred and
+tinted, or opaque where less transparency is asked for.
 
 ```rust
 pub trait KoanFrosted: Styled + Sized {
@@ -3764,7 +3940,7 @@ person dragged it to), the head's hairline with it.
 
 #### `Inspector`
 
-*struct*
+*struct* · A panel beside the page: its title, what trails it, and its body.
 
 ```rust
 #[derive(IntoElement)]
@@ -3773,12 +3949,16 @@ pub struct Inspector { /* private fields */ }
 
 - `pub fn new(title: impl AsRef<str>) -> Self`
 
+  A panel titled `title`, an app word drawn lowercase.
+
 - `pub fn trailing(self, trailing: impl IntoElement) -> Self`
 
   At the head's far edge: where the content came from, or that it is
   still coming.
 
 - `pub fn body(self, body: impl IntoElement) -> Self`
+
+  What the panel shows under its head.
 
 - `pub fn clear(self, clear: bool) -> Self`
 
@@ -3923,6 +4103,9 @@ pub struct Level { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, value: u32, max: u32) -> Self`
 
+  A level at `value` of `max`, between the volume glyphs unless given
+  others.
+
 - `pub fn ends(self, low: Icon, high: Icon) -> Self`
 
   The glyphs at either end; a volume's speakers by default.
@@ -3932,6 +4115,8 @@ pub struct Level { /* private fields */ }
   The value written after the high glyph, such as "40".
 
 - `pub fn on_commit(self, handler: impl Fn(&u32, &mut Window, &mut App) + 'static) -> Self`
+
+  What letting go does, given the value let go at.
 
 Implements `RenderOnce`.
 
@@ -4168,7 +4353,9 @@ pub fn scrolls_away(
 
 #### `width_probe`
 
-*function*
+*function* · An element that reports the width it is laid out at into `width`, and
+notifies `owner` when it changes: for a list that lays out its rows by
+its own width.
 
 ```rust
 pub fn width_probe(
@@ -4285,6 +4472,8 @@ pub struct SyncedLines { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, lines: Vec<SharedString>, active: Option<usize>) -> Self`
 
+  `lines`, with `active` the one being sung.
+
 - `pub fn song(self, song: impl std::hash::Hash) -> Self`
 
   Which song these are the lines of (the track): another starts
@@ -4297,6 +4486,8 @@ pub struct SyncedLines { /* private fields */ }
   is timed from there rather than from when the line was drawn.
 
 - `pub fn on_line(self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press on a line does, given its index.
 
 Implements `RenderOnce`.
 
@@ -4356,6 +4547,8 @@ pub struct MenuEntry { /* private fields */ }
 
 - `pub fn icon(self, icon: Icon) -> Self`
 
+  A glyph before the label.
+
 - `pub fn checked(self, checked: bool) -> Self`
 
   One of a set of choices, ticked when in force.
@@ -4380,13 +4573,20 @@ pub struct MenuEntry { /* private fields */ }
 
 - `pub fn destructive(self) -> Self`
 
+  In `bad`, for an entry that destroys something.
+
 - `pub fn disabled(self, disabled: bool) -> Self`
+
+  Dimmed and taking no press.
 
 - `pub fn on_click(self, run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
 
+  What choosing the entry does.
+
 #### `Menu`
 
-*struct*
+*struct* · A menu: entries, separators, notes and submenus, kept by an entity so
+the keyboard can move through it. Opened by `koan_menu` and its kin.
 
 ```rust
 pub struct Menu { /* private fields */ }
@@ -4394,7 +4594,11 @@ pub struct Menu { /* private fields */ }
 
 - `pub fn build(window: &mut Window, cx: &mut App, build: impl FnOnce(Menu, &mut Window, &mut Context<Menu>) -> Menu) -> Entity<Menu>`
 
+  A menu made by `build`, as an entity the panel draws.
+
 - `pub fn item(self, entry: MenuEntry) -> Self`
+
+  An entry, under the last.
 
 - `pub fn label(self, text: impl Into<SharedString>) -> Self`
 
@@ -4438,6 +4642,8 @@ pub struct Menu { /* private fields */ }
   entries that follow.
 
 - `pub fn submenu(self, text: impl Into<SharedString>, window: &mut Window, cx: &mut Context<Menu>, build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static) -> Self`
+
+  An entry that opens the menu `build` makes beside it.
 
 - `pub fn submenu_icon(self, text: impl Into<SharedString>, icon: Icon, window: &mut Window, cx: &mut Context<Menu>, build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static) -> Self`
 
@@ -4522,7 +4728,11 @@ pub struct MenuSlot<K> { /* private fields */ }
 
 - `pub fn is_open(&self, which: K) -> bool`
 
+  Whether the menu `which` is open.
+
 - `pub fn close(&mut self)`
+
+  Closes whichever menu is open.
 
 - `pub fn menu(&self, which: K) -> Option<&Entity<Menu>>`
 
@@ -4572,13 +4782,16 @@ pub enum RowKind {
 
 #### `RowMetrics`
 
-*struct*
+*struct* · Row heights, gaps, margins and widths for lists and panels, measured
+from the Mac app and scaled by the look's text size.
 
 ```rust
 pub struct RowMetrics;
 ```
 
 - `pub fn height(kind: RowKind, look: &Look) -> Pixels`
+
+  The height of a row of `kind`, at least a finger's target under touch.
 
 - `pub fn nav_height(detail: bool, look: &Look) -> Pixels`
 
@@ -4656,7 +4869,11 @@ pub struct RowMetrics;
 
 - `pub fn inspector_min(look: &Look) -> Pixels`
 
+  The narrowest an inspector panel is dragged to.
+
 - `pub fn inspector_max(look: &Look) -> Pixels`
+
+  The widest an inspector panel is dragged to.
 
 - `pub fn column_gap(look: &Look) -> Pixels`
 
@@ -4808,6 +5025,8 @@ pub struct TileGrid {
   moved.
 
 - `pub fn rows(&self, items: usize) -> usize`
+
+  How many rows `items` tiles take.
 
 - `pub fn caption_gap() -> Pixels`
 
@@ -4998,6 +5217,8 @@ pub struct SectionHeading { /* private fields */ }
 
 - `pub fn new(title: impl AsRef<str>) -> Self`
 
+  A heading saying `title`, an app word drawn lowercase.
+
 - `pub fn on_reveal(self, reveal: impl Fn(&mut Window, &mut App) + 'static) -> Self`
 
   Run when a screen reader moves to the heading in a list that draws
@@ -5020,6 +5241,9 @@ pub struct SectionHeading { /* private fields */ }
 
 - `pub fn height(look: &Look) -> Pixels`
 
+  The height a heading takes with the space above and below it, for a
+  list that measures its rows.
+
 Implements `RenderOnce`.
 
 #### `PlayButton`
@@ -5040,12 +5264,16 @@ pub struct PlayButton { /* private fields */ }
 
 - `pub fn loading(self, loading: bool) -> Self`
 
+  A spinner in place of the glyph while what it plays is being fetched.
+
 - `pub fn disabled(self, disabled: bool) -> Self`
 
   Nothing to play: dimmed, as `ShuffleButton::disabled`, and not
   clickable.
 
 - `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press does.
 
 Implements `RenderOnce`.
 
@@ -5066,7 +5294,11 @@ pub struct ShuffleButton { /* private fields */ }
 
 - `pub fn disabled(self, disabled: bool) -> Self`
 
+  Dimmed and taking no press.
+
 - `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press does.
 
 Implements `RenderOnce`.
 
@@ -5082,11 +5314,15 @@ pub struct Page { /* private fields */ }
 
 - `pub fn new(header: PageHeader) -> Self`
 
+  A page under `header`.
+
 - `pub fn bare() -> Self`
 
   A page with no header: a grid that scrolls its header away with it.
 
 - `pub fn body(self, body: impl IntoElement) -> Self`
+
+  What the page shows under its header, filling the rest.
 
 Implements `RenderOnce`.
 
@@ -5113,6 +5349,8 @@ pub struct MenuPanel { /* private fields */ }
 ```
 
 - `pub fn new() -> Self`
+
+  An empty panel, given its rows as children.
 
 - `pub fn min_width(self, points: Option<f32>) -> Self`
 
@@ -5148,6 +5386,8 @@ pub struct MenuRow { /* private fields */ }
 ```
 
 - `pub fn new(id: impl Into<ElementId>, text: impl AsRef<str>) -> Self`
+
+  A row saying `text`, an app word drawn lowercase.
 
 - `pub fn columns(self, columns: Rc<ActionColumns>) -> Self`
 
@@ -5186,6 +5426,8 @@ pub struct MenuRow { /* private fields */ }
   name, a device's), which keeps its case.
 
 - `pub fn icon(self, icon: Icon) -> Self`
+
+  A glyph before the label.
 
 - `pub fn label_data(self, text: impl Into<SharedString>) -> Self`
 
@@ -5229,9 +5471,15 @@ pub struct MenuRow { /* private fields */ }
 
 - `pub fn reach(self, reach: Icon) -> Self`
 
+  A small glyph after the label saying how a place is reached.
+
 - `pub fn destructive(self, destructive: bool) -> Self`
 
+  In `bad`, for a row that destroys something.
+
 - `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What choosing the row does.
 
 Implements `MapChecked`, `RenderOnce`.
 
@@ -5257,6 +5505,8 @@ pub struct Tooltip { /* private fields */ }
 ```
 
 - `pub fn new(text: impl Into<SharedString>) -> Self`
+
+  A tooltip saying `text`.
 
 - `pub fn view(text: SharedString, _window: &mut Window, cx: &mut App) -> AnyView`
 
@@ -5296,6 +5546,8 @@ pub struct Picker { /* private fields */ }
 
 - `pub fn new<S: AsRef<str>>(id: impl Into<ElementId>, options: impl IntoIterator<Item = S>, selected: Option<usize>) -> Self`
 
+  A picker of `options`, showing `selected`, or nothing chosen.
+
 - `pub fn keeps_case<S: Into<SharedString>>(id: impl Into<ElementId>, options: impl IntoIterator<Item = S>, selected: Option<usize>) -> Self`
 
   Options that are data rather than the app's words, which keep their
@@ -5307,7 +5559,11 @@ pub struct Picker { /* private fields */ }
 
 - `pub fn disabled(self, disabled: bool) -> Self`
 
+  Dimmed and taking no press.
+
 - `pub fn on_change(self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self`
+
+  What choosing an option does, given its index.
 
 Implements `RenderOnce`.
 
@@ -5324,7 +5580,8 @@ does is the owner's.
 
 #### `Pill`
 
-*struct*
+*struct* · A thing named as a chip in a collection: a glyph or a selection tick,
+and its name on one line.
 
 ```rust
 #[derive(IntoElement)]
@@ -5385,7 +5642,8 @@ pub fn enso_svg() -> String
 
 #### `Placeholder`
 
-*struct*
+*struct* · What a cover shows while it has no picture: the ensō, faded back, or
+drawing itself while one is on its way.
 
 ```rust
 #[derive(IntoElement)]
@@ -5469,6 +5727,8 @@ pub struct Prism { /* private fields */ }
 ```
 
 - `pub fn new() -> Self`
+
+  A prism at rest, waiting for the analyser.
 
 - `pub fn hear(&self, bands: [f32; 3], over: Duration)`
 
@@ -5558,12 +5818,16 @@ pub struct Burst { /* private fields */ }
 
 - `pub fn confetti() -> Self`
 
+  Confetti thrown from the point it is fired at.
+
 - `pub fn sticker() -> Self`
 
   The sticker: brat's when fired with `brat`, the chrome star
   otherwise.
 
 - `pub fn sweep() -> Self`
+
+  The rainbow's sweep across the window between records.
 
 - `pub fn fire(&self, at: Point<Pixels>, scale: f32, brat: bool)`
 
@@ -5613,12 +5877,16 @@ pub struct Sheen { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>) -> Self`
 
+  A sheen in the rainbow's palette.
+
 - `pub fn glitch(self, glitch: bool) -> Self`
 
   Every five seconds, for a blink, slices of what it covers turn pink
   and cyan: the playing title's glitch.
 
 - `pub fn brat(self, brat: bool) -> Self`
+
+  In brat's palette.
 
 - `pub fn strength(self, strength: f32) -> Self`
 
@@ -5638,6 +5906,8 @@ pub struct PrismFill { /* private fields */ }
 ```
 
 - `pub fn new(id: impl Into<ElementId>, brat: bool) -> Self`
+
+  A fill in the rainbow's palette, or in brat's.
 
 Implements `RenderOnce`.
 
@@ -5661,6 +5931,9 @@ pub struct ProgressBar { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, fraction: Option<f32>) -> Self`
 
+  A bar filled to `fraction`, or running a segment along it while the
+  amount is unknown.
+
 - `pub fn thin(self) -> Self`
 
   A hairline high, as an edge it draws along: the mini player's top.
@@ -5675,7 +5948,8 @@ Implements `RenderOnce`.
 
 #### `ProgressRow`
 
-*struct*
+*struct* · Something under way, as a row: what it is, its counts and a line of
+detail over a bar, with a stop button where it can be stopped.
 
 ```rust
 #[derive(IntoElement)]
@@ -5750,7 +6024,8 @@ indeterminate ring asks for frames only while it is painted.
 
 #### `ProgressRing`
 
-*struct*
+*struct* · How far something has come, as a ring filling from twelve o'clock, or
+turning while there is no measure.
 
 ```rust
 #[derive(IntoElement)]
@@ -5785,13 +6060,16 @@ window's controls, kept inside a sheet or menu that holds the keyboard
 
 #### `Root`
 
-*struct*
+*struct* · What every window's content sits in, made by `host`: Tab kept inside
+an open sheet or menu, under the `Root` key context.
 
 ```rust
 pub struct Root { /* private fields */ }
 ```
 
 - `pub fn new(view: impl Into<AnyView>) -> Self`
+
+  A root over `view`.
 
 Implements `Render`.
 
@@ -5818,6 +6096,8 @@ pub struct RowListState(_, _, _);
 
 - `pub fn new() -> Self`
 
+  A list at its top with no rows yet.
+
 - `pub fn set_lead(&self, lead: bool, count: usize, kind: RowKind)`
 
   Whether the list leads with a header. Rows are re-measured.
@@ -5833,7 +6113,11 @@ pub struct RowListState(_, _, _);
 
 - `pub fn scroll_to(&self, at: RowOffset)`
 
+  Scrolls to `at`, a row and an offset into it.
+
 - `pub fn scroll_to_top(&self)`
+
+  Scrolls to the first row.
 
 - `pub fn reveal(&self, ix: usize)`
 
@@ -5866,7 +6150,8 @@ Implements `Default`.
 
 #### `RowList`
 
-*struct*
+*struct* · A long list of rows of differing heights, made only while on screen and
+measured as drawn, under the kōan scrollbar.
 
 ```rust
 #[derive(IntoElement)]
@@ -5926,6 +6211,8 @@ pub struct NavRow { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, text: impl AsRef<str>) -> Self`
 
+  A place in a navigation list, named by an app word drawn lowercase.
+
 - `pub fn data(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self`
 
   A place named by data (a playlist), which keeps its case.
@@ -5975,9 +6262,15 @@ pub struct NavRow { /* private fields */ }
 
 - `pub fn icon(self, icon: Icon) -> Self`
 
+  The place's glyph, leading.
+
 - `pub fn selected(self, selected: bool) -> Self`
 
+  The place showing: on the selection's ground.
+
 - `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press does: usually going to the place.
 
 Implements `InteractiveElement`, `RenderOnce`, `StatefulInteractiveElement`.
 
@@ -5992,6 +6285,8 @@ pub struct NavHeading { /* private fields */ }
 ```
 
 - `pub fn new(title: impl AsRef<str>) -> Self`
+
+  A heading over a navigation list's group, an app word drawn lowercase.
 
 - `pub fn trailing(self, trailing: impl IntoElement) -> Self`
 
@@ -6011,6 +6306,9 @@ pub struct NavNote { /* private fields */ }
 ```
 
 - `pub fn new(text: impl Into<SharedString>, tone: crate::theme::Tone) -> Self`
+
+  A line in a navigation list that says something and does nothing, in
+  `tone`.
 
 - `pub fn said(self, id: impl Into<ElementId>, count: u64, fresh: bool) -> Self`
 
@@ -6038,9 +6336,15 @@ pub struct ListRow { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>) -> Self`
 
+  A row with nothing in it yet.
+
 - `pub fn selected(self, selected: bool) -> Self`
 
+  Picked: on the selection's ground.
+
 - `pub fn playing(self, playing: bool) -> Self`
+
+  The current track: the playing bars in place of its number.
 
 - `pub fn number(self, number: impl Into<SharedString>) -> Self`
 
@@ -6061,6 +6365,8 @@ pub struct ListRow { /* private fields */ }
 
 - `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
 
+  What a press does.
+
 Implements `RenderOnce`.
 
 ### components::scroll
@@ -6072,7 +6378,7 @@ lays a `Scrollbar` over itself the same way.
 
 #### `ScrollArea`
 
-*struct*
+*struct* · A page that scrolls, with the kōan scrollbar over its edge.
 
 ```rust
 #[derive(IntoElement)]
@@ -6169,6 +6475,8 @@ pub struct Scrollbar<S: ScrollSource> { /* private fields */ }
 
 - `pub fn vertical(source: &S) -> Self`
 
+  A scrollbar over `source`'s vertical scroll.
+
 - `pub fn under_bar(self) -> Self`
 
   Over content that scrolls under a phone's bar and its foot: the
@@ -6196,12 +6504,17 @@ pub struct Segmented { /* private fields */ }
 
 - `pub fn new<S: AsRef<str>>(id: impl Into<ElementId>, options: impl IntoIterator<Item = S>, selected: usize) -> Self`
 
+  A control choosing one of `options`, app words drawn lowercase, with
+  `selected` chosen.
+
 - `pub fn named(self, name: impl AsRef<str>) -> Self`
 
   What it chooses, for a screen reader: "sign in with". Its id, read
   as words, otherwise.
 
 - `pub fn on_change(self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self`
+
+  What choosing an option does, given its index.
 
 Implements `RenderOnce`.
 
@@ -6279,9 +6592,11 @@ pub struct SlideState(_);
 
 - `pub fn closed(&self) -> bool`
 
+  Whether the panel has eased fully shut, so its owner can drop it.
+
 #### `Slide`
 
-*struct*
+*struct* · A panel at the trailing edge of a page whose width eases in and out.
 
 ```rust
 #[derive(IntoElement)]
@@ -6289,6 +6604,9 @@ pub struct Slide { /* private fields */ }
 ```
 
 - `pub fn new(id: impl Into<ElementId>, state: &SlideState, shown: bool, width: Pixels) -> Self`
+
+  A panel `width` wide, shown or easing shut, its progress kept in
+  `state`.
 
 - `pub fn resizable(self, min: Pixels, max: Pixels, reset: Pixels) -> Self`
 
@@ -6305,6 +6623,8 @@ pub struct Slide { /* private fields */ }
   to keep.
 
 - `pub fn child(self, content: impl IntoElement) -> Self`
+
+  The panel's content, laid out at its full width.
 
 Implements `RenderOnce`.
 
@@ -6369,12 +6689,16 @@ pub struct Slider { /* private fields */ }
 
 - `pub fn disabled(self, disabled: bool) -> Self`
 
+  Dimmed and taking no drag.
+
 - `pub fn compact(self) -> Self`
 
   At the desktop's density, 20 points tall rather than the touch
   target's 44: a transport's seek bar under its controls.
 
 - `pub fn on_change(self, handler: impl Fn(&f32, &mut Window, &mut App) + 'static) -> Self`
+
+  What each step of a drag or a key does, given the value from 0 to 1.
 
 - `pub fn on_commit(self, handler: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self`
 
@@ -6404,6 +6728,8 @@ pub struct Glide(pub(crate) _, _, _);
 ```
 
 - `pub fn new() -> Self`
+
+  A glide standing at nothing.
 
 - `pub fn set(&self, value: f32, rate: f32, since: Instant)`
 
@@ -6538,6 +6864,8 @@ pub struct Sparkline { /* private fields */ }
 
 - `pub fn new(values: Vec<f64>, range: f64, color: Hsla) -> Self`
 
+  `values` as a line across its bounds, scaled to `range`, in `color`.
+
 - `pub fn dash(self, dash: Vec<f32>) -> Self`
 
   Dashed: on and off lengths, in pixels.
@@ -6568,7 +6896,8 @@ close enough to read as one line, and each frame chooses which are drawn.
 
 #### `Spinner`
 
-*struct*
+*struct* · Something on its way: the ensō drawing itself, looping, or still under
+Reduce Motion.
 
 ```rust
 #[derive(IntoElement)]
@@ -6621,7 +6950,8 @@ nothing from the frame its width reaches nothing.
 
 #### `SplitView`
 
-*struct*
+*struct* · A leading column the person can resize beside the rest, as the Mac's
+sidebar.
 
 ```rust
 #[derive(IntoElement)]
@@ -6644,6 +6974,8 @@ pub struct SplitView { /* private fields */ }
 
 - `pub fn trailing(self, trailing: impl IntoElement) -> Self`
 
+  What sits beside the column.
+
 - `pub fn on_resize(self, f: impl Fn(&Pixels, &mut Window, &mut App) + 'static) -> Self`
 
   Each width a drag reaches, for the owner to draw.
@@ -6663,7 +6995,8 @@ block decides its own inset, so it lines up with the rows above it.
 
 #### `StatusBlock`
 
-*struct*
+*struct* · The foot of a navigation list: lines saying what the app is connected
+to, and figures about what it holds.
 
 ```rust
 #[derive(IntoElement, Default)]
@@ -6671,6 +7004,8 @@ pub struct StatusBlock { /* private fields */ }
 ```
 
 - `pub fn new() -> Self`
+
+  A block with no lines yet.
 
 - `pub fn line(self, icon: Icon, text: impl Into<SharedString>, tone: Tone) -> Self`
 
@@ -6701,7 +7036,12 @@ pub struct Stepper { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, title: impl AsRef<str>, value: i64, range: std::ops::RangeInclusive<i64>) -> Self`
 
+  A row titled `title`, an app word drawn lowercase, holding `value`
+  within `range`, with buttons to step it.
+
 - `pub fn step(self, step: i64) -> Self`
+
+  How far one press moves the value; 1 unless given.
 
 - `pub fn shown(self, text: impl Into<SharedString>) -> Self`
 
@@ -6710,7 +7050,11 @@ pub struct Stepper { /* private fields */ }
 
 - `pub fn disabled(self, disabled: bool) -> Self`
 
+  Dimmed and taking no press.
+
 - `pub fn on_change(self, handler: impl Fn(&i64, &mut Window, &mut App) + 'static) -> Self`
+
+  What a step does, given the new value.
 
 Implements `RenderOnce`.
 
@@ -6727,7 +7071,8 @@ window. What lighting and taking a line do is the owner's.
 
 #### `SuggestionPanel`
 
-*struct*
+*struct* · What a search field suggests as it is typed into: a panel under the
+field, over what follows it.
 
 ```rust
 #[derive(IntoElement)]
@@ -6735,6 +7080,8 @@ pub struct SuggestionPanel { /* private fields */ }
 ```
 
 - `pub fn new(id: impl Into<ElementId>) -> Self`
+
+  An empty panel, given its headings and rows as children.
 
 Implements `InteractiveElement`, `ParentElement`, `RenderOnce`, `StatefulInteractiveElement`.
 
@@ -6748,6 +7095,8 @@ pub struct SuggestionHeading { /* private fields */ }
 ```
 
 - `pub fn new(title: impl AsRef<str>) -> Self`
+
+  A heading over a group, an app word drawn lowercase.
 
 Implements `RenderOnce`.
 
@@ -6789,6 +7138,8 @@ pub struct SuggestionRow { /* private fields */ }
 
 - `pub fn detail(self, detail: impl Into<SharedString>) -> Self`
 
+  A line under the title saying more.
+
 - `pub fn art(self, art: impl IntoElement) -> Self`
 
   The thing's own face, `RowMetrics::sleeve` square: a record's sleeve.
@@ -6798,6 +7149,8 @@ pub struct SuggestionRow { /* private fields */ }
   A glyph in the art's place, for a thing with no face: an artist.
 
 - `pub fn lit(self, lit: bool) -> Self`
+
+  The row the arrows or the pointer are on, on `surface`.
 
 Implements `InteractiveElement`, `RenderOnce`, `StatefulInteractiveElement`.
 
@@ -6835,7 +7188,9 @@ pub fn table_list(
 
 #### `TableRow`
 
-*struct*
+*struct* · A row of a table: leading cells, a title over lines that flexes and
+truncates, and figure columns trailing, at the heights `RowMetrics`
+gives its kind.
 
 ```rust
 #[derive(IntoElement)]
@@ -6843,6 +7198,8 @@ pub struct TableRow { /* private fields */ }
 ```
 
 - `pub fn new(id: impl Into<ElementId>, kind: RowKind) -> Self`
+
+  A row of `kind`, given its cells by the methods.
 
 - `pub fn landed(self, landing: Option<u64>) -> Self`
 
@@ -6950,6 +7307,8 @@ pub struct RowNumber { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, number: impl Into<SharedString>) -> Self`
 
+  A row's number column saying `number`.
+
 - `pub fn glyph(id: impl Into<ElementId>, icon: crate::theme::Icon) -> Self`
 
   A row with no number leads with its kind's glyph instead, in
@@ -6972,6 +7331,8 @@ pub struct RowNumber { /* private fields */ }
 
 - `pub fn on_play(self, play: impl Fn(&mut Window, &mut App) + 'static) -> Self`
 
+  What the play button over the number does.
+
 Implements `RenderOnce`.
 
 ### components::tabs
@@ -6991,6 +7352,8 @@ pub struct TabStrip { /* private fields */ }
 ```
 
 - `pub fn new() -> Self`
+
+  A strip with no tabs yet.
 
 - `pub fn bar(self) -> Self`
 
@@ -7016,6 +7379,8 @@ pub struct StatusLine { /* private fields */ }
 ```
 
 - `pub fn new(text: impl Into<SharedString>, tone: Tone, icon: Option<Icon>) -> Self`
+
+  A line saying `text` in `tone`, with an optional glyph.
 
 Implements `RenderOnce`.
 
@@ -7096,6 +7461,8 @@ pub struct TileArt { /* private fields */ }
 
 - `pub fn mark(self, mark: Option<TileMark>) -> Self`
 
+  A mark over the sleeve's corner, or none.
+
 - `pub fn playing(self, bars: Option<AnyElement>) -> Self`
 
   The playing bars, bottom left, while the record plays.
@@ -7175,9 +7542,16 @@ pub struct Toggle { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, text: impl AsRef<str>, checked: bool) -> Self`
 
+  A row labelled `text`, an app word drawn lowercase, with its box ticked
+  or not.
+
 - `pub fn disabled(self, disabled: bool) -> Self`
 
+  Dimmed and taking no press.
+
 - `pub fn on_change(self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press does, given the new state.
 
 Implements `RenderOnce`.
 
@@ -7196,6 +7570,8 @@ pub struct CheckBox { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, checked: bool) -> Self`
 
+  A box, ticked or not.
+
 Implements `RenderOnce`.
 
 #### `IconToggle`
@@ -7213,6 +7589,8 @@ pub struct IconToggle { /* private fields */ }
   `text` names the toggle for its tooltip.
 
 - `pub fn on_change(self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press does, given the new state.
 
 - `pub fn disabled(self, disabled: bool) -> Self`
 
@@ -7258,7 +7636,8 @@ pub const WINDOW_BUTTONS: Size<Pixels> = Size {
 
 #### `Toolbar`
 
-*struct*
+*struct* · A toolbar: items leading, in the middle and trailing, at the toolbar's
+height and gaps.
 
 ```rust
 #[derive(IntoElement, Default)]
@@ -7266,6 +7645,8 @@ pub struct Toolbar { /* private fields */ }
 ```
 
 - `pub fn new() -> Self`
+
+  An empty toolbar.
 
 - `pub fn flush(self) -> Self`
 
@@ -7304,6 +7685,8 @@ pub struct ToolbarTitle { /* private fields */ }
 
 - `pub fn new(title: impl AsRef<str>) -> Self`
 
+  A title in the toolbar's middle, an app word drawn lowercase.
+
 Implements `RenderOnce`.
 
 #### `ToolbarGroup`
@@ -7319,6 +7702,8 @@ pub struct ToolbarGroup { /* private fields */ }
 ```
 
 - `pub fn new() -> Self`
+
+  A group of toolbar items with no items yet.
 
 - `pub fn fills(self) -> Self`
 
@@ -7350,6 +7735,8 @@ pub struct ToolbarButton { /* private fields */ }
 
 - `pub fn disabled(self, disabled: bool) -> Self`
 
+  Dimmed and taking no press.
+
 - `pub fn help(self, help: impl Into<SharedString>) -> Self`
 
   The tooltip: what it does and its keys, "back (⌘[)".
@@ -7360,6 +7747,8 @@ pub struct ToolbarButton { /* private fields */ }
   opened that is showing.
 
 - `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
+
+  What a press does.
 
 Implements `RenderOnce`, `Selectable`.
 
@@ -7520,7 +7909,8 @@ with a ring.
 
 #### `TransportControl`
 
-*struct*
+*struct* · A transport control (shuffle, previous, next, repeat): a glyph, or its
+word where icons are hidden, with a finger's target.
 
 ```rust
 #[derive(IntoElement)]
@@ -7542,6 +7932,8 @@ pub struct TransportControl { /* private fields */ }
 
 - `pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self`
 
+  What a press does.
+
 Implements `RenderOnce`.
 
 ### components::viewer
@@ -7554,7 +7946,8 @@ click anywhere and on Escape, which it listens for on the viewer.
 
 #### `Viewer`
 
-*struct*
+*struct* · A picture as large as the window allows, over everything, with a
+caption under it.
 
 ```rust
 #[derive(IntoElement)]
@@ -7563,11 +7956,15 @@ pub struct Viewer { /* private fields */ }
 
 - `pub fn new(id: impl Into<ElementId>, art: CoverArt, title: impl Into<SharedString>) -> Self`
 
+  `art` captioned with `title`.
+
 - `pub fn from_point(self, from: Option<Point<Pixels>>) -> Self`
 
   Opens out of `from`, in window coordinates: the sleeve that was tapped.
 
 - `pub fn detail(self, detail: impl Into<SharedString>) -> Self`
+
+  A line under the title.
 
 - `pub fn side(size: Size<Pixels>, look: &Look) -> Pixels`
 
@@ -7599,7 +7996,8 @@ pub fn host(
 
 #### `SecondaryWindow`
 
-*struct*
+*struct* · A window of the app's own beside the main one: titled, centred at its
+size, with a least size or none.
 
 ```rust
 pub struct SecondaryWindow { /* private fields */ }
@@ -7639,6 +8037,8 @@ pub struct SecondaryWindow { /* private fields */ }
 
 - `pub fn options(self, cx: &App) -> WindowOptions`
 
+  The window's options, for opening it some other way than `open`.
+
 #### `MainWindow`
 
 *struct* · The app's main window: at the place it was left in, or at its size
@@ -7652,11 +8052,16 @@ pub struct MainWindow { /* private fields */ }
 
 - `pub fn new(title: impl Into<SharedString>, app_id: impl Into<SharedString>) -> Self`
 
+  The main window titled `title`; `app_id` names the app to the desktop
+  on Linux.
+
 - `pub fn size(self, width: f32, height: f32) -> Self`
 
   Its size in points when it has no place of its own yet.
 
 - `pub fn min(self, min: Size<Pixels>) -> Self`
+
+  The least it can be resized to.
 
 - `pub fn place(self, place: Option<WindowBounds>) -> Self`
 
@@ -7763,7 +8168,11 @@ pub struct Swatch { /* private fields */ }
 
 - `pub fn line(color: Hsla) -> Self`
 
+  A solid line in `color`.
+
 - `pub fn dashed(self, dashed: bool) -> Self`
+
+  Dashed rather than solid.
 
 - `pub fn thin(self) -> Self`
 
@@ -7781,9 +8190,15 @@ pub struct Legend { /* private fields */ }
 
 - `pub fn new() -> Self`
 
+  A legend with no keys yet.
+
 - `pub fn key(self, name: impl Into<SharedString>, swatch: Swatch) -> Self`
 
+  A key: `name` beside its swatch.
+
 - `pub fn child(self, child: impl IntoElement) -> Self`
+
+  Something more after the keys, such as a control.
 
 Implements `RenderOnce`.
 
@@ -7813,12 +8228,7 @@ pub enum Scale {
 
 - `pub fn invert(self, t: f64) -> f64`
 
-- `pub fn of(text_size: u32) -> Scale`
-
-- `pub fn at(text_size: u32, system: f32) -> Scale`
-
-  The app's text size on top of the system's (GNOME's text scaling
-  factor; 1 where the system has none): 100 % is the system's size.
+  A transformed value back on the axis's own scale.
 
 #### `Map`
 
@@ -7838,7 +8248,12 @@ pub struct Map {
 
 - `pub fn new(scale: Scale, lo: f64, hi: f64) -> Self`
 
+  The map from values between `lo` and `hi` on `scale` to shares of the
+  plot.
+
 - `pub fn unit(&self, t: f64) -> f64`
+
+  A transformed value as a share of the plot, 0 at `lo` and 1 at `hi`.
 
 - `pub fn at(&self, unit: f64) -> f64`
 
@@ -7959,9 +8374,15 @@ pub enum Item {
 
 - `pub fn choice(label: impl Into<SharedString>, checked: bool, run: impl Fn(&mut Window, &mut App) + 'static) -> Self`
 
+  A choice, ticked while `checked`, that runs `run`.
+
 - `pub fn action(label: impl Into<SharedString>, run: impl Fn(&mut Window, &mut App) + 'static) -> Self`
 
+  An action that runs `run`, with no tick.
+
 - `pub fn destructive(label: impl Into<SharedString>, run: impl Fn(&mut Window, &mut App) + 'static) -> Self`
+
+  An action in `bad` that destroys something.
 
 #### `Trigger`
 
@@ -8058,13 +8479,16 @@ pub enum InputEvent {
 
 #### `FieldState`
 
-*struct*
+*struct* · A text field's state, kept by its owner: the text, the caret and
+selection, the history, focus and how the field takes input.
 
 ```rust
 pub struct FieldState { /* private fields */ }
 ```
 
 - `pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self`
+
+  An empty field that takes the keyboard on Tab.
 
 - `pub fn placeholder(self, placeholder: impl Into<SharedString>) -> Self`
 
@@ -8099,6 +8523,8 @@ pub struct FieldState { /* private fields */ }
 
 - `pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>)`
 
+  Its text can be selected and copied but not changed.
+
 - `pub fn highlight(self, spans: impl Fn(&str) -> Vec<(Range<usize>, crate::theme::Tone)> + 'static) -> Self`
 
   Colours its text as `spans` says: byte ranges of the text with
@@ -8111,6 +8537,8 @@ pub struct FieldState { /* private fields */ }
   `rows` lines tall, taking Return as a new line: a `TextArea`'s.
 
 - `pub fn value(&self) -> SharedString`
+
+  The text as it stands.
 
 - `pub fn set_value(&mut self, value: impl Into<SharedString>, window: &mut Window, cx: &mut Context<Self>)`
 
@@ -8125,6 +8553,8 @@ pub struct FieldState { /* private fields */ }
 
 - `pub fn focus(&self, window: &mut Window, cx: &mut App)`
 
+  Gives the field the keyboard.
+
 Implements `EntityInputHandler`, `EventEmitter`, `Focusable`.
 
 ## `koan_kit::components::focus_trap`
@@ -8136,7 +8566,8 @@ past every stop outside the trap, wrapping inside it.
 
 #### `FocusTrap`
 
-*trait*
+*trait* · Keeping Tab and Shift-Tab inside an element, for a sheet or menu that
+holds the keyboard.
 
 ```rust
 pub trait FocusTrap: InteractiveElement + Sized {
@@ -8594,6 +9025,8 @@ pub struct Shade {
 
 - `pub fn rgba(self) -> Rgba`
 
+  The shade as GPUI's colour.
+
 - `pub fn hsla(self) -> Hsla`
 
   The colour to draw fills, rings and indicators in: the accent's slot
@@ -8612,7 +9045,7 @@ pub struct Shade {
 
 #### `Accent`
 
-*struct*
+*struct* · The accent in each appearance.
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -8623,6 +9056,8 @@ pub struct Accent {
 ```
 
 - `pub fn shade(&self, dark: bool) -> Shade`
+
+  The shade for the dark or the light appearance.
 
 - `pub fn of(record: Option<[f64; 3]>) -> Accent`
 
@@ -8675,7 +9110,11 @@ pub struct KoanIcon { /* private fields */ }
 
 - `pub fn tone(self, tone: Tone) -> Self`
 
+  In `tone` rather than `ink`.
+
 - `pub fn color(self, color: Hsla) -> Self`
+
+  In `color`, for a glyph drawn on a ground of its own.
 
 - `pub fn fill(self, color: Hsla) -> Self`
 
@@ -8701,7 +9140,8 @@ pub enum Tone {
 
 #### `KoanTheme`
 
-*struct*
+*struct* · The theme global: what the person chose (text size, icons, the wash,
+touch), and the system's display settings as read.
 
 ```rust
 pub struct KoanTheme {
@@ -8762,6 +9202,9 @@ pub struct KoanTheme {
 
 - `pub fn set_text_size(percent: u32, cx: &mut App)`
 
+  The text size in percent, held to the sizes offered, every window
+  drawn again.
+
 - `pub fn set_prism(prism: Option<bool>, cx: &mut App)`
 
   The rainbow appearance drawn, in brat's palette or not, or put away.
@@ -8784,7 +9227,12 @@ pub struct KoanTheme {
 
 - `pub fn set_touch(touch: bool, cx: &mut App)`
 
+  Whether touch is how the app is used, every window drawn again.
+
 - `pub fn set_icons(icons: bool, cx: &mut App)`
+
+  Whether glyphs show beside the labels that carry them, every window
+  drawn again.
 
 - `pub fn set_record_colours(on: bool, cx: &mut App)`
 
@@ -8804,6 +9252,8 @@ pub struct KoanTheme {
   record" off takes away, or one painted from elsewhere.
 
 - `pub fn set_wash_tint(percent: u32, cx: &mut App)`
+
+  How far the wash is held to its contrast limit, in percent.
 
 - `pub fn set_wash_drift(percent: u32, degrees: u32, cx: &mut App)`
 
@@ -8925,12 +9375,17 @@ pub struct Look {
 
 - `pub fn of(window: &Window, cx: &App) -> Look`
 
+  The look for `window`: its appearance, the text size, the accent and
+  the system's settings.
+
 - `pub fn target(&self) -> Pixels`
 
   The least height of anything pressed: `HIT` under touch, nothing
   asked of a pointer.
 
 - `pub fn color(&self, tone: Tone) -> Hsla`
+
+  The colour `tone` takes in this look.
 
 - `pub fn text_selection(&self) -> Hsla`
 
@@ -8949,6 +9404,8 @@ pub struct Look {
 
 - `pub fn space(&self, space: Space) -> Pixels`
 
+  A step of the spacing scale, at the text size.
+
 - `pub fn spaced(&self, points: f32) -> Pixels`
 
   A length on spacing's scale for a padding the spec gives in points
@@ -8961,7 +9418,11 @@ pub struct Look {
 
 - `pub fn font_size(&self, role: TypeRole) -> Pixels`
 
+  A type role's size, at the text size.
+
 - `pub fn line_height(&self, role: TypeRole) -> Pixels`
+
+  A type role's line height, at the text size.
 
 - `pub fn points(&self, role: TypeRole) -> f32`
 
@@ -9016,6 +9477,8 @@ pub struct Palette {
 ```
 
 - `pub fn of(dark: bool) -> Palette`
+
+  The palette for the dark or the light appearance.
 
 - `pub fn for_look(dark: bool, contrast: bool) -> Palette`
 
@@ -9106,13 +9569,9 @@ pub struct Scale {
 }
 ```
 
-- `pub fn transform(self, v: f64) -> f64`
-
-  The value as the axis spaces it: itself, or its base-10 logarithm.
-
-- `pub fn invert(self, t: f64) -> f64`
-
 - `pub fn of(text_size: u32) -> Scale`
+
+  The scales for a text size in percent, with the system's at 1.
 
 - `pub fn at(text_size: u32, system: f32) -> Scale`
 
@@ -9138,6 +9597,8 @@ pub enum Space {
 
 - `pub fn points(self) -> f32`
 
+  The step in points at 100 %.
+
 #### `TypeRole`
 
 *enum* · The roles of the type scale. One face, Geist Mono.
@@ -9161,11 +9622,16 @@ pub enum TypeRole {
 
 - `pub fn weight(self) -> FontWeight`
 
+  The role's weight: thin for display, extra light for titles, normal
+  otherwise.
+
 - `pub fn line_height(self) -> f32`
 
   Line height as a multiple of the size.
 
 - `pub fn name(self) -> &'static str`
+
+  The role's name, as the storybook labels it.
 
 #### `FONT_FAMILY`
 
@@ -9261,7 +9727,8 @@ pub fn to_srgb(l: f64, c: f64, h: f64) -> [f64; 3]
 
 #### `luminance`
 
-*function*
+*function* · Relative luminance, as WCAG's contrast ratio takes it, from
+gamma-encoded sRGB in 0..=1.
 
 ```rust
 pub fn luminance([r, g, b]: [f64; 3]) -> f64
@@ -9269,7 +9736,7 @@ pub fn luminance([r, g, b]: [f64; 3]) -> f64
 
 #### `linear`
 
-*function*
+*function* · One sRGB channel, gamma-encoded, as linear light.
 
 ```rust
 pub fn linear(v: f64) -> f64
@@ -9277,7 +9744,7 @@ pub fn linear(v: f64) -> f64
 
 #### `gamma`
 
-*function*
+*function* · One channel of linear light, gamma-encoded as sRGB, held to 0..=1.
 
 ```rust
 pub fn gamma(v: f64) -> f64
@@ -9490,9 +9957,15 @@ pub struct Hex(pub u32);
 
 - `pub fn hsla(self) -> Hsla`
 
+  The token as GPUI's colour.
+
 - `pub fn rgba(self) -> Rgba`
 
+  The token as GPUI's colour, in RGB.
+
 - `pub fn channels(self) -> [u8; 3]`
+
+  Its red, green and blue, 0 to 255.
 
 #### `Veil`
 
@@ -9505,20 +9978,13 @@ in grey.
 pub struct Veil(pub u32, pub u8);
 ```
 
-- `pub fn new(color: Hsla) -> Self`
-
-- `pub fn leaving(self, leaving: bool) -> Self`
-
-  Lifting, over `Motion::SETTLE`, for a panel going back down under
-  touch.
-
 - `pub fn hsla(self) -> Hsla`
+
+  The token as GPUI's colour, at its opacity.
 
 - `pub fn over(self, ground: Hex) -> Hex`
 
   The opaque colour it makes over `ground`.
-
-Implements `RenderOnce`.
 
 #### `MAC_FIT`
 
@@ -9545,7 +10011,7 @@ pub const TEXT_SIZES: std::ops::RangeInclusive<u32> = 80..=130;
 
 #### `TEXT_SIZE_STEP`
 
-*constant*
+*constant* · How far the text size moves at a step, in percent.
 
 ```rust
 pub const TEXT_SIZE_STEP: u32 = 5;
@@ -9774,17 +10240,22 @@ pub struct WindowWash(_);
 
 - `pub fn shared(window: &Window, cx: &App) -> Option<Entity<Wash>>`
 
+  The wash `window` draws, while it has one.
+
 Implements `Global`.
 
 #### `Wash`
 
-*struct*
+*struct* · The record wash for a window: the sleeve it is painted from, its bake
+and its drift.
 
 ```rust
 pub struct Wash { /* private fields */ }
 ```
 
 - `pub fn new() -> Self`
+
+  A wash with no sleeve yet: the bare ground.
 
 - `pub fn set_sleeve(&mut self, sleeve: Option<Sleeve>, cx: &mut Context<Self>)`
 
