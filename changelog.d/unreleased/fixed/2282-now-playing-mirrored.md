@@ -1,0 +1,1 @@
+- **Now Playing on the phone closes as it opens.** The art rises with the screen instead of growing out of the mini player's sleeve, and closing runs the same motion in reverse, over the same length.
