@@ -584,10 +584,10 @@ release at launch and once a day after.
 auto = true                         # fetch each new release and install it when kōan quits
 ```
 
-A DMG or Homebrew cask install on macOS and an AppImage on Linux update themselves: the release
-is downloaded, checked against the digest GitHub publishes for it (and on
-macOS against the Developer ID the running app is signed with), and put in
-place when kōan quits. The `.deb`, which its package manager keeps, an app in
+A DMG or Homebrew cask install on macOS and an AppImage on Linux update
+themselves: the release is downloaded, checked against the digest GitHub
+publishes for it (and on macOS against the Developer ID the running app is
+signed with), and put in place when kōan quits. The `.deb`, which its package manager keeps, an app in
 a folder kōan cannot write to, and builds from source never replace
 themselves; Settings → General says when a newer version is out.
 
