@@ -34,6 +34,11 @@ const STATUS: f32 = 200.0;
 const BAR: f32 = 80.0;
 /// A row's verb.
 const VERB: f32 = 64.0;
+/// On a phone, one short column in place of the bar and the status: the
+/// bar while running, otherwise the size or the state in a word.
+const COMPACT_STATUS: f32 = 64.0;
+/// On a phone, the verb as its glyph alone.
+const COMPACT_VERB: f32 = 44.0;
 
 pub struct DownloadsPage {
     nav: Entity<Navigator>,
@@ -177,7 +182,7 @@ impl DownloadsPage {
             .iter()
             .find(|f| f.track_id == id)
             .cloned();
-        let (status, warns) = match t.state {
+        let (status_text, warns) = match t.state {
             TransferState::Queued if self.out_of_reach(cx) => {
                 ("waiting for your server".to_owned(), false)
             }
@@ -231,17 +236,31 @@ impl DownloadsPage {
                     .truncate()
                     .child(line),
             )
-            .figure(BAR, div().w_full().children(bar))
-            .figure(
-                STATUS,
-                div()
-                    .flex()
-                    .justify_end()
-                    .text_role(TypeRole::Fine, &p.look)
-                    .text_color(if warns { p.bad } else { p.muted })
-                    .child(status),
-            )
-            .figure(VERB, verb(t));
+            .map(|row| {
+                let status = |status: String| {
+                    div()
+                        .flex()
+                        .justify_end()
+                        .text_role(TypeRole::Fine, &p.look)
+                        .text_color(if warns { p.bad } else { p.muted })
+                        .truncate()
+                        .child(status)
+                };
+                // A phone's width is the title's: the rate and the verb's
+                // word give way to the bar and the verb's glyph.
+                if p.look.compact {
+                    let short = match bar {
+                        Some(bar) => div().w_full().child(bar).into_any_element(),
+                        None => status(status_text).into_any_element(),
+                    };
+                    row.figure(COMPACT_STATUS, short)
+                        .figure(COMPACT_VERB, verb(t, true))
+                } else {
+                    row.figure(BAR, div().w_full().children(bar))
+                        .figure(STATUS, status(status_text))
+                        .figure(VERB, verb(t, false))
+                }
+            });
         let album = t.album_id;
         div()
             .id(("download-row", id as u64))
@@ -357,8 +376,9 @@ fn rate_and_size(f: &TransferFigure) -> String {
 }
 
 /// A row's one verb: retry a failure, cancel what is still to come, remove
-/// a file that arrived.
-fn verb(t: &Transfer) -> AnyElement {
+/// a file that arrived. On a phone, its glyph alone, the word its tooltip
+/// and its name to a screen reader.
+fn verb(t: &Transfer, glyph_only: bool) -> AnyElement {
     let id = t.track_id;
     let title = t.title.clone();
     let (label, icon) = match t.state {
@@ -367,9 +387,14 @@ fn verb(t: &Transfer) -> AnyElement {
         TransferState::Done => ("remove", Icon::Clear),
     };
     let state = t.state;
-    Button::new(("verb", id as u64), ButtonKind::Compact)
-        .icon(icon)
-        .label(label)
+    let button = if glyph_only {
+        Button::icon_only(("verb", id as u64), icon, label)
+    } else {
+        Button::new(("verb", id as u64), ButtonKind::Compact)
+            .icon(icon)
+            .label(label)
+    };
+    button
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             match state {
