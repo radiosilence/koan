@@ -173,6 +173,21 @@ impl SlideUp {
     /// How long it takes to come up.
     pub const RISE: Duration = Duration::from_millis(Motion::SETTLE.as_millis() as u64 * 2);
 
+    /// The theme's quick-out run backwards, `cubic-bezier(0.7, 0, 0.8, 0.1)`:
+    /// a screen goes down as it came up, in reverse.
+    const FALL: Ease = Ease::Bezier(0.7, 0.0, 0.8, 0.1);
+
+    /// How long a screen started down now takes to leave (`RISE`, its rise
+    /// in reverse), or nothing where it goes at once. The owner lets it go
+    /// after. A panel that `fits` leaves over `settle_length`.
+    pub fn leave_length(cx: &App) -> Duration {
+        if moves(cx) {
+            Self::RISE
+        } else {
+            Duration::ZERO
+        }
+    }
+
     /// `child` rising from the window's foot as it is first drawn.
     pub fn new(child: impl IntoElement) -> Self {
         Self {
@@ -182,7 +197,6 @@ impl SlideUp {
         }
     }
 
-    /// Going back down, over `Motion::SETTLE`; the owner lets it go after.
     /// A sheet's panel rather than a screen: as tall as its content, up to
     /// the room above the keyboard and the system's insets.
     pub fn fits(mut self) -> Self {
@@ -190,7 +204,8 @@ impl SlideUp {
         self
     }
 
-    /// Going back down, inert, before its owner drops it.
+    /// Going back down, inert, before its owner drops it: a screen over
+    /// `leave_length`, its rise in reverse; a panel over `Motion::SETTLE`.
     pub fn leaving(mut self, leaving: bool) -> Self {
         self.leaving = leaving;
         self
@@ -238,7 +253,11 @@ impl RenderOnce for SlideUp {
         });
         let (animated, left) = state.read(cx).clone();
         if self.leaving && !left {
-            animated.to(2, height, Motion::SETTLE, Ease::InOut);
+            if self.fits {
+                animated.to(2, height, Motion::SETTLE, Ease::InOut);
+            } else {
+                animated.to(2, height, Self::RISE, Self::FALL);
+            }
             state.update(cx, |state, _| state.1 = true);
         }
         AnimatedLayer::new(&animated, inner).into_any_element()
