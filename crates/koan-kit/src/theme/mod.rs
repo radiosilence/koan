@@ -45,6 +45,8 @@ pub enum Tone {
     Bad,
 }
 
+/// The theme global: what the person chose (text size, icons, the wash,
+/// touch), and the system's display settings as read.
 pub struct KoanTheme {
     /// The text size, in percent (80 to 130 in steps of 5).
     pub text_size: u32,
@@ -540,6 +542,8 @@ impl KoanTheme {
         }
     }
 
+    /// The text size in percent, held to the sizes offered, every window
+    /// drawn again.
     pub fn set_text_size(percent: u32, cx: &mut App) {
         cx.global_mut::<KoanTheme>().text_size =
             percent.clamp(*tokens::TEXT_SIZES.start(), *tokens::TEXT_SIZES.end());
@@ -587,11 +591,14 @@ impl KoanTheme {
             .filter(|_| crate::components::SHADED && Self::motion_allowed(cx))
     }
 
+    /// Whether touch is how the app is used, every window drawn again.
     pub fn set_touch(touch: bool, cx: &mut App) {
         cx.global_mut::<KoanTheme>().touch = touch;
         cx.refresh_windows();
     }
 
+    /// Whether glyphs show beside the labels that carry them, every window
+    /// drawn again.
     pub fn set_icons(icons: bool, cx: &mut App) {
         cx.global_mut::<KoanTheme>().icons = icons;
         cx.refresh_windows();
@@ -629,6 +636,7 @@ impl KoanTheme {
         theme.wash_window && (theme.record_colours || theme.painted_wash) && !theme.opaque
     }
 
+    /// How far the wash is held to its contrast limit, in percent.
     pub fn set_wash_tint(percent: u32, cx: &mut App) {
         cx.global_mut::<KoanTheme>().wash_tint = percent.min(100);
     }
@@ -818,6 +826,8 @@ pub struct Look {
 }
 
 impl Look {
+    /// The look for `window`: its appearance, the text size, the accent and
+    /// the system's settings.
     pub fn of(window: &Window, cx: &App) -> Look {
         let theme = cx.global::<KoanTheme>();
         let dark = theme
@@ -848,6 +858,7 @@ impl Look {
         if self.touch { HIT } else { px(0.0) }
     }
 
+    /// The colour `tone` takes in this look.
     pub fn color(&self, tone: Tone) -> Hsla {
         let p = self.palette;
         match tone {
@@ -885,6 +896,7 @@ impl Look {
             .opacity(if self.opaque { OPAQUE_VEIL } else { alpha })
     }
 
+    /// A step of the spacing scale, at the text size.
     pub fn space(&self, space: Space) -> Pixels {
         px(space.points() * self.scale.space)
     }
@@ -909,10 +921,12 @@ impl Look {
         }
     }
 
+    /// A type role's size, at the text size.
     pub fn font_size(&self, role: TypeRole) -> Pixels {
         px(self.points(role))
     }
 
+    /// A type role's line height, at the text size.
     pub fn line_height(&self, role: TypeRole) -> Pixels {
         px(self.points(role) * role.line_height())
     }

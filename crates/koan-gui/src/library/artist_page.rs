@@ -769,7 +769,7 @@ impl ArtistPage {
             return Stack::row()
                 .inset_top(Space::L)
                 .space(Space::S)
-                .role(Type::Control)
+                .type_role(Type::Control)
                 .tone(Tone::Muted)
                 .items_center()
                 .child(Spinner::new(p.look.font_size(TypeRole::Control)))
@@ -791,7 +791,7 @@ impl ArtistPage {
         }
         let links = Stack::row()
             .space(Space::M)
-            .role(Type::Fine)
+            .type_role(Type::Fine)
             .tone(Tone::Muted)
             .when(long && !self.expanded, |d| {
                 d.child(

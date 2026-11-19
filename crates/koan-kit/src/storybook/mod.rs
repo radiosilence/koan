@@ -23,11 +23,11 @@ use gpui::*;
 use crate::components::{
     Availability, AvailabilityMark, Badge, Banner, Button, ButtonKind, Chip, Clear, CopyButton,
     Cover, CoverArt, DragChip, EmptyState, FormRow, INSERTION, IconToggle, KoanContextMenu,
-    KoanInsets, Level, ListRow, Menu, MenuEntry, MenuPanel, MenuRow, NavRow, PageHeader, Picker,
-    Placeholder, ProgressBar, ProgressRing, ProgressRow, RowKind, ScrollArea, SectionHeader,
-    SectionHeading, Segmented, SelectionBar, Slider, Sparkline, Spinner, StatusBlock, StatusLine,
-    Stepper, TabStrip, TableRow, TextArea, TextField, TileArt, TileMark, TileSleeve, Toggle,
-    Toolbar, ToolbarButton, ToolbarTitle, Tooltip,
+    KoanInsets, Level, ListRow, Menu, MenuEntry, MenuPanel, MenuRow, Meter, NavRow, PageHeader,
+    Picker, Placeholder, ProgressBar, ProgressRing, ProgressRow, RowKind, ScrollArea,
+    SectionHeader, SectionHeading, Segmented, SelectionBar, Slider, Sparkline, Spinner,
+    StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextArea, TextField, TileArt, TileMark,
+    TileSleeve, Toggle, Toolbar, ToolbarButton, ToolbarTitle, Tooltip,
 };
 use crate::theme::{
     self, Accent, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole,
@@ -1055,6 +1055,19 @@ impl StoryContent {
                 div()
                     .w(look.spaced(320.0))
                     .child(ProgressBar::new("unmeasured", None))
+                    .into_any_element(),
+                SectionHeader::new("Meters").into_any_element(),
+                div()
+                    .w(look.spaced(320.0))
+                    .child(Meter::new("meter", 0.4))
+                    .into_any_element(),
+                div()
+                    .w(look.spaced(320.0))
+                    .child(
+                        Meter::new("meter-coloured", 0.85)
+                            .color(look.palette.muted.hsla())
+                            .height(px(6.0)),
+                    )
                     .into_any_element(),
                 SectionHeader::new("Rings").into_any_element(),
                 row()

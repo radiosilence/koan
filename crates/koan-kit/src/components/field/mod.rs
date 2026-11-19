@@ -82,6 +82,7 @@ impl FieldWidth {
 }
 
 impl TextField {
+    /// A field over `state`, which its owner keeps and listens to.
     pub fn new(state: &Entity<FieldState>) -> Self {
         Self {
             state: state.clone(),
@@ -213,6 +214,7 @@ pub struct TextArea {
 }
 
 impl TextArea {
+    /// A field of several lines over `state`, which its owner keeps.
     pub fn new(state: &Entity<AreaState>) -> Self {
         Self {
             state: state.clone(),
@@ -436,6 +438,7 @@ pub fn labelled(label: impl Into<SharedString>, child: impl IntoElement) -> Labe
     }
 }
 
+/// What `labelled` makes: its child, with the label its text fields take.
 pub struct Labelled {
     label: SharedString,
     child: gpui::AnyElement,

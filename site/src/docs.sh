@@ -35,6 +35,8 @@ pages=(
   "Reference|docs/reference/keybindings.md"
   "Reference|docs/recipes/troubleshooting.md"
   "Reference|CHANGELOG.md"
+  "koan-kit|docs/guide/koan-kit.md"
+  "koan-kit|docs/reference/koan-kit-api.md"
   "Protocol|docs/reference/protocol/protocol.md"
   "Protocol|docs/reference/protocol/link-protocol.md"
   "Protocol|docs/reference/protocol/nearby-protocol.md"

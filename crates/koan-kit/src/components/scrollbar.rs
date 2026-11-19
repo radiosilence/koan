@@ -121,6 +121,7 @@ pub struct Scrollbar<S: ScrollSource> {
 }
 
 impl<S: ScrollSource> Scrollbar<S> {
+    /// A scrollbar over `source`'s vertical scroll.
     pub fn vertical(source: &S) -> Self {
         Self {
             source: source.clone(),

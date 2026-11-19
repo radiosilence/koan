@@ -57,6 +57,8 @@ pub const WINDOW_BUTTONS: Size<Pixels> = Size {
     height: px(0.),
 };
 
+/// A toolbar: items leading, in the middle and trailing, at the toolbar's
+/// height and gaps.
 #[derive(IntoElement, Default)]
 pub struct Toolbar {
     inset: Pixels,
@@ -67,6 +69,7 @@ pub struct Toolbar {
 }
 
 impl Toolbar {
+    /// An empty toolbar.
     pub fn new() -> Self {
         Self::default()
     }
@@ -152,6 +155,7 @@ pub struct ToolbarTitle {
 }
 
 impl ToolbarTitle {
+    /// A title in the toolbar's middle, an app word drawn lowercase.
     pub fn new(title: impl AsRef<str>) -> Self {
         Self {
             title: crate::theme::label(title),
@@ -182,6 +186,7 @@ pub struct ToolbarGroup {
 }
 
 impl ToolbarGroup {
+    /// A group of toolbar items with no items yet.
     pub fn new() -> Self {
         Self {
             groups: vec![Vec::new()],
@@ -262,6 +267,7 @@ impl ToolbarButton {
         }
     }
 
+    /// Dimmed and taking no press.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.button = self.button.disabled(disabled);
         self
@@ -280,6 +286,7 @@ impl ToolbarButton {
         self
     }
 
+    /// What a press does.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,

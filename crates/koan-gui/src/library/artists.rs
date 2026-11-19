@@ -372,9 +372,14 @@ impl ArtistBrowser {
         .title(name)
         .map(|row| {
             if phone {
-                row.line(Text::new(Type::Meta).tone(Tone::Muted).child(albums))
-                    // The heart's column narrow, its target reaching past it.
-                    .figure(28.0, div().w_full().flex().justify_center().child(heart))
+                row.line(
+                    Text::new(Type::Meta)
+                        .tone(Tone::Muted)
+                        .picked(selected)
+                        .child(albums),
+                )
+                // The heart's column narrow, its target reaching past it.
+                .figure(28.0, div().w_full().flex().justify_center().child(heart))
             } else {
                 row.figure(HEART, heart).figure(COUNT, albums).figure(
                     COUNT,

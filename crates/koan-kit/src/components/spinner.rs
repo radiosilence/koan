@@ -38,6 +38,8 @@ const BRUSH: f32 = 48.0;
 /// as a line at any size.
 const DENSITY: f32 = 4.0;
 
+/// Something on its way: the ensō drawing itself, looping, or still under
+/// Reduce Motion.
 #[derive(IntoElement)]
 pub struct Spinner {
     side: Pixels,

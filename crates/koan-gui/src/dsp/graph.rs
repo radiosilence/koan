@@ -715,7 +715,7 @@ impl Render for Graph {
                     .child(chart)
                     .children(self.flat_note.clone().filter(|_| !compact).map(|note| {
                         Stack::row()
-                            .role(TypeRole::Meta)
+                            .type_role(TypeRole::Meta)
                             .absolute()
                             .top(look.space(Space::Xl))
                             .left_0()

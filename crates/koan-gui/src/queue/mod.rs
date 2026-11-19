@@ -1818,6 +1818,7 @@ pub(crate) fn track(
             CODEC,
             Text::new(TypeRole::Fine)
                 .tone(Tone::Muted)
+                .picked(look.picked)
                 .children(item.codec.as_ref().map(|codec| codec.to_uppercase())),
         )
     })

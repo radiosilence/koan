@@ -138,6 +138,7 @@ impl MenuEntry {
         }
     }
 
+    /// A glyph before the label.
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
         self
@@ -179,16 +180,19 @@ impl MenuEntry {
         self
     }
 
+    /// In `bad`, for an entry that destroys something.
     pub fn destructive(mut self) -> Self {
         self.destructive = true;
         self
     }
 
+    /// Dimmed and taking no press.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
+    /// What choosing the entry does.
     pub fn on_click(mut self, run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.run = Some(Rc::new(run));
         self
@@ -227,6 +231,8 @@ impl Entry {
 /// the Mac's output picker's width.
 const NOTE_WIDTH: f32 = 340.;
 
+/// A menu: entries, separators, notes and submenus, kept by an entity so
+/// the keyboard can move through it. Opened by `koan_menu` and its kin.
 pub struct Menu {
     entries: Vec<Entry>,
     highlighted: Option<usize>,
@@ -263,6 +269,7 @@ impl Focusable for Menu {
 }
 
 impl Menu {
+    /// A menu made by `build`, as an entity the panel draws.
     pub fn build(
         window: &mut Window,
         cx: &mut App,
@@ -284,6 +291,7 @@ impl Menu {
         })
     }
 
+    /// An entry, under the last.
     pub fn item(mut self, entry: MenuEntry) -> Self {
         self.entries.push(Entry::Item(entry));
         self
@@ -395,6 +403,7 @@ impl Menu {
         menu
     }
 
+    /// An entry that opens the menu `build` makes beside it.
     pub fn submenu(
         self,
         text: impl Into<SharedString>,
@@ -1134,10 +1143,12 @@ impl<K> Default for MenuSlot<K> {
 }
 
 impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
+    /// Whether the menu `which` is open.
     pub fn is_open(&self, which: K) -> bool {
         self.open.as_ref().is_some_and(|(open, ..)| *open == which)
     }
 
+    /// Closes whichever menu is open.
     pub fn close(&mut self) {
         self.open = None;
     }

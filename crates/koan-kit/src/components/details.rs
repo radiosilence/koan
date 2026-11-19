@@ -9,6 +9,7 @@ use gpui::*;
 use super::SectionHeader;
 use crate::theme::{KoanStyled, Look, Space, TypeRole};
 
+/// A titled group of name and value pairs, for reading a value off.
 #[derive(IntoElement)]
 pub struct DetailGroup {
     title: SharedString,
@@ -27,11 +28,13 @@ impl DetailGroup {
         }
     }
 
+    /// A name and its value.
     pub fn row(mut self, name: impl Into<SharedString>, value: impl Into<SharedString>) -> Self {
         self.rows.push((name.into(), value.into()));
         self
     }
 
+    /// Names and their values.
     pub fn rows(
         mut self,
         rows: impl IntoIterator<Item = (impl Into<SharedString>, impl Into<SharedString>)>,

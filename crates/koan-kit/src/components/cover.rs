@@ -32,6 +32,7 @@ pub enum CoverArt {
     Missing,
 }
 
+/// A sleeve at a size, or the placeholder while there is none.
 #[derive(IntoElement)]
 pub struct Cover {
     art: CoverArt,
@@ -40,6 +41,7 @@ pub struct Cover {
 }
 
 impl Cover {
+    /// `art` as a square of `side`.
     pub fn new(art: CoverArt, side: Pixels) -> Self {
         Self {
             art,
@@ -147,6 +149,7 @@ pub struct Mosaic {
 }
 
 impl Mosaic {
+    /// Up to four sleeves in a square of `side`, as a playlist's cover.
     pub fn new(arts: Vec<CoverArt>, side: Pixels) -> Self {
         Self { arts, side }
     }

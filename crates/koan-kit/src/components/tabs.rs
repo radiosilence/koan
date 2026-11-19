@@ -32,6 +32,7 @@ pub struct TabStrip {
 }
 
 impl TabStrip {
+    /// A strip with no tabs yet.
     pub fn new() -> Self {
         Self {
             tabs: Vec::new(),
@@ -203,6 +204,7 @@ pub struct StatusLine {
 }
 
 impl StatusLine {
+    /// A line saying `text` in `tone`, with an optional glyph.
     pub fn new(text: impl Into<SharedString>, tone: Tone, icon: Option<Icon>) -> Self {
         Self {
             text: text.into(),

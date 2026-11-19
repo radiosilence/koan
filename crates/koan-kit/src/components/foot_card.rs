@@ -1,5 +1,5 @@
 //! What stands over the foot of a touch window's pages: the foot itself,
-//! the player over the tabs (`TabFoot`), and a card floating above it
+//! the player over the tabs (`ShellFoot`), and a card floating above it
 //! (`FootCard`).
 
 use gpui::prelude::FluentBuilder;

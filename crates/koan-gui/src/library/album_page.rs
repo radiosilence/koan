@@ -284,7 +284,7 @@ impl AlbumPage {
                 // A heading to a screen reader.
                 return Stack::row()
                     .inset_bottom(Space::Xs)
-                    .role(Type::Fine)
+                    .type_role(Type::Fine)
                     .tone(Tone::Ink)
                     .id(("disc", i))
                     .role(a11y::Role::Heading)

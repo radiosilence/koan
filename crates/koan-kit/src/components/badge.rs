@@ -19,6 +19,7 @@ pub struct Badge {
 }
 
 impl Badge {
+    /// A badge saying `text`, in `muted`.
     pub fn new(text: impl Into<SharedString>) -> Self {
         Self {
             text: text.into(),
@@ -36,6 +37,7 @@ impl Badge {
         self
     }
 
+    /// In the accent rather than `muted`.
     pub fn accent(mut self, accent: bool) -> Self {
         self.accent = accent;
         self
@@ -85,6 +87,7 @@ impl Chip {
         }
     }
 
+    /// What a press does.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,

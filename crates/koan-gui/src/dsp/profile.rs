@@ -1603,7 +1603,7 @@ impl ProfileBody {
                         .child(
                             Stack::row()
                                 .justify_between()
-                                .role(TypeRole::Meta)
+                                .type_role(TypeRole::Meta)
                                 .tone(Tone::Ink)
                                 .child(format!("{} kHz", khz(ir.rate)))
                                 .child(Text::new(TypeRole::Meta).tone(Tone::Muted).child(channels)),

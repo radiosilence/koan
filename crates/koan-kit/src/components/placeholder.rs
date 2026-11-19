@@ -49,6 +49,8 @@ pub fn enso_svg() -> String {
 /// The share of the square the mark takes, centred.
 const MARK: f32 = 0.48;
 
+/// What a cover shows while it has no picture: the ensō, faded back, or
+/// drawing itself while one is on its way.
 #[derive(IntoElement)]
 pub struct Placeholder {
     side: Pixels,

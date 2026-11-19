@@ -726,7 +726,7 @@ impl Render for Shell {
                 None => div().size_full().into_any_element(),
             },
             _ => Stack::row()
-                .role(TypeRole::Body)
+                .type_role(TypeRole::Body)
                 .tone(Tone::Muted)
                 .size_full()
                 .items_center()

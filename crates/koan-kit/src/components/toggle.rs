@@ -25,6 +25,8 @@ pub struct Toggle {
 }
 
 impl Toggle {
+    /// A row labelled `text`, an app word drawn lowercase, with its box ticked
+    /// or not.
     pub fn new(id: impl Into<ElementId>, text: impl AsRef<str>, checked: bool) -> Self {
         Self {
             id: id.into(),
@@ -35,11 +37,13 @@ impl Toggle {
         }
     }
 
+    /// Dimmed and taking no press.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
+    /// What a press does, given the new state.
     pub fn on_change(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
         self
@@ -61,6 +65,7 @@ pub struct CheckBox {
 }
 
 impl CheckBox {
+    /// A box, ticked or not.
     pub fn new(id: impl Into<ElementId>, checked: bool) -> Self {
         Self {
             id: id.into(),
@@ -218,6 +223,7 @@ impl IconToggle {
         }
     }
 
+    /// What a press does, given the new state.
     pub fn on_change(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
         self

@@ -10,6 +10,8 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, ROW_RULE_OPACITY, Space, To
 /// What a line opens when clicked, and the tooltip saying so.
 type LineAction = (SharedString, std::rc::Rc<dyn Fn(&mut Window, &mut App)>);
 
+/// The foot of a navigation list: lines saying what the app is connected
+/// to, and figures about what it holds.
 #[derive(IntoElement, Default)]
 pub struct StatusBlock {
     lines: Vec<(Icon, SharedString, Tone, Option<LineAction>)>,
@@ -17,6 +19,7 @@ pub struct StatusBlock {
 }
 
 impl StatusBlock {
+    /// A block with no lines yet.
     pub fn new() -> Self {
         Self::default()
     }

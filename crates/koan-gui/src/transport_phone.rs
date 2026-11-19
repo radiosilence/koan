@@ -536,7 +536,7 @@ impl Transport {
             // What is playing as it reaches the output.
             .children(format.map(|format| {
                 Stack::row()
-                    .role(TypeRole::Fine)
+                    .type_role(TypeRole::Fine)
                     .tone(Tone::Muted)
                     .w_full()
                     .justify_center()

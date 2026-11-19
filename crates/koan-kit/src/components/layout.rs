@@ -207,7 +207,7 @@ impl Stack {
     }
 
     /// The type role its text takes, unless a child says otherwise.
-    pub fn role(mut self, role: TypeRole) -> Self {
+    pub fn type_role(mut self, role: TypeRole) -> Self {
         self.role = Some(role);
         self
     }

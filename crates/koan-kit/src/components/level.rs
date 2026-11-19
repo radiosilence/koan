@@ -50,6 +50,8 @@ struct Hold {
 }
 
 impl Level {
+    /// A level at `value` of `max`, between the volume glyphs unless given
+    /// others.
     pub fn new(id: impl Into<ElementId>, value: u32, max: u32) -> Self {
         Self {
             id: id.into(),
@@ -75,6 +77,7 @@ impl Level {
         self
     }
 
+    /// What letting go does, given the value let go at.
     pub fn on_commit(mut self, handler: impl Fn(&u32, &mut Window, &mut App) + 'static) -> Self {
         self.on_commit = Some(Arc::new(handler));
         self

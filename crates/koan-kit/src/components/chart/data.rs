@@ -198,6 +198,45 @@ pub fn lengths(points: &[(f64, f64)]) -> Vec<f64> {
     out
 }
 
+/// A monotone cubic's tangent at `b` (Fritsch and Butland), in units of
+/// one sample: flat at a peak or a trough.
+fn tangent(a: f64, b: f64, c: f64) -> f64 {
+    let (d0, d1) = (b - a, c - b);
+    if d0 * d1 <= 0.0 {
+        0.0
+    } else {
+        2.0 * d0 * d1 / (d0 + d1)
+    }
+}
+
+/// The smooth curve the chart's programs draw through evenly spaced samples
+/// (`koan_chart_smooth`), as `pieces` points a sample: what a renderer
+/// without shaders paints.
+pub fn smooth(xs: &[f64], ys: &[f64], pieces: usize) -> Vec<(f64, f64)> {
+    let n = xs.len().min(ys.len());
+    if n < 2 {
+        return xs.iter().copied().zip(ys.iter().copied()).collect();
+    }
+    let y = |i: isize| ys[i.clamp(0, n as isize - 1) as usize];
+    let mut out = vec![(xs[0], ys[0])];
+    for i in 0..n - 1 {
+        let j = i as isize;
+        let (b, c) = (y(j), y(j + 1));
+        let m1 = tangent(y(j - 1), b, c);
+        let m2 = tangent(b, c, y(j + 2));
+        for p in 1..=pieces {
+            let t = p as f64 / pieces as f64;
+            let (t2, t3) = (t * t, t * t * t);
+            let v = (2.0 * t3 - 3.0 * t2 + 1.0) * b
+                + (t3 - 2.0 * t2 + t) * m1
+                + (3.0 * t2 - 2.0 * t3) * c
+                + (t3 - t2) * m2;
+            out.push((xs[i] + (xs[i + 1] - xs[i]) * t, v));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +312,25 @@ mod tests {
         assert_eq!(picked[0], 0);
         assert_eq!(*picked.last().unwrap(), 9_999);
         assert!(picked.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    /// The curve passes through every sample and never beyond the two it
+    /// runs between, so a peak is rounded off rather than overshot.
+    #[test]
+    fn the_smooth_curve_keeps_within_its_samples() {
+        let xs = [0.0, 1.0, 2.0, 3.0, 4.0];
+        let ys = [0.0, 10.0, 2.0, 2.5, 9.0];
+        let curve = smooth(&xs, &ys, 8);
+        assert_eq!(curve.len(), 1 + 4 * 8);
+        for (i, y) in ys.iter().enumerate() {
+            assert!((curve[i * 8].1 - y).abs() < 1e-9);
+        }
+        for (i, piece) in curve.chunks(8).take(4).enumerate() {
+            let (lo, hi) = (ys[i].min(ys[i + 1]), ys[i].max(ys[i + 1]));
+            for (_, y) in piece {
+                assert!(*y >= lo - 1e-9 && *y <= hi + 1e-9, "{y} outside {lo}..{hi}");
+            }
+        }
     }
 
     #[test]

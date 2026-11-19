@@ -239,7 +239,7 @@ impl DownloadsPage {
             .map(|row| {
                 let status = |status: String| {
                     Stack::row()
-                        .role(TypeRole::Fine)
+                        .type_role(TypeRole::Fine)
                         .justify_end()
                         .tone(if warns { Tone::Bad } else { Tone::Muted })
                         .truncate()

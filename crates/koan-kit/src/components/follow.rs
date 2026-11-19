@@ -59,6 +59,7 @@ impl Default for Follow {
 }
 
 impl Follow {
+    /// A layer standing in place.
     pub fn new() -> Self {
         let animated = Animated::new();
         standing(&animated);
@@ -97,6 +98,7 @@ impl Follow {
         AnimatedLayer::new(&self.0, child).program(&LAYER)
     }
 
+    /// The uniforms the layer reads, for an element that draws it.
     pub fn animated(&self) -> &Animated {
         &self.0
     }
@@ -248,6 +250,7 @@ impl Default for Elastic {
 }
 
 impl Elastic {
+    /// A page's edges at rest, with no refresh.
     pub fn new() -> Self {
         Self {
             follow: Follow::new(),
@@ -763,6 +766,7 @@ pub struct SwipeAction {
 }
 
 impl SwipeAction {
+    /// `row` over `action`, both moved by `follow`.
     pub fn new(follow: &Follow, row: impl IntoElement, action: impl IntoElement) -> Self {
         Self {
             follow: follow.clone(),
@@ -878,6 +882,7 @@ impl Default for Push {
 }
 
 impl Push {
+    /// A push at rest, the page in front in place.
     pub fn new() -> Self {
         let animated = Animated::new();
         animated.hold(0, 0.0);

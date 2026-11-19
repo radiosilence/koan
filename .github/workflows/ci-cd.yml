@@ -168,7 +168,7 @@ jobs:
             eval "$(printf '%s\n' "$inputs" | sed 's/^/inputs_/')"
 
             # Anything cargo compiles or that decides how.
-            touches '^crates/|^tools/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^justfile$|^mise\.toml$|^\.github/' || rust=false
+            touches '^crates/|^tools/|^Cargo\.(toml|lock)$|^docs/guide/koan-kit\.md$|^docs/reference/koan-kit-api\.md$|^site/public/koan-kit\.txt$|^\.cargo/|^rust-toolchain|^justfile$|^mise\.toml$|^\.github/' || rust=false
             # The web UI's stylesheets and scripts: their sources, everything
             # Tailwind reads class names from, and the tools.
             touches '^crates/koan-server/|^package\.json$|^aube-lock\.yaml$|^\.npmrc$|^scripts/styles-deps\.sh$|^mise\.toml$|^justfile$|^\.github/' || web=false
@@ -438,6 +438,8 @@ jobs:
           cache-on-failure: true
       # Pages built beside the design system rather than from it.
       - run: python3 scripts/gui-theme-leaks.py
+      # koan-kit's reference and guide examples, as generated from its sources.
+      - run: cargo run -q -p kit-reference -- --check
       - run: cargo clippy -p koan-gui -p koan-kit --all-targets -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test -p koan-gui -p koan-kit --all-targets

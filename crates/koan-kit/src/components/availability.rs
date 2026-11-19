@@ -16,6 +16,7 @@ use super::{Glide, ProgressRing, SHADED};
 pub type RingGlide = Rc<dyn Fn(Hsla, &mut App) -> Glide>;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, TypeRole, label};
 
+/// Where a track's file is, as `AvailabilityMark` draws it.
 #[derive(Clone)]
 pub enum Availability {
     /// Waiting at the front of the downloads: nothing here yet.
@@ -86,6 +87,7 @@ impl AvailabilityMark {
         }
     }
 
+    /// Drawn on a picked row's selection colours.
     pub fn picked(mut self, picked: bool) -> Self {
         self.picked = picked;
         self

@@ -1,8 +1,10 @@
 //! The charts page: a frequency response with points to drag, a time series
 //! with a filled band, a series easing between data sets while its axis
 //! rescales, a live feed at 15 Hz drawn at the display's rate, both ways
-//! it can meet the present, and the response again at a phone's width.
+//! it can meet the present, a throughput feed scrolling past, and the
+//! response again at a phone's width.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,6 +22,10 @@ const FEED: Duration = Duration::from_millis(66);
 /// Samples across the live feed and the response.
 const BINS: usize = 48;
 const RESPONSE: usize = 240;
+/// The throughput feed takes a sample every fourth tick of the live feed,
+/// and keeps this many.
+const POLL_TICKS: u64 = 4;
+const SLOTS: usize = 60;
 
 /// A bump on the response: centre frequency, gain, width in octaves.
 #[derive(Clone, Copy)]
@@ -37,6 +43,8 @@ pub struct Charts {
     wide: bool,
     tick: u64,
     live: Vec<f64>,
+    /// Throughput, oldest first.
+    flow: VecDeque<f64>,
     /// The feed runs while the page is drawn, and stops once it is not.
     drawn: bool,
     feeding: bool,
@@ -71,6 +79,7 @@ impl Charts {
             wide: false,
             tick: 0,
             live: vec![0.0; BINS],
+            flow: VecDeque::with_capacity(SLOTS),
             drawn: false,
             feeding: false,
         }
@@ -129,6 +138,14 @@ impl Charts {
                                 0.15 + 0.5 * swell * (1.0 - x * 0.6) + 0.3 * beat + 0.08 * noise
                             })
                             .collect();
+                        if c.tick % POLL_TICKS == 0 {
+                            if c.flow.len() == SLOTS {
+                                c.flow.pop_front();
+                            }
+                            let burst = ((t * 0.37).sin() * (t * 0.11).cos()).max(0.0);
+                            let noise = ((t * 91.7).sin() * 43_758.545).fract().abs();
+                            c.flow.push_back(2.0 + 9.0 * burst * burst + 1.5 * noise);
+                        }
                         cx.notify();
                         true
                     })
@@ -320,6 +337,32 @@ impl Render for Charts {
                 .key("Extrapolated: current", Swatch::line(ink).dashed(true)),
         );
 
+        // Throughput scrolling past: the newest sample enters from the right
+        // edge while the scale rounds up to fit the peak.
+        let poll = FEED * POLL_TICKS as u32;
+        let peak = self.flow.iter().fold(0.0f64, |a, b| a.max(*b));
+        let top = [4.0, 6.0, 8.0, 10.0, 15.0, 20.0]
+            .into_iter()
+            .find(|t| *t >= peak)
+            .unwrap_or(20.0);
+        let slots: Arc<[f64]> = (SLOTS - self.flow.len()..SLOTS).map(|i| i as f64).collect();
+        let flow: Arc<[f64]> = self.flow.iter().copied().collect();
+        let throughput = Chart::new(
+            "throughput",
+            Axis::linear(0.0, (SLOTS - 1) as f64).no_labels(),
+            Axis::linear(0.0, top).format(|v| format!("{v:.0} MB/s")),
+        )
+        .height(px(160.0))
+        .series([
+            Series::area("flow-fill", slots.clone(), flow.clone())
+                .color(accent.opacity(0.15))
+                .motion(DataMotion::Scroll(poll)),
+            Series::line("flow", slots, flow)
+                .width(1.5)
+                .color(accent)
+                .motion(DataMotion::Scroll(poll)),
+        ]);
+
         let note = |text: &'static str| {
             div()
                 .text_role(TypeRole::Meta, &look)
@@ -346,6 +389,11 @@ impl Render for Charts {
                 "Samples arrive every 66 ms; each is a keyframe the GPU draws at the display's rate.",
             ))
             .child(live)
+            .child(SectionHeader::new("Throughput, scrolling"))
+            .child(note(
+                "A sample every 264 ms slides in from the right; the scale rounds up to the peak and eases.",
+            ))
+            .child(throughput)
             .child(SectionHeader::new("At a phone's width"))
             .child(
                 div()

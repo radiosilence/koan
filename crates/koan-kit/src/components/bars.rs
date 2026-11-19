@@ -60,6 +60,7 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 20
 pub struct BarLevels(Animated);
 
 impl BarLevels {
+    /// Levels at rest, all bars down.
     pub fn new() -> Self {
         Self::default()
     }
@@ -136,6 +137,8 @@ pub struct PlayingBars {
 }
 
 impl PlayingBars {
+    /// Bars in `color`. `attach` is asked for the levels once the bars know
+    /// where they are drawn; returning `None` draws them still.
     pub fn new(
         color: Hsla,
         attach: impl Fn(BarsPlace, &mut Window, &mut App) -> Option<BarLevels> + 'static,

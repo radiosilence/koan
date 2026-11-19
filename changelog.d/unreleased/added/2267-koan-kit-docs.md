@@ -1,0 +1,1 @@
+- **koan-kit has documentation on koan.rocks.** A guide to building an app on the design system, an API reference generated from its sources and checked in CI, and both as one plain-text file for a reader that takes a single document.

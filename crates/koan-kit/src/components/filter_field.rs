@@ -68,6 +68,8 @@ fn clear(
     cx.notify(view);
 }
 
+/// The filter field: the search glyph and a lowercase prompt, no box, and
+/// a clear mark while it holds text.
 #[derive(IntoElement)]
 pub struct FilterField {
     input: Entity<InputState>,
@@ -76,6 +78,8 @@ pub struct FilterField {
 }
 
 impl FilterField {
+    /// A field over `input`, which its owner keeps and listens to; it prompts
+    /// "filter" until `label` says what it narrows.
     pub fn new(input: &Entity<InputState>) -> Self {
         Self {
             input: input.clone(),
@@ -319,6 +323,8 @@ impl FilterButton {
         }
     }
 
+    /// What a press anywhere on it does: usually opening the search it stands
+    /// for.
     pub fn on_click(mut self, run: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(std::sync::Arc::new(run));
         self

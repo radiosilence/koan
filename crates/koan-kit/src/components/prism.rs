@@ -1322,6 +1322,7 @@ impl Default for Prism {
 }
 
 impl Prism {
+    /// A prism at rest, waiting for the analyser.
     pub fn new() -> Self {
         let animated = Animated::new();
         animated.set_all(6, &[1.0, 0.0, 1.0]);
@@ -1476,6 +1477,7 @@ impl Burst {
         self
     }
 
+    /// Confetti thrown from the point it is fired at.
     pub fn confetti() -> Self {
         Self {
             animated: spent(),
@@ -1496,6 +1498,7 @@ impl Burst {
         }
     }
 
+    /// The rainbow's sweep across the window between records.
     pub fn sweep() -> Self {
         Self {
             animated: spent(),
@@ -1601,6 +1604,7 @@ pub struct Sheen {
 }
 
 impl Sheen {
+    /// A sheen in the rainbow's palette.
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -1617,6 +1621,7 @@ impl Sheen {
         self
     }
 
+    /// In brat's palette.
     pub fn brat(mut self, brat: bool) -> Self {
         self.brat = brat;
         self
@@ -1681,6 +1686,7 @@ pub struct PrismFill {
 }
 
 impl PrismFill {
+    /// A fill in the rainbow's palette, or in brat's.
     pub fn new(id: impl Into<ElementId>, brat: bool) -> Self {
         Self {
             id: id.into(),

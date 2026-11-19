@@ -349,7 +349,7 @@ impl<V: TileHost> Render for TileView<V> {
             .child(record.title.clone());
 
         let mut credit = Stack::row()
-            .role(Type::Fine)
+            .type_role(Type::Fine)
             .tone(Tone::Muted)
             .w_full()
             .overflow_hidden()

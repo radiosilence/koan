@@ -73,6 +73,7 @@ const SETTLE: Duration = Duration::from_millis(250);
 const DRIFT: f32 = 0.3;
 
 impl Glide {
+    /// A glide standing at nothing.
     pub fn new() -> Self {
         Self::default()
     }
@@ -404,6 +405,7 @@ impl Slider {
         self
     }
 
+    /// Dimmed and taking no drag.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -416,6 +418,7 @@ impl Slider {
         self
     }
 
+    /// What each step of a drag or a key does, given the value from 0 to 1.
     pub fn on_change(mut self, handler: impl Fn(&f32, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
         self

@@ -13,6 +13,8 @@ use gpui::*;
 use super::RowMetrics;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
+/// What a search field suggests as it is typed into: a panel under the
+/// field, over what follows it.
 #[derive(IntoElement)]
 pub struct SuggestionPanel {
     base: Stateful<Div>,
@@ -23,6 +25,7 @@ impl SuggestionPanel {
     /// The tallest the panel grows before it scrolls, at 100 %.
     const MAX_HEIGHT: f32 = 560.0;
 
+    /// An empty panel, given its headings and rows as children.
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             base: div().id(id),
@@ -77,6 +80,7 @@ pub struct SuggestionHeading {
 }
 
 impl SuggestionHeading {
+    /// A heading over a group, an app word drawn lowercase.
     pub fn new(title: impl AsRef<str>) -> Self {
         Self {
             title: label(title),
@@ -169,6 +173,7 @@ impl SuggestionRow {
         self
     }
 
+    /// A line under the title saying more.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
         self.detail = Some(detail.into());
         self
@@ -186,6 +191,7 @@ impl SuggestionRow {
         self
     }
 
+    /// The row the arrows or the pointer are on, on `surface`.
     pub fn lit(mut self, lit: bool) -> Self {
         self.lit = lit;
         self

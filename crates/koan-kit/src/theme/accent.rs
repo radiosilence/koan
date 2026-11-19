@@ -30,6 +30,7 @@ pub struct Shade {
 }
 
 impl Shade {
+    /// The shade as GPUI's colour.
     pub fn rgba(self) -> Rgba {
         Rgba {
             r: self.rgb[0] as f32,
@@ -111,6 +112,7 @@ impl Shade {
     }
 }
 
+/// The accent in each appearance.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Accent {
     pub dark: Shade,
@@ -149,6 +151,7 @@ impl Accent {
         },
     };
 
+    /// The shade for the dark or the light appearance.
     pub fn shade(&self, dark: bool) -> Shade {
         if dark { self.dark } else { self.light }
     }
@@ -384,10 +387,13 @@ pub mod oklch {
         }
     }
 
+    /// Relative luminance, as WCAG's contrast ratio takes it, from
+    /// gamma-encoded sRGB in 0..=1.
     pub fn luminance([r, g, b]: [f64; 3]) -> f64 {
         0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
     }
 
+    /// One sRGB channel, gamma-encoded, as linear light.
     pub fn linear(v: f64) -> f64 {
         if v <= 0.04045 {
             v / 12.92
@@ -396,6 +402,7 @@ pub mod oklch {
         }
     }
 
+    /// One channel of linear light, gamma-encoded as sRGB, held to 0..=1.
     pub fn gamma(v: f64) -> f64 {
         let c = v.clamp(0.0, 1.0);
         if c <= 0.0031308 {
