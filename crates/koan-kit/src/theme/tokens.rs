@@ -167,6 +167,18 @@ pub const HIT: Pixels = px(44.0);
 /// View or Stage Manager once a sidebar would leave its page too little.
 pub const COMPACT_WIDTH: Pixels = px(660.0);
 
+/// The widest a column of content runs, however wide the window: past it a
+/// line is too long to read and a page's parts drift apart. `Look::measure`
+/// gives it on the window's scale.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Measure {
+    /// Prose: a biography, a long note. 680 points on the spacing scale.
+    Prose,
+    /// A page of controls and their notes, the EQ page's: 720 points on the
+    /// size scale, so it grows with the text it holds.
+    Page,
+}
+
 /// A toolbar button's cell, the size of the platform's own.
 pub const TOOLBAR_BUTTON: Pixels = px(36.0);
 
@@ -216,6 +228,9 @@ impl Scale {
 /// `KoanTheme::space`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Space {
+    /// Two points: between a line and the one under it that belongs to it,
+    /// a title and its name, say.
+    Xxs,
     Xs,
     S,
     M,
@@ -227,6 +242,7 @@ pub enum Space {
 impl Space {
     pub fn points(self) -> f32 {
         match self {
+            Space::Xxs => 2.0,
             Space::Xs => 4.0,
             Space::S => 8.0,
             Space::M => 12.0,

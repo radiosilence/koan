@@ -14,7 +14,9 @@ use crate::components::{Button, ButtonKind, Rise, SlideUp};
 use crate::theme::{KoanStyled, KoanTheme, Look, Space, Tone, TypeRole};
 
 /// The sheet's parts are koan-kit's.
-pub use crate::components::sheet::{body, content, head, head_data, note, panel};
+pub use crate::components::sheet::{
+    ChoiceRow, body, choice_row, confirmation, content, head, head_data, note, panel, section,
+};
 
 /// What a choice or a confirmation does.
 pub type Run = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -166,122 +168,28 @@ fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoEle
             .destructive(c.destructive)
             .on_click(go(run))
     });
-    div()
-        .flex()
-        .flex_col()
-        .gap(look.space(Space::M))
-        .p(look.space(Space::L))
-        .child(crate::components::title_text(c.title, look))
-        .child(
-            div()
-                .text_role(TypeRole::Meta, look)
-                .text_color(look.text_color(Tone::Muted))
-                .child(c.message),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .justify_end()
-                .gap(look.space(Space::M))
-                .child(
-                    Button::new("confirm-cancel", ButtonKind::Standard)
-                        .label("Cancel")
-                        .on_click(cancel),
-                )
-                .children(also)
-                .child(
-                    Button::new("confirm-go", ButtonKind::Bordered)
-                        .label(c.action.as_ref())
-                        .destructive(c.destructive)
-                        .on_click(go(c.run.clone())),
-                ),
-        )
-}
-
-/// A section: its heading, its rows, and a footer saying what it means.
-pub fn section(
-    title: Option<&str>,
-    rows: Vec<AnyElement>,
-    footer: Option<SharedString>,
-    look: &Look,
-) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap(look.space(Space::Xs))
-        .when_some(title, |d, t| {
-            d.child(crate::components::SectionHeader::new(t))
-        })
-        .children(rows)
-        // The section's note stands a step off its rows, as a form's does.
-        .when_some(footer, |d, f| {
-            d.child(note(f, Tone::Muted, look).mt(look.space(Space::S)))
-        })
-}
-
-/// A row a click acts on: what it is, a line beneath, and what trails, lit
-/// under the pointer as the kit's controls are. The fill reaches past the
-/// text by the space it is set in by, so the text lines up with the sheet's.
-pub fn choice_row(
-    id: impl Into<koan_kit::app::ElementId>,
-    title: impl Into<SharedString>,
-    detail: Option<SharedString>,
-    trailing: Option<AnyElement>,
-    look: &Look,
-    on_click: impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static,
-) -> ChoiceRow {
-    ChoiceRow {
-        id: id.into(),
-        title: title.into(),
-        detail,
-        trailing,
-        look: *look,
-        on_click: Box::new(on_click),
-    }
-}
-
-/// What a choice row runs when it is picked.
-type OnChoose = Box<dyn Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App)>;
-
-#[derive(IntoElement)]
-pub struct ChoiceRow {
-    id: koan_kit::app::ElementId,
-    title: SharedString,
-    detail: Option<SharedString>,
-    trailing: Option<AnyElement>,
-    look: Look,
-    on_click: OnChoose,
-}
-
-impl RenderOnce for ChoiceRow {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let look = &self.look;
-        let inset = look.space(Space::S);
-        crate::components::lit_row(self.id, window, cx)
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(look.space(Space::M))
-            .py(inset)
-            .px(inset)
-            .mx(-inset)
-            .on_click(self.on_click)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .text_role(TypeRole::Body, look)
-                            .text_color(look.palette.ink.hsla())
-                            .child(self.title),
-                    )
-                    .when_some(self.detail, |d, detail| {
-                        d.child(note(detail, Tone::Muted, look))
-                    }),
-            )
-            .children(self.trailing)
-    }
+    confirmation(
+        c.title,
+        c.message,
+        [
+            Some(
+                Button::new("confirm-cancel", ButtonKind::Standard)
+                    .label("Cancel")
+                    .on_click(cancel)
+                    .into_any_element(),
+            ),
+            also.map(IntoElement::into_any_element),
+            Some(
+                Button::new("confirm-go", ButtonKind::Bordered)
+                    .label(c.action.as_ref())
+                    .destructive(c.destructive)
+                    .on_click(go(c.run.clone()))
+                    .into_any_element(),
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        look,
+    )
 }

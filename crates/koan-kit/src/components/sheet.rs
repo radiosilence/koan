@@ -1313,3 +1313,143 @@ mod tests {
         );
     }
 }
+
+/// A section of a sheet: its heading, its rows, and a footer saying what
+/// they mean, a step off them as a form's is.
+pub fn section(
+    title: Option<&str>,
+    rows: Vec<AnyElement>,
+    footer: Option<SharedString>,
+    look: &Look,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(look.space(Space::Xs))
+        .when_some(title, |d, t| {
+            d.child(super::SectionHeader::new(t))
+        })
+        .children(rows)
+        // The section's note stands a step off its rows, as a form's does.
+        .when_some(footer, |d, f| {
+            d.child(note(f, Tone::Muted, look).mt(look.space(Space::S)))
+        })
+}
+
+/// A row a click acts on: what it is, a line beneath, and what trails, lit
+/// under the pointer as the kit's controls are. The fill reaches past the
+/// text by the space it is set in by, so the text lines up with the sheet's.
+pub fn choice_row(
+    id: impl Into<ElementId>,
+    title: impl Into<SharedString>,
+    detail: Option<SharedString>,
+    trailing: Option<AnyElement>,
+    look: &Look,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> ChoiceRow {
+    ChoiceRow {
+        id: id.into(),
+        title: title.into(),
+        detail,
+        trailing,
+        look: *look,
+        on_click: Box::new(on_click),
+    }
+}
+
+/// What a choice row runs when it is picked.
+type OnChoose = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// A row a click acts on, made by `choice_row`.
+#[derive(IntoElement)]
+pub struct ChoiceRow {
+    id: ElementId,
+    title: SharedString,
+    detail: Option<SharedString>,
+    trailing: Option<AnyElement>,
+    look: Look,
+    on_click: OnChoose,
+}
+
+impl RenderOnce for ChoiceRow {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = &self.look;
+        let inset = look.space(Space::S);
+        super::lit_row(self.id, window, cx)
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(look.space(Space::M))
+            .py(inset)
+            .px(inset)
+            .mx(-inset)
+            .on_click(self.on_click)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_role(TypeRole::Body, look)
+                            .text_color(look.palette.ink.hsla())
+                            .child(self.title),
+                    )
+                    .when_some(self.detail, |d, detail| {
+                        d.child(note(detail, Tone::Muted, look))
+                    }),
+            )
+            .children(self.trailing)
+    }
+}
+
+/// A confirmation's panel body: its title, what will happen, and its
+/// buttons trailing, wrapping on a narrow window.
+pub fn confirmation(
+    title: impl Into<SharedString>,
+    message: impl Into<SharedString>,
+    buttons: Vec<AnyElement>,
+    look: &Look,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(look.space(Space::M))
+        .p(look.space(Space::L))
+        .child(super::title_text(title, look))
+        .child(
+            div()
+                .text_role(TypeRole::Meta, look)
+                .text_color(look.text_color(Tone::Muted))
+                .child(message.into()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .justify_end()
+                .gap(look.space(Space::M))
+                .children(buttons),
+        )
+}
+
+/// A sheet's body scrolled by the kit's `ScrollArea`, which keeps a field
+/// being typed in clear of the keyboard: `body`'s insets and gap around
+/// `rows`.
+pub fn scroll_body(
+    id: impl Into<ElementId>,
+    rows: Vec<AnyElement>,
+    look: &Look,
+) -> super::ScrollArea {
+    super::ScrollArea::new(
+        id,
+        div()
+            .flex()
+            .flex_col()
+            .gap(look.space(Space::S))
+            .px(look.space(Space::L))
+            .pt(look.space(Space::M))
+            .pb(look.space(Space::L))
+            .children(rows),
+    )
+}

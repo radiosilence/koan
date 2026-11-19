@@ -22,10 +22,11 @@ use super::menu::{Item, Trigger, menu};
 use super::model::{Dsp, Placement, Stage, describe_profile, joined};
 use super::sheet::{Confirm, Sheets, note};
 use super::{flows, manage, prompts, stage};
-use crate::components::{Button, ButtonKind, FormRow, SectionHeader, TextField, Toggle};
-use crate::theme::{
-    Icon, KoanIcon, KoanStyled, Look, MARK, Space, Tone, TypeRole, label, observe_accent,
+use crate::components::{
+    Button, ButtonKind, ChainEnd, ChainJoin, ChainLink, ChainSlot, ChainStage, FormRow, Inset,
+    SectionHeader, Stack, Text, TextField, Toggle,
 };
+use crate::theme::{Icon, Look, Measure, Space, Tone, TypeRole, label, observe_accent};
 
 /// The page a window shows: the device's chain, drawn by `EqBody` as a
 /// cached view, with the sheets and the import questions over it. Whatever
@@ -500,10 +501,8 @@ impl Render for EqBody {
             (Some(o), Some(device)) => {
                 let head = self.head(&o, &device, window, cx);
                 let chain = self.chain(&o, &device, window, cx);
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(look.space(Space::L))
+                Stack::column()
+                    .space(Space::L)
                     .child(head)
                     .child(
                         // As tall as the graph last drew: a cached view takes its
@@ -531,17 +530,12 @@ impl Render for EqBody {
         let foot = self.foot(window, cx);
         crate::components::ScrollArea::new(
             "eq-scroll",
-            div()
-                .flex()
-                .flex_col()
-                .gap(look.space(Space::L))
+            Stack::column()
+                .space(Space::L)
                 // The page's width, at most the column's: narrower content,
                 // a phone's, wraps and cuts to it rather than running off.
-                .w_full()
-                .min_w_0()
-                .max_w(look.sized(720.0))
-                .mx_auto()
-                .p(look.space(Space::Xl))
+                .measure(Measure::Page)
+                .inset(Space::Xl)
                 .child(content)
                 .child(foot),
         )
@@ -725,10 +719,8 @@ impl EqBody {
                 FormRow::data(format!("{} {preset}", label("Changed since")))
                     .stacked()
                     .control(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap(look.space(Space::M))
+                        Stack::wrapping()
+                            .space(Space::M)
                             .child(
                                 Button::new("preset-save", ButtonKind::Bordered)
                                     .label("Save")
@@ -763,10 +755,8 @@ impl EqBody {
             let this = cx.weak_entity();
             let cancel = this.clone();
             rows.push(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(look.space(Space::S))
+                Stack::column()
+                    .space(Space::S)
                     .child(SectionHeader::new(title.as_ref()))
                     .child(note(
                         format!(
@@ -777,9 +767,8 @@ impl EqBody {
                         &look,
                     ))
                     .child(
-                        div()
-                            .flex()
-                            .gap(look.space(Space::M))
+                        Stack::row()
+                            .space(Space::M)
                             .child(div().flex_1().child(TextField::new(input)))
                             .child(Button::new("name-save", ButtonKind::Bordered).label("Save").on_click(move |_, _, cx| {
                                 this.update(cx, |p, cx| p.save_named(cx)).ok();
@@ -801,10 +790,8 @@ impl EqBody {
             rows.push(note(refusal.clone(), Tone::Bad, &look).into_any_element());
         }
         let sheets = self.sheets.clone();
-        div()
-            .flex()
-            .flex_col()
-            .gap(look.space(Space::Xs))
+        Stack::column()
+            .space(Space::Xs)
             .child(
                 div()
                     .flex()
@@ -883,10 +870,8 @@ impl EqBody {
                 })
                 .into_any_element(),
         );
-        div()
-            .flex()
-            .flex_col()
-            .gap(look.space(Space::S))
+        Stack::column()
+            .space(Space::S)
             .children(rows)
             .into_any_element()
     }
@@ -907,38 +892,10 @@ impl EqBody {
             .find(|p| Some(&p.name) == o.active.as_ref())
             .cloned();
         let matched = o.matched;
-        let outline = if matched {
-            look.accent.hsla()
-        } else {
-            look.palette.rule.hsla()
-        };
-        let link = |look: &Look| {
-            div()
-                .ml(look.spaced(18.0))
-                .w(if matched { MARK } else { look.hairline })
-                .h(look.space(Space::M))
-                .bg(if matched {
-                    look.accent.hsla()
-                } else {
-                    look.palette.rule.hsla()
-                })
-        };
-        let end = |title: SharedString, icon: Icon, look: &Look| {
-            div()
-                .flex()
-                .items_center()
-                .gap(look.space(Space::S))
-                .pl(look.spaced(8.0))
-                .text_role(TypeRole::Meta, look)
-                .text_color(look.text_color(Tone::Muted))
-                .when(look.icons, |d| {
-                    d.child(KoanIcon::new(icon).role(TypeRole::Meta).tone(Tone::Muted))
-                })
-                .child(title)
-        };
+        let link = || ChainLink::new(matched).into_any_element();
         let mut col: Vec<AnyElement> = vec![
-            end(label("Music in"), Icon::Track, &look).into_any_element(),
-            link(&look).into_any_element(),
+            ChainEnd::new(Icon::Track, label("Music in")).into_any_element(),
+            link(),
         ];
         let pick = |stage: Stage, page: &Self| {
             let (dsp, sheets, device) = (page.dsp.clone(), page.sheets.clone(), device.to_owned());
@@ -974,45 +931,37 @@ impl EqBody {
                     };
                     let open = self.opener(c.name.clone());
                     col.push(
-                        block(
-                            "stage-correction",
-                            "Correction",
-                            c.name.clone(),
-                            Some(detail),
-                            self.curves.get(&c.name).cloned(),
-                            Stroke::CORRECTION,
-                            outline,
-                            &look,
-                            pick(Stage::Correction, self),
-                            vec![
+                        ChainStage::new("stage-correction", label("Correction"), c.name.clone())
+                            .detail(Some(detail))
+                            .art(
+                                self.curves
+                                    .get(&c.name)
+                                    .cloned()
+                                    .map(|db| thumb(db, Stroke::CORRECTION, None)),
+                            )
+                            .lit(matched)
+                            .on_click(pick(Stage::Correction, self))
+                            .control(
                                 Button::new("show-correction", ButtonKind::Link)
                                     .label("Show")
-                                    .on_click(open)
-                                    .into_any_element(),
-                            ],
-                        )
-                        .into_any_element(),
+                                    .on_click(open),
+                            )
+                            .into_any_element(),
                     );
                 }
                 None => col.push(
-                    placeholder(
-                        "add-correction",
-                        Some("Correction"),
-                        "Add a correction",
-                        None,
-                        &look,
-                        pick(Stage::Correction, self),
-                    )
-                    .into_any_element(),
+                    ChainSlot::new("add-correction", label("Add a correction"))
+                        .title(label("Correction"))
+                        .on_click(pick(Stage::Correction, self))
+                        .into_any_element(),
                 ),
             }
-            col.push(link(&look).into_any_element());
+            col.push(link());
         }
         col.push(
-            div()
-                .py(look.space(Space::Xs))
-                .text_role(TypeRole::Fine, &look)
-                .text_color(look.text_color(Tone::Muted))
+            Text::new(TypeRole::Fine)
+                .tone(Tone::Muted)
+                .inset_y(Space::Xs)
                 .child(label("Filters"))
                 .into_any_element(),
         );
@@ -1022,7 +971,7 @@ impl EqBody {
             if !o.filters_only && (i > 0 || joined) {
                 col.push(self.join(meets, &entry.name, matched, &look, cx));
             } else {
-                col.push(link(&look).into_any_element());
+                col.push(link());
             }
             let detail = if entry.on {
                 if o.filters_only {
@@ -1035,34 +984,28 @@ impl EqBody {
             } else {
                 Some(label("Off").to_string())
             };
-            col.push(self.eq_block(i, entry, o, device, detail, outline, window, cx));
+            col.push(self.eq_block(i, entry, o, device, detail, matched, window, cx));
         }
         if !o.chain.is_empty() {
-            col.push(link(&look).into_any_element());
+            col.push(link());
         }
         if correction.as_ref().is_none_or(|c| c.role != DspRole::Baked) {
             col.push(
-                placeholder(
-                    "add-eq",
-                    None,
-                    "Add EQ",
-                    matched.then_some(outline),
-                    &look,
-                    pick(Stage::Eq, self),
-                )
-                .into_any_element(),
+                ChainSlot::new("add-eq", label("Add EQ"))
+                    .lit(matched)
+                    .on_click(pick(Stage::Eq, self))
+                    .into_any_element(),
             );
-            col.push(link(&look).into_any_element());
+            col.push(link());
         }
         col.push(
-            end(
-                format!("{} {}", self.dsp.read(cx).label(device), label("out")).into(),
+            ChainEnd::new(
                 Icon::Speaker,
-                &look,
+                format!("{} {}", self.dsp.read(cx).label(device), label("out")),
             )
             .into_any_element(),
         );
-        div().flex().flex_col().children(col).into_any_element()
+        Stack::column().children(col).into_any_element()
     }
 
     fn opener(
@@ -1093,11 +1036,10 @@ impl EqBody {
         o: &DspOverview,
         device: &str,
         detail: Option<String>,
-        outline: crate::theme::Hsla,
+        lit: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let look = Look::of(window, cx);
         let set = {
             let (dsp, device) = (self.dsp.clone(), device.to_owned());
             move |chain: Vec<DspTuningEntry>, cx: &mut App| {
@@ -1150,18 +1092,22 @@ impl EqBody {
             window,
             cx,
         );
-        block(
+        ChainStage::new(
             ("stage-eq", i),
-            &format!("EQ {}", i + 1),
+            label(format!("EQ {}", i + 1)),
             entry.name.clone(),
-            detail,
-            self.curves.get(&entry.name).cloned(),
-            Stroke::eq(i),
-            outline,
-            &look,
-            self.opener(entry.name.clone()),
-            vec![toggle.into_any_element(), options],
         )
+        .detail(detail)
+        .art(
+            self.curves
+                .get(&entry.name)
+                .cloned()
+                .map(|db| thumb(db, Stroke::eq(i), None)),
+        )
+        .lit(lit)
+        .on_click(self.opener(entry.name.clone()))
+        .control(toggle)
+        .control(options)
         .into_any_element()
     }
 
@@ -1180,29 +1126,18 @@ impl EqBody {
         let mut lines: Vec<AnyElement> = Vec::new();
         match meets.and_then(|m| m.join.clone()) {
             Some(DspJoin::Matched) => lines.push(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(look.space(Space::Xs))
-                    .text_role(TypeRole::Fine, look)
-                    .text_color(look.text_color(Tone::Accent))
-                    .when(look.icons, |d| {
-                        d.child(
-                            KoanIcon::new(Icon::Check)
-                                .role(TypeRole::Fine)
-                                .tone(Tone::Accent),
-                        )
-                    })
+                Text::new(TypeRole::Fine)
+                    .tone(Tone::Accent)
+                    .icon(Icon::Check)
                     .child(label("Matched"))
                     .into_any_element(),
             ),
             Some(DspJoin::Converted { from, to }) => {
                 let step = meets.map(|m| m.step.clone()).unwrap_or_default();
                 lines.push(
-                    div()
-                        .flex()
+                    Stack::row()
                         .items_center()
-                        .gap(look.space(Space::M))
+                        .space(Space::M)
                         .child(note(
                             format!("Target difference: {from} → {to}"),
                             Tone::Muted,
@@ -1259,45 +1194,15 @@ impl EqBody {
         }
         if let Some(n) = meets.and_then(|m| m.note.clone()) {
             lines.push(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(look.space(Space::Xs))
-                    .when(look.icons, |d| {
-                        d.child(
-                            KoanIcon::new(Icon::Warning)
-                                .role(TypeRole::Fine)
-                                .tone(Tone::Bad),
-                        )
-                    })
-                    .child(note(n, Tone::Bad, look))
+                Text::new(TypeRole::Fine)
+                    .tone(Tone::Bad)
+                    .icon(Icon::Warning)
+                    .child(n)
                     .into_any_element(),
             );
         }
         let _ = cx;
-        div()
-            .relative()
-            .flex()
-            .flex_col()
-            .gap(look.space(Space::Xs))
-            .py(look.space(Space::Xs))
-            .min_h(look.space(Space::M))
-            .pl(look.spaced(18.0) + look.space(Space::M))
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .left(look.spaced(18.0))
-                    .w(if matched { MARK } else { look.hairline })
-                    .bg(if matched {
-                        look.accent.hsla()
-                    } else {
-                        look.palette.rule.hsla()
-                    }),
-            )
-            .children(lines)
-            .into_any_element()
+        ChainJoin::new(matched).children(lines).into_any_element()
     }
 }
 
@@ -1310,128 +1215,6 @@ impl Stroke {
             dash: &[],
         }
     }
-}
-
-/// A stage of the chain: what it is, what fills it, its curve, and its
-/// controls.
-#[allow(clippy::too_many_arguments)]
-fn block(
-    id: impl Into<koan_kit::app::ElementId>,
-    title: &str,
-    name: String,
-    detail: Option<String>,
-    db: Option<Vec<f64>>,
-    stroke: Stroke,
-    outline: crate::theme::Hsla,
-    look: &Look,
-    on_click: impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static,
-    controls: Vec<AnyElement>,
-) -> impl IntoElement {
-    // Below the compact width the words take the whole width, over a row of
-    // the curve and the controls; beside them they would be cut to a word.
-    let compact = look.compact;
-    let words = div()
-        .flex_1()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .gap(look.spaced(2.0))
-        .child(note(label(title), Tone::Muted, look))
-        .child(
-            div()
-                .text_role(TypeRole::Body, look)
-                .text_color(look.palette.ink.hsla())
-                .truncate()
-                .child(name),
-        )
-        .children(
-            detail
-                .filter(|d| !d.is_empty())
-                .map(|d| note(d, Tone::Muted, look).when(!compact, |n| n.truncate())),
-        );
-    let curve = db.map(|db| thumb(db, stroke, None));
-    let card = div()
-        .flex()
-        .gap(look.space(Space::M))
-        .p(look.space(Space::S))
-        .border(look.hairline)
-        .border_color(outline);
-    if compact {
-        return card
-            .flex_col()
-            .child(
-                div()
-                    .id(id.into())
-                    .cursor_pointer()
-                    .on_click(on_click)
-                    .child(words),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(look.space(Space::M))
-                    .children(curve)
-                    .child(div().flex_1())
-                    .children(controls),
-            )
-            .into_any_element();
-    }
-    card.items_center()
-        .child(
-            div()
-                .id(id.into())
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap(look.space(Space::M))
-                .cursor_pointer()
-                .on_click(on_click)
-                .child(words)
-                .children(curve),
-        )
-        .children(controls)
-        .into_any_element()
-}
-
-/// An empty stage: a dashed place to choose what fills it.
-fn placeholder(
-    id: &'static str,
-    title: Option<&str>,
-    prompt: &str,
-    outline: Option<crate::theme::Hsla>,
-    look: &Look,
-    on_click: impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .flex()
-        .flex_col()
-        .gap(look.spaced(2.0))
-        .p(look.space(Space::S))
-        .border(look.hairline)
-        .border_dashed()
-        .border_color(outline.unwrap_or(look.palette.muted.hsla()))
-        .cursor_pointer()
-        .on_click(on_click)
-        .children(title.map(|t| note(label(t), Tone::Muted, look)))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(look.space(Space::Xs))
-                .text_role(TypeRole::Body, look)
-                .text_color(look.text_color(Tone::Accent))
-                .when(look.icons, |d| {
-                    d.child(
-                        KoanIcon::new(Icon::Add)
-                            .role(TypeRole::Body)
-                            .tone(Tone::Accent),
-                    )
-                })
-                .child(label(prompt)),
-        )
 }
 
 /// A curve as a small line, for a stage's block: 64 × 26, scaled to the
