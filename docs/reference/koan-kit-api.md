@@ -1499,6 +1499,106 @@ slot says where it plays rather than standing still, and its tooltip why.
 pub fn renderer_mark(color: Hsla) -> impl IntoElement
 ```
 
+### components::bars_feed
+
+What moves the playing bars (`PlayingBars`): one feed of bands for the
+whole app, read only while a bar is on screen in a window that shows.
+With none, the source's stream is dropped, so whatever produces the
+bands can park. A hidden window keeps its rows, and with them its slots,
+so the windows' roots say when they hide and show (`bars_visibility`).
+Nothing is polled: the source yields a frame and the follow, on the
+background executor, wakes on it.
+
+Where the renderer draws shaders, each slot is a shader quad, painted
+once by its row and replayed with the row's cached view. The follow
+writes the bands straight into the slots' levels (`BarLevels`), and each
+change wakes the window to present its last frame again: a moving bar
+costs a small encode, never a frame, and still bars cost nothing.
+
+Elsewhere the bars are quads. A row draws an empty slot, which records
+where it was laid out and under which clip, and each window's root paints
+the bars over its content (`paint_bars`), so a frame of the bars redraws
+the root alone, whose content is a cached view and is replayed.
+
+The app says where the bands come from (`install_bars`): a stream with
+an item for every frame of its analyser, the heights, 0 to 1, low band
+to high, where they moved and `None` where they did not. Every frame
+is a moment to stop at once nothing shows, and the gap a glide runs
+over is the gap between frames.
+
+#### `BandSource`
+
+*type alias* · Where the bands come from: asked for a stream when a bar first shows,
+which is dropped when none does.
+
+```rust
+pub type BandSource = Arc<
+    dyn Fn(&mut App) -> BoxStream<'static, Option<[f32; 3]>> + Send + Sync,
+>;
+```
+
+#### `BarsFeed`
+
+*struct* · What a window's root observes: notified when that window's bars move,
+where they are quads.
+
+```rust
+pub struct BarsFeed;
+```
+
+#### `install_bars`
+
+*function* · Sets up the bars' feed, with the bands from `source`.
+
+```rust
+pub fn install_bars(source: BandSource, cx: &mut App)
+```
+
+#### `bars_feed`
+
+*function* · The entity `window`'s root observes to paint its bars again; none where
+the feed was not installed, as in an offscreen render.
+
+```rust
+pub fn bars_feed(window: WindowId, cx: &mut App) -> Option<Entity<BarsFeed>>
+```
+
+#### `bars_visibility`
+
+*function* · `window` was hidden or shown: a hidden window's bars keep nothing
+running, and one showing again starts them, since it replays its rows
+rather than drawing them.
+
+```rust
+pub fn bars_visibility(window: WindowId, shows: bool, cx: &mut App)
+```
+
+#### `bars_prism`
+
+*function* · `window`'s prism, fed the bands while it shows, or none to stop.
+
+```rust
+pub fn bars_prism(window: WindowId, prism: Option<Prism>, cx: &mut App)
+```
+
+#### `live_bars`
+
+*function* · The playing bars in `color`, moved by the feed. Inside an element with
+an id, which keys the slot's state.
+
+```rust
+pub fn live_bars(color: Hsla) -> PlayingBars
+```
+
+#### `paint_bars`
+
+*function* · Paints this window's bars over everything drawn before it, where they
+are quads. Drawn last by a window's root.
+
+```rust
+pub fn paint_bars(cx: &App) -> impl IntoElement + use<>
+```
+
 ### components::button
 
 #### `ButtonKind`
@@ -4860,7 +4960,29 @@ pub struct SyncedLines { /* private fields */ }
 
   What a press on a line does, given its index.
 
+- `pub fn cue(starts: &[f64], position: f64, playing: bool, now: Instant) -> Cue`
+
+  Where lines starting at `starts` seconds stand at `position` seconds
+  in, at `now`.
+
 Implements `RenderOnce`.
+
+#### `Cue`
+
+*struct* · Where a set of timed lines stands at a moment (`SyncedLines::cue`).
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cue {
+    /// The line being sung: the last one started.
+    pub active: Option<usize>,
+    /// When it started, while playing: what `SyncedLines::since` takes.
+    pub since: Option<Instant>,
+    /// How long until the next line starts, while playing: when to look
+    /// again, so following the song costs one wake per line.
+    pub next_in: Option<std::time::Duration>,
+}
+```
 
 ### components::menu
 
@@ -6209,6 +6331,16 @@ pub struct Prism { /* private fields */ }
 
   The mirror ball, as large as it is laid out.
 
+- `pub fn hang_ball(&self)`
+
+  Hangs the ball in the window's top right corner (`BALL_TOP`,
+  `BALL_RIGHT`), where `hung_ball` lays it out: the disco layer's spots
+  wheel out from its centre.
+
+- `pub fn hung_ball(&self, look: &crate::theme::Look) -> impl IntoElement + use<>`
+
+  The ball laid out where `hang_ball` says it hangs, over the window.
+
 Implements `Default`.
 
 #### `Prisms`
@@ -6407,6 +6539,83 @@ pub struct ProgressRow { /* private fields */ }
   A stop button at the bar's end.
 
 Implements `RenderOnce`.
+
+### components::progress_glides
+
+Something's progress, reported now and then (a download, a scan), as
+the `Glide`s its rings, slider and bar are drawn from: each report sets
+where it stands and the rate it moves at, and the GPU fills between
+reports with no frame drawn and nothing read on a timer. Past
+`horizon` with no report, the glides rest where they reckoned rather
+than run on.
+
+#### `ProgressReport`
+
+*struct* · One report: the share done while the whole is known, the share it grows
+by each second, and when.
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProgressReport {
+    pub share: Option<f32>,
+    pub rate: f32,
+    pub at: Instant,
+}
+```
+
+- `pub fn apply(self, glide: &Glide)`
+
+  Into a glide: the share and its rate, or turning while the whole is
+  unknown.
+
+- `pub fn partial(self) -> bool`
+
+  Under way and not all done.
+
+#### `ProgressGlides`
+
+*struct* · One thing's progress as glides: a ring's per colour (a ring writes its
+colour into its glide), a slider's reach and a bar's, each styled by
+what draws it.
+
+```rust
+pub struct ProgressGlides { /* private fields */ }
+```
+
+- `pub fn new(horizon: Duration) -> Self`
+
+  Glides reckoned at most `horizon` past a report: about the gap
+  between a healthy feed's reports.
+
+- `pub fn ring(&mut self, color: Hsla) -> Glide`
+
+  A ring's glide in `color`, made now if none is: a new colour starts
+  where the last report left the others, or turning before any.
+
+- `pub fn reach(&self) -> &Glide`
+
+  A slider's reach (`Slider::reach`).
+
+- `pub fn bar(&self) -> &Glide`
+
+  A bar's (`ProgressBar`).
+
+- `pub fn last(&self) -> Option<ProgressReport>`
+
+  The last report taken.
+
+- `pub fn take(&mut self, report: ProgressReport) -> bool`
+
+  Takes a report into every glide. A share below the last one is the
+  work starting afresh (a download retried): the glides start again
+  from it rather than standing where the last run finished, which a
+  reckoned glide would otherwise hold. Whether it is now partial when
+  it was not, or the other way, or this is the first report: what a
+  page drawing only partial progress must draw again for.
+
+- `pub fn end(&self)`
+
+  It has ended: every glide stops where it stands.
 
 ### components::qr
 
