@@ -1,0 +1,1 @@
+- **koan.rocks says the apps' UI is fast because GPUI draws it on the GPU.**
