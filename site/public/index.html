@@ -66,6 +66,18 @@
       <p class="text-xl/snug">Your player, your server, your remote and your EQ, on every device you listen on.</p>
       <p>One Rust engine runs on macOS, Linux, iPhone, Apple TV, Android, a terminal and a server. It plays folders on
         your computer, a kōan server, or any OpenSubsonic server such as Navidrome.</p>
+      <ul>
+        <li><strong>Bit-perfect and gapless,</strong> where the system allows. The output switches to each track's sample
+          rate.</li>
+        <li><strong>GPU-drawn apps</strong> on macOS, Linux, iPhone and iPad, with Apple TV, Android, a terminal and a server.</li>
+        <li><strong>Folders and a server in one library.</strong> On the desktop, a track you have on disk plays from the
+          file.</li>
+        <li><strong>No signal needed.</strong> A phone fetches the queue ahead and keeps what it plays.</li>
+        <li><strong>EQ and convolution per output,</strong> from AutoEQ or imported from Equalizer APO, CamillaDSP, REW and Roon.</li>
+        <li><strong>Any kōan app controls another,</strong> and Move here brings the queue to the device in your hand.</li>
+        <li><strong>Network amps get the original file</strong> over UPnP.</li>
+        <li><strong>The desktop app can serve its library,</strong> and a QR code signs your phone in.</li>
+      </ul>
       <p class="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
         <a class="rounded-full bg-brand px-5 py-2.5 font-semibold text-bg no-underline hover:text-bg hover:opacity-90"
           href="https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg">Download for Mac</a>
@@ -73,6 +85,44 @@
         <a href="#install">Linux, Android, terminal, server</a>
         <a href="https://demo.koan.rocks">Try the demo</a>
       </p>
+    </section>
+
+    <section class="mx-auto max-w-2xl px-5 pt-8">
+      <p>It's a music player and server, for local collections and remote ones (anything OpenSubsonic). Remote
+        libraries sit behind a fairly aggressive local cache. It handles multi-terabyte libraries with ease and has all
+        the core audio features you'd want, like gapless and bit-perfect output (where the system allows). It's built
+        from 25 years of messing about with music, being annoyed with pretty much everything, and wanting my dream
+        application.</p>
+      <p>The idea is to be fully compatible with the existing ecosystem while bringing the decent UX and modern ideas
+        that professionally made streaming services have. It started as a little cross-platform CLI and TUI app on a
+        Rust core. Now there's a native desktop app for macOS and Linux (no Electron) that links that core directly,
+        iOS and Apple TV apps, an Android app, and a server. The UX takes what I like about Apple Music and fb2k and fixes the things I thought
+        were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.</p>
+
+      <p>I wanted UX that makes it easy as hell to do what you want, while staying SUPER low on resources (and now
+        battery). And I wanted the stuff you don't really see in the self-hosted space: device control and handoff, EQ
+        profiles and convolution, DLNA output (with EQ!), and a cache built for a commuter who often has no signal, so
+        you never have to remember to download your whole queue first. The best of every world, why not?</p>
+      <p>My philosophy is that you should lead with your opinions, but let people customise and tweak them to match
+        theirs.</p>
+      <p>Because it grew organically, and I've insisted on staying compatible with OpenSubsonic, every part works on its
+        own. You can use the macOS app with Navidrome. You can use the server with Arpeggi. Or you can use kōan all the
+        way down and get the non-standard (sorry) features such as remote control. I think a shared standard like
+        OpenSubsonic is incredibly important so everyone plays nicely together, but it shouldn't stop us experimenting
+        to compete with how well the professional streaming platforms integrate.</p>
+      <p>One thing I've noticed: when you mix self-hosted apps with proprietary tech, say AirPlay from the fantastically
+        solid play:Sub, you're treated as a second-class citizen. The audio has to stream over the wire from your phone,
+        which is laggy. With kōan's remote features, the device you send it to plays its own copy.</p>
+      <p>I did use AI-assisted coding for this project. I've been building fairly high-quality software for a
+        <em>loooong</em> time (decades) before AI existed, and I'd like to think the decisions reflect that rather than
+        vibing slop. I probably could have written it myself, but I wanted to step back and be more of an architect,
+        technical lead and product owner than the person typing out the code, as I'm just one person.</p>
+      <p>If it gets traction I'll happily look at more platforms like Android, but I'm already out $99 for an Apple
+        Developer account, so I'm not shelling out for an Android phone just yet. There IS an <a href="https://github.com/radiosilence/koan/releases/latest">APK on GitHub releases</a> that
+        I've got my mates to test sporadically, and it should work decently, however it will lag behind iOS as I can't
+        give it the same amount of TLC. Also apparently you need an actual Android device to sign up to the Play Console
+        etc so I can't release it on the store yet.</p>
+      <p>&mdash; <a href="https://github.com/radiosilence">@radiosilence</a></p>
     </section>
 
     <section id="player" class="mx-auto max-w-2xl scroll-mt-4 px-5 pt-8">
@@ -105,16 +155,6 @@
       </div>
       <button type="button" class="carousel-btn right-1" data-dir="1" aria-label="Next screenshots">›</button>
     </div>
-
-    <section class="mx-auto max-w-2xl px-5 pb-8">
-      <ul>
-        <li><strong>Bit-perfect and gapless,</strong> where the system allows. The output switches to each track's sample
-          rate.</li>
-        <li><strong>Folders and a server in one library.</strong> On the desktop, a track you have on disk plays from the
-          file.</li>
-        <li><strong>No signal needed.</strong> A phone fetches the queue ahead and keeps what it plays.</li>
-      </ul>
-    </section>
 
     <section id="new" class="mx-auto max-w-2xl scroll-mt-4 px-5 py-8">
       <h2>New in the GPUI apps</h2>
