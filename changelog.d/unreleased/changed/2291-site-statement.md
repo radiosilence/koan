@@ -1,0 +1,1 @@
+- **koan.rocks carries the author's statement again, and lists what kōan does under its tagline.**
