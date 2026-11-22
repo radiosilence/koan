@@ -64,7 +64,7 @@ Always:
 | Deployment | A Pulumi component package per service (TypeScript, Zod), deployed by jaritanet to k3s | The service ships how it is run |
 | Tasks, tools, hooks | just, mise, lefthook | The same commands on a laptop and in CI |
 | Lint | clippy, rustfmt, actionlint + shellcheck, oxlint + oxfmt | Machines settle what review would otherwise argue about |
-| TypeScript | Node 24 type stripping, aube, tsc, vitest | Private code needs no build step |
+| TypeScript | TypeScript that Node 24 runs as written (§5), aube, tsc, Zod, vitest | Private code needs no build step |
 | Repo scripts | Python 3 standard library, bash | Nothing to install |
 
 **Not used:** SPA frameworks or bundlers; OpenSSL or native-tls; ORMs; chrono in new code; `lazy_static`/`once_cell` (std has both); compiling inside a Dockerfile.
@@ -104,7 +104,9 @@ ARCHITECTURE.md  docs/                            when there are threads, protoc
 - **Read external formats strictly.** An unknown field is refused with its path, never ignored.
 - **Configuration:** a service reads environment variables once at start into a typed struct, and a missing or malformed value stops it with one line naming the variable. An app people configure by hand layers defaults → `config.toml` → `config.local.toml` → `<APP>_*` variables (figment, `__` for nesting). One function writes config: it routes secrets and machine-specific keys to the local file and leaves comments and untouched keys alone.
 
-## 5. Rust
+## 5. Code
+
+### Rust
 
 - **Edition 2024, resolver 3, the latest stable toolchain** from `mise.toml`; no `rust-version`.
 - **A dependency two crates share is declared once** in `[workspace.dependencies]`, so versions and features cannot drift.
@@ -120,6 +122,16 @@ ARCHITECTURE.md  docs/                            when there are threads, protoc
 - **Statics are `std::sync::LazyLock` and `OnceLock`.**
 - **Every file opens with a `//!` doc** saying what it holds and why it is shaped so. A constant carries the reason for its value (`KEEP_IDLE`, `DRAIN`, `BUSY_TIMEOUT`).
 - **rustfmt defaults.**
+
+### TypeScript
+
+For deployment packages, scripts in a TypeScript repository, and the few browser scripts a web UI needs.
+
+- **Write TypeScript that Node can run as written.** Node 24 strips the types and runs the rest, so nothing needs a build to run. Use erasable syntax only: no `enum`, `namespace`, parameter properties or legacy decorators; use `as const` objects and unions instead. Import types with `import type`, write relative imports with their `.ts` extension, use ES modules (`"type": "module"`), and use no `paths` alias Node cannot resolve. Every tsconfig sets `erasableSyntaxOnly`, `verbatimModuleSyntax` and `rewriteRelativeImportExtensions` (which also allows the `.ts` imports), with `strict`, `noUncheckedIndexedAccess` and `noEmit`. Extending `@tsconfig/node24` and `@tsconfig/node-ts`, as jaritanet does, sets all but the last two. *Why:* the same file then runs in a script, a Pulumi program and a test with no build step, and still compiles when it has to.
+- **Private code runs from source.** A workspace package's `exports` point at `./src/index.ts`. Pulumi runs with `runtime.options.typescript: false`, so Node strips the types itself. A script runs under `node` directly. `tsc` only typechecks.
+- **Published code ships JavaScript,** since Node strips no types under `node_modules`. `tsconfig.build.json` emits `dist/` with declarations and rewrites `./x.ts` imports to `./x.js`.
+- **Browser scripts follow the same rules.** oxc strips their types at build (koan's `build.rs`), not Node.
+- **No `any`.** Prefer `satisfies` and `as const` to casts. Validate input with Zod `strictObject`: a plain object drops unknown keys silently. Lint with oxlint, format with oxfmt, and keep vitest tests beside the source as `*.test.ts`.
 
 ## 6. Data
 
@@ -145,7 +157,7 @@ ARCHITECTURE.md  docs/                            when there are threads, protoc
 ## 8. Web UI
 
 - **The server renders HTML (askama) and Datastar patches it over SSE;** the browser holds no state that matters. `templates/` holds a shell, `pages/`, and a directory of fragments per area.
-- **Script is the exception.** Each file says what it does that HTML and Datastar cannot. Small scripts are plain ES modules; larger ones are erasable-only TypeScript, stripped at build (oxc in `build.rs`) and typechecked in CI. No framework, no bundler, no `node_modules` at run time. A static site ships none.
+- **Script is the exception.** Each file says what it does that HTML and Datastar cannot. Small scripts are plain ES modules; larger ones are TypeScript under §5's rules, stripped at build (oxc in `build.rs`) and typechecked in CI. No framework, no bundler, no `node_modules` at run time. A static site ships none.
 - **Native elements before script:** `<dialog>` opened by `commandfor`/`command="show-modal"` and closed by `closedby="any"` or `<form method="dialog">`; `popover`; `autofocus`.
 - **Links have real `href`s,** and what can work without script does.
 - **An element that starts hidden uses `hidden` with `data-attr:hidden`,** never `data-show`, so it does not flash before Datastar loads.
@@ -282,7 +294,7 @@ One workflow, `.github/workflows/ci-cd.yml`, in two halves, so CD ships exactly 
   src/contract.ts       the shapes the deployer reads (Route, Deployed), declared here rather than imported
   src/versions.ts       APP_VERSION and the images it pins
   ```
-  The constructor takes `z.input<Schema>`, parses it, and returns `{…} satisfies Deployed`. It makes the Deployment, Services, NetworkPolicy, Secrets and volumes, and no Ingress: the deployer owns hostnames, TLS, DNS, OIDC client secrets and generated keys. `@pulumi/*` and `zod` are peer dependencies; TypeScript is `strict` with `noUncheckedIndexedAccess` and `verbatimModuleSyntax`; oxlint, oxfmt, and vitest with Pulumi's mocks.
+  The constructor takes `z.input<Schema>`, parses it, and returns `{…} satisfies Deployed`. It makes the Deployment, Services, NetworkPolicy, Secrets and volumes, and no Ingress: the deployer owns hostnames, TLS, DNS, OIDC client secrets and generated keys. `@pulumi/*` and `zod` are peer dependencies; TypeScript as §5, tested with vitest and Pulumi's mocks.
 - **The pod:** a Deployment. One replica with `strategy: Recreate` when it owns SQLite or a host directory, since a surge would put two writers on it. `runAsNonRoot` with the image's uid, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, every capability dropped (a file capability on the binary where it must bind a low port), `automountServiceAccountToken: false`, `enableServiceLinks: false`. Root only in an init container that chowns a host path, keeping only the capabilities that needs.
 - **Resources:** request the measured working set (p90 over a week); a generous memory limit (at least 1 Gi) as a ceiling for a leak, not a budget; no CPU limit, since CPU throttling only shows up as stalls.
 - **Network policy denies by default.** The HTTP port admits the ingress controller only; a port that believes headers admits its named caller only; metrics admit the scraper only. Egress reaches only what the service talks to: nothing, DNS, or public addresses with the private ranges excluded.
@@ -296,7 +308,7 @@ One workflow, `.github/workflows/ci-cd.yml`, in two halves, so CD ships exactly 
 - **`just` runs every task;** each recipe has a comment, which `just --list` shows. Every repository has `check` (everything CI checks short of the audit and release builds), `fast` (the checks that take seconds: `Cargo.lock` clean, `fmt --check`), `fmt`, `hooks`, `changelog` and `release`, and where they apply `css`, `versions` and `dev`.
 - **lefthook:** pre-commit formats the staged files and restages them; pre-push runs `just fast`. Lint and tests are CI's, so a push never waits on a build.
 - **Agents get the same guard:** a Claude Code `PreToolUse` hook on `git push` runs the formatter and refuses the push if anything changed, rather than amending.
-- **A repository script is Python 3 standard library or bash with `set -euo pipefail`,** opening with a comment on what it does and how to call it.
+- **A repository script is Python 3 standard library, bash with `set -euo pipefail`, or, in a TypeScript repository, TypeScript run by `node` (§5).** It opens with a comment saying what it does and how to call it.
 
 ## 19. Documentation and writing
 
@@ -364,5 +376,6 @@ Run what can be run, read the rest, and report each gap as *rule (§) → file �
 - [ ] MCP: two tools; PREVIEW → CONFIRM on anything outward or irreversible; third-party text marked untrusted; access below admin.
 - [ ] Every parser of untrusted bytes capped and fuzzed; fetched URLs and named paths guarded.
 - [ ] Tests named as sentences; every invariant guarded; tests hermetic; every `#[ignore]` with a reason.
+- [ ] TypeScript: every tsconfig sets `erasableSyntaxOnly`, `verbatimModuleSyntax`, `rewriteRelativeImportExtensions`, `strict` and `noUncheckedIndexedAccess`; no `enum`, `namespace` or parameter properties; private code runs from source with no build.
 - [ ] The image: `scratch` or distroless, digest-pinned, a numeric non-root uid, the labels. The Pulumi package's layout, the pod baseline, no CPU limit, network policy denying by default.
 - [ ] Every doc matches the code.
