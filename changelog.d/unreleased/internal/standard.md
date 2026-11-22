@@ -1,0 +1,1 @@
+- **The kōan standard.** `STANDARD.md` sets down how radiosilence projects are built: the stack, architecture, code, security, performance, testing, CI/CD, releases, deployment and ways of working, each rule with its reason, so a new project can follow it and an existing one can be audited against it.
