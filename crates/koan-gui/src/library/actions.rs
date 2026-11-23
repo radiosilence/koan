@@ -334,6 +334,9 @@ pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'sta
                 let page = view.read(cx);
                 (page.lib().clone(), page.menu_target_ref().clone())
             };
+            if let Some(t) = crate::links::take_pressed(cx) {
+                return menu(m, &lib, t.items, t.album, None, cx);
+            }
             match target {
                 Some(t) => menu(m, &lib, t.items, t.album, t.after, cx),
                 None => m,
@@ -362,6 +365,33 @@ pub fn menu(
     after: After,
     cx: &mut Context<Menu>,
 ) -> Menu {
+    menu_beside(menu, lib, items, album, after, Shown::default(), cx)
+}
+
+/// The verbs already drawn beside a menu, which it leaves out: a record's
+/// or an artist's header shows some, and is the page "open" would go to.
+#[derive(Clone, Copy, Default)]
+pub struct Shown {
+    /// Play, and shuffle.
+    pub play: bool,
+    /// Play next, and add to queue.
+    pub queue: bool,
+    pub favourite: bool,
+    pub share: bool,
+    /// The thing's own page.
+    pub page: bool,
+}
+
+/// `menu`, leaving out what `shown` says is already beside it.
+pub fn menu_beside(
+    menu: Menu,
+    lib: &Lib,
+    items: Arc<[Playable]>,
+    album: Option<i64>,
+    after: After,
+    shown: Shown,
+    cx: &mut Context<Menu>,
+) -> Menu {
     let single = (items.len() == 1).then(|| items[0]);
     let container =
         items.len() > 1 || matches!(single, Some(Playable::Album(_) | Playable::Artist(_)));
@@ -377,17 +407,22 @@ pub fn menu(
         })
     };
 
-    let mut menu = menu
-        .item(verb("play", Icon::Play, |lib, items, cx| {
+    let mut menu = menu;
+    if !shown.play {
+        menu = menu.item(verb("play", Icon::Play, |lib, items, cx| {
             play(lib, items, false, cx).detach()
-        }))
-        .item(verb("play next", Icon::PlayNext, |lib, items, cx| {
-            queue(lib, items, Placement::Next, cx).detach()
-        }))
-        .item(verb("add to queue", Icon::Queue, |lib, items, cx| {
-            queue(lib, items, Placement::Append, cx).detach()
         }));
-    if container {
+    }
+    if !shown.queue {
+        menu = menu
+            .item(verb("play next", Icon::PlayNext, |lib, items, cx| {
+                queue(lib, items, Placement::Next, cx).detach()
+            }))
+            .item(verb("add to queue", Icon::Queue, |lib, items, cx| {
+                queue(lib, items, Placement::Append, cx).detach()
+            }));
+    }
+    if container && !shown.play {
         menu = menu.item(verb("shuffle", Icon::Shuffle, |lib, items, cx| {
             play(lib, items, true, cx).detach()
         }));
@@ -395,29 +430,33 @@ pub fn menu(
     menu = menu
         .separator()
         .item(playlist_entry(lib, items.clone(), after.clone()));
-    menu = menu.item(verb(
-        if favourited {
-            "unfavourite"
-        } else {
-            "favourite"
-        },
-        if favourited {
-            Icon::Favourited
-        } else {
-            Icon::Favourite
-        },
-        favourite,
-    ));
-    let (engine, sets) = (lib.engine.clone(), sources(&items));
-    let unavailable = share_links_unavailable(cx);
-    menu = menu.item(
-        MenuEntry::new("copy share link")
-            .icon(Icon::Share)
-            .disabled(unavailable.is_some())
-            .on_click(move |_, _, cx| copy_share_link(engine.clone(), sets.clone(), None, cx)),
-    );
-    if let Some(why) = unavailable {
-        menu = menu.note(why);
+    if !shown.favourite {
+        menu = menu.item(verb(
+            if favourited {
+                "unfavourite"
+            } else {
+                "favourite"
+            },
+            if favourited {
+                Icon::Favourited
+            } else {
+                Icon::Favourite
+            },
+            favourite,
+        ));
+    }
+    if !shown.share {
+        let (engine, sets) = (lib.engine.clone(), sources(&items));
+        let unavailable = share_links_unavailable(cx);
+        menu = menu.item(
+            MenuEntry::new("copy share link")
+                .icon(Icon::Share)
+                .disabled(unavailable.is_some())
+                .on_click(move |_, _, cx| copy_share_link(engine.clone(), sets.clone(), None, cx)),
+        );
+        if let Some(why) = unavailable {
+            menu = menu.note(why);
+        }
     }
     // Moving the pick's files where a pattern puts them, previewed first. A
     // phone keeps no folders of its own to organise, as on iOS.
@@ -474,12 +513,20 @@ pub fn menu(
                     .on_click(move |_, _, cx| nav.update(cx, |nav, cx| nav.show_info(id, cx))),
             );
         }
-        Some(Playable::Album(id)) => {
+        Some(Playable::Album(id)) if !shown.page => {
             let nav = lib.nav.clone();
             menu =
                 menu.separator()
                     .item(MenuEntry::new("open album").icon(Icon::Album).on_click(
                         move |_, _, cx| nav.update(cx, |nav, cx| nav.open(Page::Album(id), cx)),
+                    ));
+        }
+        Some(Playable::Artist(id)) if !shown.page => {
+            let nav = lib.nav.clone();
+            menu =
+                menu.separator()
+                    .item(MenuEntry::new("open artist").icon(Icon::Artist).on_click(
+                        move |_, _, cx| nav.update(cx, |nav, cx| nav.open(Page::Artist(id), cx)),
                     ));
         }
         _ => {}

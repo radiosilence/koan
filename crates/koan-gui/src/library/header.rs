@@ -1,7 +1,8 @@
 //! The header a record, an artist or a playlist page shares, as the Mac's:
 //! the cover, then the square play and the shuffle beside it, the title with
 //! its detail under it, then the lesser verbs as compact buttons with their
-//! glyphs: play next, queue, copy share link, favourite.
+//! glyphs: play next, queue, copy share link, favourite, and "more" for the
+//! rest of the thing's menu.
 
 use koan_kit::app::*;
 use std::sync::Arc;
@@ -47,10 +48,28 @@ pub fn playable_header(
             ShuffleButton::new("header-shuffle", name.clone())
                 .on_click(move |_, _, cx| actions::play(&shuffle, &[item], true, cx).detach()),
         );
+    // "more": the thing's menu, less what the header already shows.
+    let more = |shown: actions::Shown, window: &mut Window, cx: &mut App| {
+        let lib = lib.clone();
+        div()
+            .koan_menu_on_press("header-more", window, cx, move |m, _, cx| {
+                actions::menu_beside(m, &lib, Arc::from([item]), None, None, shown, cx)
+            })
+            .child(
+                Button::new("header-more-button", ButtonKind::Compact)
+                    .icon(Icon::More)
+                    .label("more"),
+            )
+    };
+    let shown = actions::Shown {
+        play: true,
+        favourite: true,
+        page: true,
+        ..Default::default()
+    };
     // A phone's header keeps the heart and puts the rest under "more", as
     // the iOS app's does: four verbs in a row do not fit its width.
     if crate::theme::Look::of(window, cx).compact {
-        let more = lib.clone();
         return header
             // The heart itself, so it pops and deflates as everywhere else.
             .action(
@@ -62,17 +81,7 @@ pub fn playable_header(
                             .update(cx, |feed, cx| feed.toggle_favourite(item, cx))
                     }),
             )
-            .action(
-                div()
-                    .koan_menu_on_press("header-more", window, cx, move |m, _, cx| {
-                        actions::menu(m, &more, Arc::from([item]), None, Default::default(), cx)
-                    })
-                    .child(
-                        Button::new("header-more-button", ButtonKind::Compact)
-                            .icon(Icon::More)
-                            .label("more"),
-                    ),
-            );
+            .action(more(shown, window, cx));
     }
     header
         .action(
@@ -111,4 +120,13 @@ pub fn playable_header(
                         .update(cx, |feed, cx| feed.toggle_favourite(item, cx))
                 }),
         )
+        .action(more(
+            actions::Shown {
+                queue: true,
+                share: true,
+                ..shown
+            },
+            window,
+            cx,
+        ))
 }

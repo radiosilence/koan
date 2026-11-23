@@ -14,7 +14,7 @@ use crate::components::{
     Badge, BarControl, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry,
     MenuSlot, Slider, TransportMetrics,
 };
-use crate::components::{Inset, Stack};
+use crate::components::{Inset, KoanContextMenu as _, Stack};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::links;
@@ -955,16 +955,37 @@ impl Render for Transport {
                     .flex()
                     .flex_col()
                     .min_w_0()
+                    // The playing track's menu, or the menu of the name the
+                    // press landed on.
+                    .when_some(
+                        self.lib
+                            .clone()
+                            .zip(entry.and_then(|e| e.track_id.map(|track| (track, e.album_id)))),
+                        |d, (lib, (track, album))| {
+                            d.koan_context_menu(
+                                "np-menu",
+                                window,
+                                cx,
+                                playing_menu(lib, track, album),
+                            )
+                        },
+                    )
                     // The title and the record lead to the record, each
                     // credited artist to the artist.
                     .children(entry.map(|e| {
                         let album = e.album_id.map(crate::navigator::Route::Album);
                         let names = links::names(
                             vec![
-                                links::link(
+                                links::link_as(
                                     "np-title".into(),
                                     e.title.clone(),
                                     album,
+                                    e.track_id.map(|track| {
+                                        links::target(
+                                            crate::library::drag::Playable::Track(track),
+                                            e.album_id,
+                                        )
+                                    }),
                                     &self.nav,
                                     p.ink,
                                 )
@@ -1730,6 +1751,22 @@ fn controlled_shown(view: &Devices) -> ControlledShown {
             .map(|d| d.name.clone())
     });
     (view.target.clone(), view.target_reach.clone(), name)
+}
+
+/// The playing track's menu, or, when the press landed on one of its names,
+/// that name's: what the transport's names open on a secondary press.
+fn playing_menu(
+    lib: crate::library::Lib,
+    track: i64,
+    album: Option<i64>,
+) -> impl Fn(ThemeMenu, &mut Window, &mut Context<ThemeMenu>) -> ThemeMenu + 'static {
+    move |m, _, cx| {
+        if let Some(t) = links::take_pressed(cx) {
+            return crate::library::actions::menu(m, &lib, t.items, t.album, None, cx);
+        }
+        let t = links::target(crate::library::drag::Playable::Track(track), album);
+        crate::library::actions::menu(m, &lib, t.items, t.album, None, cx)
+    }
 }
 
 #[cfg(test)]

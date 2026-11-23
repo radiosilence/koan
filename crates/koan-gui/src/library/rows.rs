@@ -183,6 +183,8 @@ pub fn track_row<V: TrackList>(
         || track.credit_differs
         || page_artist.is_some_and(|a| track.artist_id != Some(a));
     let mut detail = div().flex().min_w_0();
+    // A right press on a name in a pick acts on the pick, not the name.
+    let name_menus = !(state.selected && state.drag.items.len() > 1);
     if names_artist {
         detail = detail.children(track.artist_credit.iter().enumerate().map(|(i, part)| {
             let span = div()
@@ -194,6 +196,15 @@ pub fn track_row<V: TrackList>(
                     .cursor_pointer()
                     .hover(|s| s.underline().text_color(p.ink))
                     .on_click(click(RowPart::Artist(artist)))
+                    .when(name_menus, |d| {
+                        d.on_mouse_down(
+                            MouseButton::Right,
+                            crate::links::press(crate::links::target(
+                                Playable::Artist(artist),
+                                None,
+                            )),
+                        )
+                    })
                     .into_any_element(),
                 None => span.into_any_element(),
             }
@@ -210,6 +221,12 @@ pub fn track_row<V: TrackList>(
                     .cursor_pointer()
                     .hover(|s| s.underline().text_color(p.ink))
                     .on_click(click(RowPart::Album(album)))
+                    .when(name_menus, |d| {
+                        d.on_mouse_down(
+                            MouseButton::Right,
+                            crate::links::press(crate::links::target(Playable::Album(album), None)),
+                        )
+                    })
                     .min_w_0()
                     .truncate()
                     .child(track.album_title.clone()),

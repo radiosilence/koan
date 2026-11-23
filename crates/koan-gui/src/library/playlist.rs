@@ -1206,6 +1206,10 @@ impl PlaylistPage {
 /// The list's one context menu: play from the row, the library's verbs for
 /// the tracks, then what can be done to the entries here.
 fn row_menu(menu: Menu, view: &Entity<PlaylistPage>, cx: &mut Context<Menu>) -> Menu {
+    let lib = view.read(cx).lib.clone();
+    if let Some(t) = crate::links::take_pressed(cx) {
+        return actions::menu(menu, &lib, t.items, t.album, None, cx);
+    }
     let (lib, id, fillable, tracks, album, first, entries) = {
         let this = view.read(cx);
         let Some(row) = this.menu_row.filter(|&row| row < this.rows.len()) else {
