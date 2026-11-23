@@ -85,8 +85,15 @@ pub fn press(thing: MenuTarget) -> impl Fn(&MouseDownEvent, &mut Window, &mut Ap
     move |_, _, cx| cx.default_global::<Pressed>().0 = Some(thing.clone())
 }
 
-/// The name a secondary press landed on, taken by the menu it opened. Every
-/// element drawing names takes it in its menu, so none is left for the next.
+/// Forgets the name a press landed on: the window's root, as every
+/// secondary press begins, so one no menu took is not taken by the next.
+pub fn forget_pressed(cx: &mut App) {
+    if cx.has_global::<Pressed>() {
+        cx.global_mut::<Pressed>().0 = None;
+    }
+}
+
+/// The name a secondary press landed on, taken by the menu it opened.
 pub fn take_pressed(cx: &mut App) -> Option<MenuTarget> {
     cx.try_global::<Pressed>()?;
     cx.global_mut::<Pressed>().0.take()

@@ -525,6 +525,13 @@ impl Render for WindowRoot {
         div()
             .relative()
             .size_full()
+            // A name a right press lands on notes itself for the menu it
+            // opens; one no menu took is forgotten at the next press.
+            .capture_any_mouse_down(|e: &MouseDownEvent, _, cx| {
+                if e.button == MouseButton::Right {
+                    crate::links::forget_pressed(cx);
+                }
+            })
             .child(div().absolute().size_full().map(|d| {
                 if self.opaque {
                     d.bg(Look::of(window, cx).palette.bg.hsla())
