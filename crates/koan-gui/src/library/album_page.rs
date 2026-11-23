@@ -360,6 +360,13 @@ impl AlbumPage {
                             .on_click(move |_, _, cx| {
                                 nav.update(cx, |n, cx| n.open(Page::Artist(artist), cx))
                             })
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                crate::links::press(crate::links::target(
+                                    Playable::Artist(artist),
+                                    None,
+                                )),
+                            )
                             .into_any_element()
                     }
                     None => span.into_any_element(),

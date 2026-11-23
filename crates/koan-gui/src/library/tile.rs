@@ -15,7 +15,7 @@ use koan_runtime::{Album, AlbumOnDevice};
 
 use super::actions;
 use super::covers::Sleeve;
-use super::drag::PlayableDrag;
+use super::drag::{Playable, PlayableDrag};
 use super::tokens::{Paint, Type};
 use crate::components::{
     Arrival, TileArt, TileGrid, TileMark, TileSleeve, origin_probe, text_widths,
@@ -463,6 +463,20 @@ impl<V: TileHost> Render for TileView<V> {
             .child(credit)
             .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
             .on_mouse_down(MouseButton::Right, actions::mark(self.host.clone(), target))
+            // An artist's name gives the artist's menu, as a link does.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                    if this.state.selecting {
+                        return;
+                    }
+                    if let Some(Part::Artist(artist)) = this.part_at(e.position, window, cx) {
+                        crate::links::press(crate::links::target(Playable::Artist(artist), None))(
+                            e, window, cx,
+                        );
+                    }
+                }),
+            )
     }
 }
 

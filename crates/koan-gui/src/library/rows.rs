@@ -194,6 +194,10 @@ pub fn track_row<V: TrackList>(
                     .cursor_pointer()
                     .hover(|s| s.underline().text_color(p.ink))
                     .on_click(click(RowPart::Artist(artist)))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        crate::links::press(crate::links::target(Playable::Artist(artist), None)),
+                    )
                     .into_any_element(),
                 None => span.into_any_element(),
             }
@@ -210,6 +214,10 @@ pub fn track_row<V: TrackList>(
                     .cursor_pointer()
                     .hover(|s| s.underline().text_color(p.ink))
                     .on_click(click(RowPart::Album(album)))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        crate::links::press(crate::links::target(Playable::Album(album), None)),
+                    )
                     .min_w_0()
                     .truncate()
                     .child(track.album_title.clone()),

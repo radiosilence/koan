@@ -88,6 +88,11 @@ impl Transport {
         let album_id = entry.and_then(|e| e.album_id).unwrap_or(0) as u64;
         let track_id = entry.and_then(|e| e.track_id).unwrap_or(0) as u64;
         let weak = cx.entity().downgrade();
+        let menu = self
+            .lib
+            .clone()
+            .zip(entry.and_then(|e| e.track_id.map(|track| (track, e.album_id))))
+            .map(|(lib, (track, album))| super::playing_menu(lib, track, album));
         let controls = crate::components::ControlGroup::new()
             // Where the music plays, a thumb away on every page, as on iOS.
             .control(self.control_button(&p, window, cx))
@@ -123,6 +128,10 @@ impl Transport {
                 div()
                     .flex_1()
                     .min_w_0()
+                    // Held, the playing track's menu, as a row's hold opens.
+                    .when_some(menu, |d, menu| {
+                        d.koan_context_menu("mini-menu", window, cx, menu)
+                    })
                     .child(crate::components::FadeIn::new(
                         ElementId::NamedInteger("mini-titles".into(), track_id),
                         crate::components::TwoLines::new(title)
@@ -238,46 +247,59 @@ impl Transport {
                 &self.nav,
                 p.ink,
             );
+            // A held name opens its own menu, held elsewhere the track's.
+            let menu = self
+                .lib
+                .clone()
+                .zip(e.track_id)
+                .map(|(lib, track)| super::playing_menu(lib, track, e.album_id));
             Stack::column()
                 .space(Space::S)
                 .w_full()
                 .children(actions.take())
                 .child(
-                    Stack::column()
-                        .space(Space::Xs)
+                    div()
                         .w_full()
-                        // The title opens the track's details, as on iOS.
+                        .when_some(menu, |d, menu| {
+                            d.koan_context_menu("np-full-menu", window, cx, menu)
+                        })
                         .child(
-                            Text::new(TypeRole::TitleSmall)
-                                .tone(Tone::Strong)
-                                .id("np-full-title")
+                            Stack::column()
+                                .space(Space::Xs)
                                 .w_full()
-                                .truncate()
-                                .child(e.title.clone())
-                                .when_some(e.track_id, |d, track| {
-                                    d.on_click(
-                                        cx.listener(move |_, _, _, cx| cx.emit(ShowInfo(track))),
-                                    )
-                                }),
-                        )
-                        .child(links::names(credit, TypeRole::Body, p.ink, &p))
-                        .when(!e.album.is_empty(), |d| {
-                            d.child(links::names(
-                                vec![
-                                    links::link(
-                                        "np-full-album".into(),
-                                        e.album.clone(),
-                                        album,
-                                        &self.nav,
+                                // The title opens the track's details, as on iOS.
+                                .child(
+                                    Text::new(TypeRole::TitleSmall)
+                                        .tone(Tone::Strong)
+                                        .id("np-full-title")
+                                        .w_full()
+                                        .truncate()
+                                        .child(e.title.clone())
+                                        .when_some(e.track_id, |d, track| {
+                                            d.on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.emit(ShowInfo(track))
+                                            }))
+                                        }),
+                                )
+                                .child(links::names(credit, TypeRole::Body, p.ink, &p))
+                                .when(!e.album.is_empty(), |d| {
+                                    d.child(links::names(
+                                        vec![
+                                            links::link(
+                                                "np-full-album".into(),
+                                                e.album.clone(),
+                                                album,
+                                                &self.nav,
+                                                p.muted,
+                                            )
+                                            .into_any_element(),
+                                        ],
+                                        TypeRole::Meta,
                                         p.muted,
-                                    )
-                                    .into_any_element(),
-                                ],
-                                TypeRole::Meta,
-                                p.muted,
-                                &p,
-                            ))
-                        }),
+                                        &p,
+                                    ))
+                                }),
+                        ),
                 )
         });
         let play_pause = Button::icon_outlined(

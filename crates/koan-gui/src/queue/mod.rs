@@ -1226,6 +1226,14 @@ impl QueueView {
 /// on their tracks: a playlist to add them to, a favourite, organising,
 /// their record, their files on this device, a share link.
 fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut Context<Menu>) -> Menu {
+    let lib = view.read(cx).lib.as_ref().map(|(lib, _)| lib.clone());
+    let menu = match lib {
+        Some(lib) => match links::pressed_menu(menu, &lib, cx) {
+            Ok(menu) => return menu,
+            Err(menu) => menu,
+        },
+        None => menu,
+    };
     let this = view.read(cx);
     let Some(row) = this.menu_row.filter(|&row| row < this.rows(cx).len()) else {
         return menu;
