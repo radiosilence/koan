@@ -291,6 +291,19 @@ impl SubsonicError {
     fn generic(msg: impl Into<String>) -> Self {
         Self::new(SubsonicErrorCode::Generic, msg)
     }
+
+    /// A playlist write's failure: a track or entry gone between being
+    /// resolved and being written is the client's to hear, as GraphQL's
+    /// `playlist_write_error` says it; anything else is internal.
+    fn playlist_write(e: koan_core::db::connection::DbError) -> Self {
+        use koan_core::db::connection::DbError;
+        match e {
+            DbError::MissingTracks(_) | DbError::MissingEntry(_) => {
+                Self::new(SubsonicErrorCode::NotFound, e.to_string())
+            }
+            e => Self::internal(e),
+        }
+    }
 }
 
 impl From<rusqlite::Error> for SubsonicError {
@@ -5057,7 +5070,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
                         }
                         queries::set_playlist_tracks(&db.conn, id, &track_ids)
-                            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                            .map_err(SubsonicError::playlist_write)?;
                         Ok(id)
                     }
                     None => {
@@ -5067,7 +5080,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                         let id = queries::create_playlist(&db.conn, user, name, None)
                             .map_err(|e| SubsonicError::internal(e.to_string()))?;
                         queries::add_tracks(&db.conn, id, &track_ids)
-                            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                            .map_err(SubsonicError::playlist_write)?;
                         Ok::<_, SubsonicError>(id)
                     }
                 }
@@ -5132,12 +5145,12 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                         }
                     }
                     queries::set_playlist_tracks(&db.conn, id, &ids)
-                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                        .map_err(SubsonicError::playlist_write)?;
                 }
 
                 if !added.is_empty() {
                     queries::add_tracks(&db.conn, id, &added)
-                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                        .map_err(SubsonicError::playlist_write)?;
                 }
                 Ok::<_, SubsonicError>(())
             })?;

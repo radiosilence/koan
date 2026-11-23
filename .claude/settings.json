@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "input=$(cat); if command -v jq >/dev/null 2>&1; then cmd=$(printf '%s' \"$input\" | jq -r '.tool_input.command // empty'); else cmd=$input; fi; case \"$cmd\" in *'git push'*) ;; *) exit 0 ;; esac; cd \"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}\" || exit 2; if ! cargo fmt --all >&2; then echo 'Pre-push: cargo fmt failed; fix that before pushing.' >&2; exit 2; fi; if ! git diff --quiet; then { echo 'Pre-push: unstaged changes after cargo fmt in:'; git diff --name-only; echo 'Review and commit them yourself, then push again. Refusing to commit or amend.'; } >&2; exit 2; fi"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-push.sh"
           }
         ]
       }
