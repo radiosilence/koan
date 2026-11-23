@@ -924,7 +924,6 @@ fn fn_signature(vis: &Visibility, sig: &syn::Signature) -> String {
                     i.mutability = None;
                 }
             }
-            _ => {}
         }
     }
     let f = syn::ItemFn {
