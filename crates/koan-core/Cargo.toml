@@ -15,7 +15,7 @@ argon2 = "0.6"
 base64 = "0.23"
 koan-relay-client = { workspace = true }
 hex = "0.4"
-jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "12", features = ["aws_lc_rs"] }
 pem = "4"
 ring = "0.17"
 subtle = "2"
