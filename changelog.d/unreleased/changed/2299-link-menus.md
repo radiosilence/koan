@@ -1,0 +1,1 @@
+- **Names open their own menus.** In the desktop app a right click on a linked record or artist, in the queue, the transport, Now Playing or a library row, opens that record's or artist's context menu; the playing track's title opens the track's. Record and artist pages have ⋯ in their header for the rest of their menu.
