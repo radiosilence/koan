@@ -1,0 +1,1 @@
+- **koan.rocks hero image.** The shadows under the desktop window and the phone fade out instead of ending at the image's edge.
