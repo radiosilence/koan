@@ -6,7 +6,8 @@
     chrome --headless --hide-scrollbars --force-device-scale-factor=2 --window-size=1600,1000 \
       --default-background-color=00000000 --allow-file-access-from-files --screenshot=hero.png "file://$PWD/src/hero.html"
   At phone widths the page shows public/screens/hero-narrow.webp instead: the same command with --window-size=780,900
-  and #narrow on the URL.
+  and #narrow on the URL. Each picture keeps its shadow's blur plus offset clear of the canvas edges it does not run
+  off, or the screenshot cuts the shadow.
 -->
 <html lang="en-GB">
 <head>
@@ -29,18 +30,18 @@
     }
 
     .mac {
-      left: 20px;
-      top: 150px;
-      width: 1230px;
+      left: 118px;
+      top: 166px;
+      width: 1082px;
       border-radius: 16px;
       box-shadow: 0 40px 100px rgb(0 0 0 / 0.6);
     }
 
     .phone {
-      left: 1180px;
-      top: 60px;
-      width: 390px;
-      border-radius: 58px;
+      left: 1139px;
+      top: 87px;
+      width: 343px;
+      border-radius: 51px;
       border: 1px solid rgb(255 255 255 / 0.14);
       box-shadow: 0 40px 90px rgb(0 0 0 / 0.65);
     }
@@ -51,16 +52,18 @@
     }
 
     .narrow .mac {
-      left: 16px;
-      top: 40px;
+      left: 72px;
+      top: 110px;
       width: 1130px;
+      box-shadow: 0 30px 70px rgb(0 0 0 / 0.6);
     }
 
     .narrow .phone {
-      left: 370px;
-      top: 90px;
-      width: 372px;
-      border-radius: 54px;
+      left: 376px;
+      top: 66px;
+      width: 340px;
+      border-radius: 50px;
+      box-shadow: 0 30px 60px rgb(0 0 0 / 0.65);
     }
   </style>
 </head>
