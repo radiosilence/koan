@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.73.1
+
+### Security
+
+- **The Subsonic API no longer shows clients database and file errors.** A failure inside the server is logged in full and answered with "Internal error", as GraphQL already did, since SQLite's errors quote the failing statement and I/O errors quote paths on the host.
+- **`url` moves to 2.5.9.** 2.5.8 has RUSTSEC-2026-0592, a stack overflow in `Url::origin()`; `form_urlencoded` moves to 1.2.3 with it.
+
+### Changed
+
+- **koan.rocks carries the author's statement again, and lists what kōan does under its tagline.**
+- **koan.rocks says the apps' UI is fast because GPUI draws it on the GPU.**
+- **koan.rocks mentions waking an Apple TV from standby to play on it.**
+
+### Internal
+
+- **The kōan standard.** `STANDARD.md` sets down how radiosilence projects are built: the stack, architecture, code, security, performance, testing, CI/CD, releases, deployment and ways of working, each rule with its reason, so a new project can follow it and an existing one can be audited against it.
+- **The agents' pre-push hook now runs.** It read the command from a `$TOOL_INPUT` variable Claude Code never sets and refused with an exit status that does not block; it now reads the call from stdin and blocks a `git push` that `cargo fmt` would change.
+- **The design docs, CONTRIBUTING, CLAUDE.md and ARCHITECTURE.md say what the code does.** Frost is the one blur, `Page`'s margin is 16, sleeves enter the atlas up to 8 MiB a frame, `VizSnapshot` is an `RwLock`, the crate list has eight crates, and the SwiftUI guidance names the tvOS app.
+
 ## 0.73.0
 
 ### Added
