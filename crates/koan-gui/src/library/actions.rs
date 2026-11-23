@@ -334,10 +334,9 @@ pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'sta
                 let page = view.read(cx);
                 (page.lib().clone(), page.menu_target_ref().clone())
             };
-            let m = match crate::links::pressed_menu(m, &lib, cx) {
-                Ok(m) => return m,
-                Err(m) => m,
-            };
+            if let Some(t) = crate::links::take_pressed(cx) {
+                return menu(m, &lib, t.items, t.album, None, cx);
+            }
             match target {
                 Some(t) => menu(m, &lib, t.items, t.album, t.after, cx),
                 None => m,

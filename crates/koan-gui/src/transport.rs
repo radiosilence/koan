@@ -1761,10 +1761,9 @@ fn playing_menu(
     album: Option<i64>,
 ) -> impl Fn(ThemeMenu, &mut Window, &mut Context<ThemeMenu>) -> ThemeMenu + 'static {
     move |m, _, cx| {
-        let m = match links::pressed_menu(m, &lib, cx) {
-            Ok(m) => return m,
-            Err(m) => m,
-        };
+        if let Some(t) = links::take_pressed(cx) {
+            return crate::library::actions::menu(m, &lib, t.items, t.album, None, cx);
+        }
         let t = links::target(crate::library::drag::Playable::Track(track), album);
         crate::library::actions::menu(m, &lib, t.items, t.album, None, cx)
     }

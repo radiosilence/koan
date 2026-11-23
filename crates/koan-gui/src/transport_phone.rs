@@ -5,7 +5,6 @@
 //! the seek bar, the controls).
 
 use super::*;
-use crate::components::KoanContextMenu as _;
 use crate::components::KoanInsets as _;
 use crate::components::{Inset, Stack, Text};
 use crate::theme::{Space, Tone};
