@@ -53,7 +53,7 @@ Analyzer Thread ("viz-analyzer") ◄──VizBuffer──  Decode Thread
 | Atomics (position, state, samples_played) | `AtomicU8/U64/Bool` Relaxed | Hot path, no contention |
 | Complex shared state (playlist, track info) | `parking_lot::RwLock` | Faster than std, no poisoning |
 | Viz samples (decode→analyzer) | `VizBuffer` (`parking_lot::Mutex`) | Ring of f32 for FFT |
-| Analysis output (analyzer→TUI) | `VizSnapshot` (`parking_lot::Mutex`) | Atomic snapshot |
+| Analysis output (analyzer→TUI) | `VizSnapshot` (`parking_lot::RwLock`) | Atomic snapshot |
 | Parallel work (scan, remote sync) | `rayon` | Work-stealing thread pool |
 
 ### Key data flow
@@ -163,7 +163,7 @@ The Swift bindings are generated from a built koan-ffi: `swift-bindings` (a host
 
 The desktop app's dev bundle is signed with a self-signed certificate — `just signing-cert` creates it, once. Without it the bundle is ad-hoc signed, which derives its identity from the binary's own hash: every rebuild is a different application to macOS, so TCC permissions are forgotten each time. It buys nothing against Gatekeeper, which wants Developer ID and notarisation.
 
-Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git push` and refuses the push if it changed anything. Clippy and the tests are CI's, so a push is never held up running them locally.
+Pre-push hook (`.claude/settings.json`, `.claude/hooks/pre-push.sh`): a `PreToolUse` hook on Bash reads the command and the session's directory from its JSON on stdin and, on a `git push` (as a command, not the words in a grep or a message), runs `cargo fmt --all` in the tree being pushed (the session's worktree, or a leading `cd dir &&` or `git -C dir`) and blocks the push (exit 2, the files on stderr) if that tree then has unstaged changes. It never commits or amends; commit the formatting yourself. Clippy and the tests are CI's, so a push is never held up running them locally.
 
 `deploy/pulumi/package.json`'s `version` and `deploy/pulumi/src/versions.ts`'s `APP_VERSION` move with the workspace version in `Cargo.toml`; `check-version` in CI fails a build where they drift.
 
@@ -349,7 +349,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `library/tokens.rs`, `library/format.rs` | The theme as the library pages draw it (`Paint`, text in a role); figures as the Mac app writes them |
 | `library/stage.rs` | The library's part of the stage, for the shell: the page for an album, artist or track route, and a track's details over it |
 | `library/nav.rs` | Each listing's scroll and anchor, and the track whose details are open, kept beside the navigator, which every move goes to |
-| `library/covers.rs` | Library artwork: bytes on disk once per record (the platform cache, per configuration for any but the person's own), bitmaps per record and draw size, held to what the lists ask for and a screen more, each eviction dropping the GPU texture. A fetch lane and a decode lane take the most urgent job each time; lists replace their requests as they scroll (`request`). Decoded sleeves enter the atlas about 2 MB a frame (`admit`), drawn as their average colour meanwhile. Generations and `art_evictions` keep a reused row id from showing another record's sleeve |
+| `library/covers.rs` | Library artwork: bytes on disk once per record (the platform cache, per configuration for any but the person's own), bitmaps per record and draw size, held to what the lists ask for and a screen more, each eviction dropping the GPU texture. A fetch lane and a decode lane take the most urgent job each time; lists replace their requests as they scroll (`request`). Decoded sleeves enter the atlas up to 8 MiB a frame (`UPLOAD_BYTES_PER_FRAME`, `admit`), drawn as their average colour meanwhile. Generations and `art_evictions` keep a reused row id from showing another record's sleeve |
 | `library/albums.rs` | The album grid: a uniform list of rows of tiles, aiming the cover cache from the scroll's heading (the Mac grid's `aim`), scroll kept across visits and column changes |
 | `library/tile.rs` | One record's tile, shared by the grid and the artist page: a cached view with one interactive element, telling its parts apart by position, its strings made once per listing |
 | `library/rows.rs` | One track's row, shared by the track browser, record page and artist page, on the Mac's row metrics |

@@ -1,0 +1,1 @@
+- **The agents' pre-push hook now runs.** It read the command from a `$TOOL_INPUT` variable Claude Code never sets and refused with an exit status that does not block; it now reads the call from stdin and blocks a `git push` that `cargo fmt` would change.

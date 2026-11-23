@@ -1,0 +1,1 @@
+- **The design docs, CONTRIBUTING, CLAUDE.md and ARCHITECTURE.md say what the code does.** Frost is the one blur, `Page`'s margin is 16, sleeves enter the atlas up to 8 MiB a frame, `VizSnapshot` is an `RwLock`, the crate list has eight crates, and the SwiftUI guidance names the tvOS app.
