@@ -16,7 +16,7 @@ use axum::response::Response;
 use koan_core::auth::Role;
 use koan_core::db::queries;
 
-use super::{UiState, events, open, patch};
+use super::{UiState, events, open};
 use crate::auth::AuthUser;
 use crate::html::{Html, Render};
 use crate::share::blocking;
@@ -165,10 +165,7 @@ pub(super) async fn toggle(
     })
     .await;
     match done {
-        Some(Ok(())) => events(vec![patch(
-            &heart(kind, id, on, false),
-            Some((&selector, "outer")),
-        )]),
+        Some(Ok(())) => events([heart(kind, id, on, false).patch().selector(selector).into()]),
         Some(Err(e)) => {
             log::info!("web UI: favourite {} {id}: {e}", kind.as_str());
             events(Vec::new())

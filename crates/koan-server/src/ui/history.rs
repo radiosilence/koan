@@ -199,11 +199,9 @@ pub(super) async fn forget(
     .await;
     match found {
         Some(plays) => events(vec![
-            patch(&list(&plays, page, zone(&headers)), None),
-            patch("<div id=history-result></div>", None),
-            axum::response::sse::Event::default()
-                .event("datastar-patch-signals")
-                .data("signals {\"forget\":[]}"),
+            patch(&list(&plays, page, zone(&headers))),
+            patch("<div id=history-result></div>"),
+            askama_datastar::PatchSignals::new(r#"{"forget":[]}"#).into(),
         ]),
         None => {
             let html = Failed {
@@ -212,7 +210,7 @@ pub(super) async fn forget(
                 message: "Those plays could not be forgotten.",
             }
             .html();
-            events(vec![patch(&html, None)])
+            events(vec![patch(&html)])
         }
     }
 }

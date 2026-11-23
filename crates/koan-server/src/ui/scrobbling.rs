@@ -7,7 +7,6 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use axum::response::sse::Event;
 use koan_core::db::queries::scrobbling::{self, LASTFM, LISTENBRAINZ, ScrobbleService};
 use koan_core::scrobbling::lastfm;
 
@@ -188,10 +187,11 @@ pub(super) async fn lastfm_disconnect(
     if done.is_none() {
         return failed_in("lastfm-result", "The connection could not be removed.");
     }
-    events(vec![patch(
-        &lastfm_section(None, true, Some("Disconnected.")),
+    events(vec![patch(&lastfm_section(
         None,
-    )])
+        true,
+        Some("Disconnected."),
+    ))])
 }
 
 fn failed(message: &str) -> Response {
@@ -205,7 +205,7 @@ fn failed_in(id: &str, message: &str) -> Response {
         message,
     }
     .html();
-    events(vec![patch(&html, None)])
+    events(vec![patch(&html)])
 }
 
 /// Datastar posts its signals as JSON; the token is `lbtoken`.
@@ -254,10 +254,8 @@ pub(super) async fn connect(
         "Connected.".to_owned()
     };
     events(vec![
-        patch(&section(Some(&service), Some(&message)), None),
-        Event::default()
-            .event("datastar-patch-signals")
-            .data("signals {\"lbtoken\":\"\"}"),
+        patch(&section(Some(&service), Some(&message))),
+        askama_datastar::PatchSignals::new(r#"{"lbtoken":""}"#).into(),
     ])
 }
 
@@ -273,5 +271,5 @@ pub(super) async fn disconnect(
     if done.is_none() {
         return failed("The connection could not be removed.");
     }
-    events(vec![patch(&section(None, Some("Disconnected.")), None)])
+    events(vec![patch(&section(None, Some("Disconnected.")))])
 }

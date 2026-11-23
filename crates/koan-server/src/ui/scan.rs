@@ -4,14 +4,11 @@
 //! scans show beside them. The page keeps a stream open that shows each scan
 //! as it starts, moves and ends, whoever started it.
 
-use std::convert::Infallible;
-
 use askama::Template;
 use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{HeaderValue, StatusCode, header};
-use axum::response::sse::{KeepAlive, Sse};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use koan_core::auth::Role;
 
@@ -135,7 +132,7 @@ fn follow(jobs: JobRegistry, until_idle: bool) -> Response {
             let now = jobs.current(&KINDS);
             let html = status(now.as_ref(), false);
             if html != shown {
-                yield Ok::<_, Infallible>(patch(&html, None));
+                yield patch(&html);
                 shown = html;
             }
             let idle = now.is_none_or(|j| j.state != JobState::Running);
@@ -144,12 +141,7 @@ fn follow(jobs: JobRegistry, until_idle: bool) -> Response {
             }
         }
     };
-    let mut resp = Sse::new(stream)
-        .keep_alive(KeepAlive::default())
-        .into_response();
-    resp.headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    resp
+    askama_datastar::stream(stream)
 }
 
 /// Start a scan, or join the one of the same kind running, and follow it.
@@ -168,7 +160,7 @@ pub(super) async fn start(
         .unwrap_or(false);
     match start_scan(&s.jobs, s.pool.clone(), reread) {
         Ok(_) => follow(s.jobs.clone(), true),
-        Err(e) => events(vec![patch(&Refused { error: &e }.html(), None)]),
+        Err(e) => events(vec![patch(&Refused { error: &e }.html())]),
     }
 }
 

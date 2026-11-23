@@ -7,14 +7,12 @@
 //!
 //! Transcodes are not listed: they are encoded as they stream and never kept.
 
-use std::convert::Infallible;
 use std::time::{Duration, SystemTime};
 
 use askama::Template;
 use axum::Extension;
 use axum::extract::State;
-use axum::http::{HeaderValue, StatusCode, header};
-use axum::response::sse::{KeepAlive, Sse};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
 use super::{UiState, events, patch};
@@ -216,7 +214,7 @@ pub(super) async fn watch(
                 break;
             };
             if html != shown {
-                yield Ok::<_, Infallible>(patch(&html, None));
+                yield patch(&html);
                 shown = html;
             }
             tokio::time::sleep(PATCH_EVERY).await;
@@ -229,12 +227,7 @@ pub(super) async fn watch(
             }
         }
     };
-    let mut resp = Sse::new(stream)
-        .keep_alive(KeepAlive::default())
-        .into_response();
-    resp.headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    resp
+    askama_datastar::stream(stream)
 }
 
 /// Removes every kept cover. The page asked first, naming how many.
@@ -252,7 +245,7 @@ pub(super) async fn clear(
     })
     .await
     .unwrap_or_default();
-    events(vec![patch(&html, None)])
+    events(vec![patch(&html)])
 }
 
 /// Starts a warm pass now.
