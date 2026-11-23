@@ -1,0 +1,1 @@
+- **The Subsonic API no longer shows clients database and file errors.** A failure inside the server is logged in full and answered with "Internal error", as GraphQL already did, since SQLite's errors quote the failing statement and I/O errors quote paths on the host.

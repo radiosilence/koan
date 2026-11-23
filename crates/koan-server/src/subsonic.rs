@@ -136,9 +136,7 @@ impl AppState {
     }
 
     fn open_db(&self) -> Result<Handle<'_>, SubsonicError> {
-        self.pool
-            .get()
-            .map_err(|e| SubsonicError::from(e.to_string()))
+        self.pool.get().map_err(SubsonicError::internal)
     }
 
     /// When the library last changed, in milliseconds: the later of the
@@ -280,20 +278,24 @@ impl SubsonicError {
         )
     }
 
-    fn internal(msg: impl Into<String>) -> Self {
-        Self::new(SubsonicErrorCode::Generic, msg)
+    /// A failure the client can do nothing about: the cause is logged and
+    /// the client told only that it happened. SQLite's errors quote the
+    /// failing statement and I/O errors quote absolute paths, a map of the
+    /// host for whoever asked; GraphQL's `internal_error` keeps the same rule.
+    fn internal(cause: impl std::fmt::Display) -> Self {
+        log::error!("subsonic: {cause}");
+        Self::new(SubsonicErrorCode::Generic, "Internal error")
     }
-}
 
-impl From<String> for SubsonicError {
-    fn from(s: String) -> Self {
-        Self::new(SubsonicErrorCode::Generic, s)
+    /// A generic failure whose message was written for the client.
+    fn generic(msg: impl Into<String>) -> Self {
+        Self::new(SubsonicErrorCode::Generic, msg)
     }
 }
 
 impl From<rusqlite::Error> for SubsonicError {
     fn from(e: rusqlite::Error) -> Self {
-        Self::internal(e.to_string())
+        Self::internal(e)
     }
 }
 
@@ -3219,7 +3221,7 @@ async fn stream_inner(
             // its start: a client that asked for an offset would show one
             // position and play another.
             if plan.offset_secs > 0.0 {
-                return Err(SubsonicError::internal(
+                return Err(SubsonicError::generic(
                     "the stream could not be transcoded from an offset; try again",
                 ));
             }
@@ -3328,7 +3330,7 @@ async fn proxy_stream_from_upstream(
     // account's credentials: never let it reach the client or the log.
     let upstream_resp = req.send().await.map_err(|e| {
         log::warn!("stream proxy: upstream request failed: {}", e.without_url());
-        SubsonicError::internal("Upstream server unavailable")
+        SubsonicError::generic("Upstream server unavailable")
     })?;
 
     let status = upstream_resp.status();
@@ -3844,7 +3846,7 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
                 )) if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY => {
                     Err(SubsonicError::not_found("Track"))
                 }
-                Err(e) => Err(SubsonicError::from(format!("Database error: {}", e))),
+                Err(e) => Err(SubsonicError::internal(e)),
             }
         })
     })
@@ -4027,8 +4029,9 @@ async fn koan_scrobbling_connect(
             let pasted = form
                 .get("token")
                 .ok_or_else(|| SubsonicError::missing_param("token"))?;
+            // Each `ConnectError` is written for the person who pasted the token.
             let refused =
-                |e: koan_core::scrobbling::ConnectError| SubsonicError::internal(e.to_string());
+                |e: koan_core::scrobbling::ConnectError| SubsonicError::generic(e.to_string());
             let (token, name) =
                 koan_core::scrobbling::check_listenbrainz_token(pasted).map_err(refused)?;
             let db = state.open_db()?;
@@ -4500,7 +4503,7 @@ async fn koan_dsp_file_upload(
         .await
     };
     let Ok((json, caller)) = asked else {
-        return SubsonicResponse::error(false, &SubsonicError::internal("upload failed"));
+        return SubsonicResponse::error(false, &SubsonicError::generic("upload failed"));
     };
     let (user, username) = match caller {
         Ok(c) => c,
@@ -5238,7 +5241,7 @@ fn share_node(
 /// handing out an address that may not be reachable.
 fn share_base(state: &AppState) -> Result<String, SubsonicError> {
     state.server_url().ok_or_else(|| {
-        SubsonicError::internal("this server has no public address to share links on")
+        SubsonicError::generic("this server has no public address to share links on")
     })
 }
 
@@ -6100,14 +6103,14 @@ async fn form_post(req: Request, next: Next) -> Response {
     let Ok(bytes) = axum::body::to_bytes(body, MAX_FORM_BODY).await else {
         return SubsonicResponse::error(
             json,
-            &SubsonicError::internal(format!(
+            &SubsonicError::generic(format!(
                 "The form is larger than {} KB",
                 MAX_FORM_BODY >> 10
             )),
         );
     };
     let Ok(form) = std::str::from_utf8(&bytes) else {
-        return SubsonicResponse::error(json, &SubsonicError::internal("The form is not UTF-8"));
+        return SubsonicResponse::error(json, &SubsonicError::generic("The form is not UTF-8"));
     };
     parts.extensions.insert(FormBody(form.trim().into()));
     next.run(Request::from_parts(parts, axum::body::Body::empty()))
@@ -10289,6 +10292,64 @@ mod tests {
         .await;
         assert!(body.contains("Test Song"));
         assert!(body.contains("<child"));
+    }
+
+    /// Every error line this test binary logs, so a test can show what went
+    /// to the log rather than to the client.
+    static LOGGED: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
+
+    struct CaptureLog;
+
+    impl log::Log for CaptureLog {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record) {
+            LOGGED.lock().push(record.args().to_string());
+        }
+
+        fn flush(&self) {}
+    }
+
+    /// Installs `CaptureLog` once for the binary; no other test sets a logger.
+    fn capture_logs() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            log::set_logger(&CaptureLog).expect("no other test in this binary sets a logger");
+            log::set_max_level(log::LevelFilter::Error);
+        });
+    }
+
+    #[tokio::test]
+    async fn a_database_error_reaches_the_client_as_a_generic_message_with_the_detail_only_in_the_log()
+     {
+        capture_logs();
+        let (state, _dir) = test_state();
+        // getGenres reads `tracks.genre`; without it SQLite's error quotes the
+        // statement that failed.
+        state
+            .open_db()
+            .unwrap()
+            .conn
+            .execute_batch("ALTER TABLE tracks RENAME COLUMN genre TO genre_gone")
+            .unwrap();
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(app, &format!("/rest/getGenres?{}", auth_query(""))).await;
+        assert!(body.contains("status=\"failed\""), "{body}");
+        assert!(body.contains("message=\"Internal error\""), "{body}");
+        assert!(
+            !body.contains("genre"),
+            "SQLite's text reached the client: {body}"
+        );
+        assert!(
+            LOGGED
+                .lock()
+                .iter()
+                .any(|line| line.contains("no such column: genre")),
+            "the cause was not logged"
+        );
     }
 
     #[tokio::test]
