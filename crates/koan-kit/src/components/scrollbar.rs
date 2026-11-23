@@ -197,14 +197,6 @@ pub struct Prepaint {
     bar: Rc<RefCell<Bar>>,
 }
 
-impl<S: ScrollSource> IntoElement for Scrollbar<S> {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
-    }
-}
-
 impl<S: ScrollSource> Element for Scrollbar<S> {
     type RequestLayoutState = ();
     type PrepaintState = Prepaint;

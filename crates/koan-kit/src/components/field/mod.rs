@@ -444,14 +444,6 @@ pub struct Labelled {
     child: gpui::AnyElement,
 }
 
-impl IntoElement for Labelled {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
-    }
-}
-
 impl gpui::Element for Labelled {
     type RequestLayoutState = ();
     type PrepaintState = ();

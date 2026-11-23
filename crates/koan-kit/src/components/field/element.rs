@@ -8,8 +8,8 @@ use std::ops::Range;
 
 use gpui::{
     App, Bounds, DispatchPhase, ElementId, ElementInputHandler, Entity, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, Pixels, Point,
-    SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, point, px, size,
+    InspectorElementId, LayoutId, MouseDownEvent, MouseMoveEvent, Pixels, Point, SharedString,
+    Style, TextAlign, TextRun, UnderlineStyle, Window, fill, point, px, size,
 };
 
 use super::state::{FieldState, Line};
@@ -57,14 +57,6 @@ pub(super) struct Prepaint {
     scroll: Point<Pixels>,
     selection: Vec<Bounds<Pixels>>,
     caret: Option<Bounds<Pixels>>,
-}
-
-impl IntoElement for FieldElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
 }
 
 impl gpui::Element for FieldElement {
