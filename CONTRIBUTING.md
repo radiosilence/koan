@@ -24,7 +24,10 @@ just fmt
 just hooks
 ```
 
-### Measuring the iOS app
+### Measuring the tvOS app
+
+This section and the three after it are about SwiftUI, which now draws only the
+tvOS app: the iPhone and iPad app is the kōan GUI app (GPUI) since #2210.
 
 The app emits signposts on the Points of Interest timeline, so a recording lines
 its own regions up against what the CPU profiler and the SwiftUI instrument saw:
@@ -145,7 +148,7 @@ nothing on its own.
 
 ## Architecture
 
-Five crates: `koan-core` (library -- audio engine, player, database, indexer), `koan-tui` (TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for the macOS and iOS apps), and `koan-cli` (binary -- CLI entry point). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
+Eight crates: `koan-core` (library -- audio engine, player, database, indexer), `koan-tui` (TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-runtime` (`KoanEngine`, the facade every app drives), `koan-ffi` (uniffi bindings over koan-runtime for the Swift and Kotlin apps), `koan-gui` (the kōan GUI app, GPUI, on macOS, Linux and iOS), `koan-kit` (the design system koan-gui is built from), and `koan-cli` (binary -- CLI entry point). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
 If you're touching the audio path: the render callback must never allocate or lock. Read the threading model docs before changing anything in `audio/`.
 

@@ -110,7 +110,7 @@ Page::new(
 .body(table)
 ```
 
-`Page` owns the margins (the spec's 32 at the sides, 16 above, 12 to the body). `PageHeader` owns the Mac header's layout: 18 between art and text, 6 between title and detail, the title in `title`/`strong` on two lines at most. `PageHeader::data` keeps a title's case (a record, a playlist).
+`Page` owns the margins: 16 at the sides and above (`RowMetrics::page_margin`, where the spec gives 32; see [Page margins](#where-the-spec-and-the-swift-app-disagree) below), 12 to the body. `PageHeader` owns the Mac header's layout: 18 between art and text, 6 between title and detail, the title in `title`/`strong` on two lines at most. `PageHeader::data` keeps a title's case (a record, a playlist).
 
 ### Toolbar and ToolbarButton (Mac: `.toolbar` placements, `koanButton(.toolbar)`)
 
