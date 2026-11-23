@@ -477,7 +477,7 @@ impl<'a> Reference<'a> {
         let mut methods = Vec::new();
         for i in self.impls_of(entry) {
             match &i.trait_ {
-                Some((_, path, _)) => {
+                Some((path, _)) => {
                     if let Some(last) = path.segments.last() {
                         traits.push(last.ident.to_string());
                     }
@@ -918,18 +918,18 @@ fn fn_signature(vis: &Visibility, sig: &syn::Signature) -> String {
     let mut sig = sig.clone();
     for input in sig.inputs.iter_mut() {
         match input {
-            syn::FnArg::Receiver(r) if r.reference.is_none() => r.mutability = None,
+            syn::FnArg::Receiver(r) => r.mutability = None,
             syn::FnArg::Typed(t) => {
                 if let syn::Pat::Ident(i) = t.pat.as_mut() {
                     i.mutability = None;
                 }
             }
-            _ => {}
         }
     }
     let f = syn::ItemFn {
         attrs: Vec::new(),
         vis: vis.clone(),
+        modifiers: Default::default(),
         sig,
         block: Box::new(syn::Block {
             brace_token: Default::default(),
@@ -947,6 +947,7 @@ fn fn_signature(vis: &Visibility, sig: &syn::Signature) -> String {
 fn unparse(item: Item) -> String {
     let file = syn::File {
         shebang: None,
+        frontmatter: None,
         attrs: Vec::new(),
         items: vec![item],
     };
