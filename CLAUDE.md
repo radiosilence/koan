@@ -163,7 +163,7 @@ The Swift bindings are generated from a built koan-ffi: `swift-bindings` (a host
 
 The desktop app's dev bundle is signed with a self-signed certificate — `just signing-cert` creates it, once. Without it the bundle is ad-hoc signed, which derives its identity from the binary's own hash: every rebuild is a different application to macOS, so TCC permissions are forgotten each time. It buys nothing against Gatekeeper, which wants Developer ID and notarisation.
 
-Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git push` and refuses the push if it changed anything. Clippy and the tests are CI's, so a push is never held up running them locally.
+Pre-push hook (`.claude/settings.json`): a `PreToolUse` hook on Bash reads the command from its JSON on stdin and, on a `git push`, runs `cargo fmt --all` and blocks the push (exit 2, the files on stderr) if the working tree then has unstaged changes. It never commits or amends; commit the formatting yourself. Clippy and the tests are CI's, so a push is never held up running them locally.
 
 `deploy/pulumi/package.json`'s `version` and `deploy/pulumi/src/versions.ts`'s `APP_VERSION` move with the workspace version in `Cargo.toml`; `check-version` in CI fails a build where they drift.
 
