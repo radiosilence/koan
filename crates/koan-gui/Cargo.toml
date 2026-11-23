@@ -95,7 +95,7 @@ objc2-foundation = { version = "0.3.2", features = ["NSData", "NSError", "NSGeom
 # The app's Swift (push, App Attest) drives the same engine, through the
 # uniffi bindings linked into this library.
 koan-ffi = { path = "../koan-ffi" }
-gpui_ios = { package = "gpui-koan-ios", git = "https://github.com/radiosilence/zed", rev = "b7e87e37a8fb03c9817e5c89da12ef35e7149fae" }
+gpui_ios = { package = "gpui-koan-ios", git = "https://github.com/radiosilence/zed", rev = "4615a4c4305ea641445f5e16aa6814c237acc052" }
 objc2 = "0.6"
 objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "UIApplication", "UIDevice", "UIResponder"] }
 objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
