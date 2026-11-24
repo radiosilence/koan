@@ -297,8 +297,9 @@ pub fn natural_artist_sort(filter: BrowseFilter, searching: bool) -> ArtistSort 
 }
 
 /// The heading `name` sits under in a list of artists by name, grouped by
-/// initial: its first letter as the library's collation reads it, or `#`.
-/// Draw a heading per run of the listing, since `#` can be two.
+/// initial: its first letter as the library's collation reads it, capitalised,
+/// or `#` for anything without case. Draw a heading per run of the listing,
+/// since `#` can be any number of runs.
 #[uniffi::export]
 pub fn name_initial(name: String) -> String {
     koan_runtime::name_initial(&name).to_string()

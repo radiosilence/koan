@@ -364,9 +364,10 @@ pub fn lead_width(p: &Paint, count: usize, window: &Window) -> Pixels {
 /// plain click marks the row alone and leaves the mode off, so the toolbar's
 /// select and the selection bar stay as they were; ⌘ adds or removes it and
 /// ⇧ extends from the last one clicked, through the page's order, which only
-/// ⇧ needs, each starting the mode. While picking, a plain click ticks.
-/// Returns whether it was a double click on the row, which plays or opens
-/// it in the mode or out of it, or under touch a tap outside picking.
+/// ⇧ needs, each starting the mode. While picking, a click only ticks: a
+/// double click is two ticks, since the mode is for picking. Returns whether
+/// it was a double click outside the mode, which plays or opens the row, or
+/// under touch a tap outside picking.
 pub fn select(
     selection: &mut Selection,
     item: Playable,
@@ -392,11 +393,10 @@ pub fn select(
         selection.click(item, true, &page());
     } else if m.secondary(cx) {
         selection.click(item, false, &[]);
-    } else if event.click_count() >= 2 {
-        // The second click of a double is not another tick.
-        return true;
     } else if selection.is_active() {
         selection.click(item, false, &[]);
+    } else if event.click_count() >= 2 {
+        return true;
     } else {
         selection.mark(item);
     }

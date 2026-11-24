@@ -199,6 +199,16 @@ pub enum ArtistSort {
 }
 
 impl ArtistSort {
+    /// Whether the menu offers this sort under `filter` and a search, as
+    /// `offered` lists them, without building the list.
+    pub fn is_offered(self, filter: &BrowseFilter, searching: bool) -> bool {
+        match self {
+            ArtistSort::BestMatch => searching,
+            ArtistSort::LastPlayed => filter.recent,
+            _ => true,
+        }
+    }
+
     /// As [`AlbumSort::offered`].
     pub fn offered(filter: &BrowseFilter, searching: bool) -> Vec<ArtistSort> {
         let mut sorts = vec![ArtistSort::Name];
@@ -397,6 +407,19 @@ mod tests {
             for searching in [false, true] {
                 let natural = ArtistSort::natural(filter, searching);
                 assert!(ArtistSort::offered(filter, searching).contains(&natural));
+                for sort in [
+                    ArtistSort::Name,
+                    ArtistSort::Albums,
+                    ArtistSort::Tracks,
+                    ArtistSort::RecentlyAdded,
+                    ArtistSort::LastPlayed,
+                    ArtistSort::BestMatch,
+                ] {
+                    assert_eq!(
+                        sort.is_offered(filter, searching),
+                        ArtistSort::offered(filter, searching).contains(&sort)
+                    );
+                }
             }
         }
     }

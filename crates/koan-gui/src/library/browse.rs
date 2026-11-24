@@ -103,10 +103,17 @@ impl Browse {
     /// natural one: by name, best match under a search, last played under
     /// Recently played.
     pub fn effective_artist_sort(&self) -> ArtistSort {
-        let searching = self.search().is_some();
+        use koan_core::browse::{ArtistSort as Core, BrowseFilter as CoreFilter};
+        let searching = !self.search.trim().is_empty();
+        // The artist sorts read the Recently played filter alone, so the
+        // rest of the filter is not copied over.
+        let filter = CoreFilter {
+            recent: self.filter.recent,
+            ..CoreFilter::default()
+        };
         self.artist_sort
-            .filter(|sort| artist_sorts(&self.filter, searching).contains(sort))
-            .unwrap_or_else(|| koan_runtime::natural_artist_sort(self.filter.clone(), searching))
+            .filter(|sort| Core::from(*sort).is_offered(&filter, searching))
+            .unwrap_or_else(|| Core::natural(&filter, searching).into())
     }
 
     /// Chooses the artist sort, which is not written to disk.

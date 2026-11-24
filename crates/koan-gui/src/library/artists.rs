@@ -309,13 +309,14 @@ impl ArtistBrowser {
                 this.loading = None;
                 match artists {
                     Ok(artists) => {
-                        // Another order starts from the top.
+                        // Another order starts from the top, the keys too.
                         if this
                             .loaded
                             .as_ref()
                             .is_some_and(|(q, _)| q.sort != wanted.0.sort)
                         {
                             this.restore = None;
+                            this.cursor.place(0);
                             this.scroll
                                 .0
                                 .borrow()
@@ -743,12 +744,13 @@ impl super::keys::KeyedList for ArtistBrowser {
     }
 
     /// A run's first artist brings its heading too when reached from below
-    /// (Home, or the arrow up into it).
+    /// (Home, or the arrow up into it), or when the heading is the top line,
+    /// which may be cut off.
     fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
         let line = self.line_of.get(ix).copied().unwrap_or(ix);
         let top = self.scroll.logical_scroll_top_index();
         let headed = line.checked_sub(1).filter(|above| {
-            line <= top && matches!(self.lines.get(*above), Some(Line::Initial(..)))
+            line <= top + 1 && matches!(self.lines.get(*above), Some(Line::Initial(..)))
         });
         self.scroll.scroll_to_item(
             headed.unwrap_or(line),

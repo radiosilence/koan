@@ -100,22 +100,23 @@ pub fn year_of(date: &str) -> Option<&str> {
 
 /// The heading a name is listed under in a list grouped by initial: its first
 /// character as the `LIBRARY` collation folds it (accents dropped, lowercased),
-/// capitalised where that is one character, or `#` for a name opening with a
-/// digit, a sign or nothing. In that collation's order each letter's names are
-/// one run; `#` can be two, since signs sort both before `a` and after `z`, so
-/// a list draws a heading per run rather than per initial.
+/// capitalised, when that is a cased letter whose capital lowercases back to
+/// it (Latin, Greek, Cyrillic); otherwise `#`, for a digit, a sign, nothing, a
+/// script without case (kana, Han, Hangul) or a letter such as `ß` or `ſ`
+/// with no capital of its own. In that collation's order each letter's names
+/// are one run; `#` can be any number of runs, since what it gathers sorts
+/// before `a`, after `z` and between other scripts, so a list draws a heading
+/// per run rather than per initial.
 pub fn initial(name: &str) -> char {
     use unicode_normalization::UnicodeNormalization;
     name.nfd()
         .find(|c| !matches!(*c as u32, 0x0300..=0x036F))
         .and_then(|c| c.to_lowercase().next())
-        .filter(|c| c.is_alphabetic())
-        .map(|c| {
+        .and_then(|c| {
             let mut upper = c.to_uppercase();
-            match (upper.next(), upper.next()) {
-                (Some(u), None) => u,
-                _ => c,
-            }
+            let u = upper.next().filter(|_| upper.next().is_none())?;
+            let mut back = u.to_lowercase();
+            (u != c && back.next() == Some(c) && back.next().is_none()).then_some(u)
         })
         .unwrap_or('#')
 }
@@ -133,9 +134,32 @@ mod initial_tests {
         assert_eq!(initial("!!!"), '#');
         assert_eq!(initial(""), '#');
         assert_eq!(initial("Øyvind"), 'Ø');
-        // Uppercased, ß is two letters, and it sorts after z, not with S.
-        assert_eq!(initial("ßeta"), 'ß');
+        assert_eq!(initial("Ελένη"), 'Ε');
+        assert_eq!(initial("Земфира"), 'З');
         assert_eq!(initial("{x}"), '#');
+    }
+
+    #[test]
+    fn letters_without_a_capital_of_their_own_go_under_the_sign() {
+        // ß uppercases to two letters; µ, ſ and ı to a capital that
+        // lowercases to another letter, which sorts elsewhere.
+        for name in ["ßeta", "µ-Ziq", "ſtar", "ıstanbul"] {
+            assert_eq!(initial(name), '#', "{name}");
+        }
+    }
+
+    #[test]
+    fn scripts_without_case_go_under_the_sign() {
+        for name in [
+            "坂本龍一",
+            "王菲",
+            "きゃりーぱみゅぱみゅ",
+            "カネコアヤノ",
+            "아이유",
+            "ㅎ",
+        ] {
+            assert_eq!(initial(name), '#', "{name}");
+        }
     }
 }
 
