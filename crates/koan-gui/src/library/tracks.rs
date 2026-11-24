@@ -559,11 +559,12 @@ impl Render for TrackBrowser {
         );
         let scale = window.scale_factor();
         let lead_width = rows::lead_width(p, self.total as usize, window);
-        // The rows on screen from the scroll's offset, rows being one height.
+        // The rows on screen from the scroll's offset, rows being one height;
+        // none above the first, however far a scroll went past the top.
         let (offset, viewport) = {
             let state = self.scroll.0.borrow();
             (
-                -f32::from(state.base_handle.offset().y),
+                (-f32::from(state.base_handle.offset().y)).max(0.0),
                 f32::from(state.base_handle.bounds().size.height),
             )
         };
