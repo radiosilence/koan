@@ -133,8 +133,13 @@ pub struct QueueView {
     /// the timer that lets its layer go once it is in place.
     unswipe: Option<(usize, Task<()>)>,
     /// The swiped row's offset, which the GPU composes the row and its bin
-    /// at: held by the finger, eased back on a short release.
+    /// at: held by the finger, carried back or off by the release.
     swiped: crate::components::Follow,
+    /// How fast the swiping finger moves across.
+    swipe_speed: crate::components::Speed,
+    /// The row swiped away, by its key, going off at the finger's speed and
+    /// kept off until the queue drops it: its index can change meanwhile.
+    gone: Option<String>,
     queue: Entity<Queue>,
     focus: FocusHandle,
     list: RowListState,
@@ -310,6 +315,8 @@ impl QueueView {
             swipe: None,
             unswipe: None,
             swiped: crate::components::Follow::new(),
+            swipe_speed: crate::components::Speed::new(),
+            gone: None,
             dragging: Vec::new(),
             nav: nav.clone(),
             lib: None,
@@ -1007,8 +1014,16 @@ impl QueueView {
         };
         let view = cx.entity();
         let list = self.list.clone();
+        let row_key = {
+            let queue = self.queue.read(cx);
+            match r {
+                Row::Heading { first, .. } => heading_key(&queue.base[first].queue_item_id),
+                Row::Track { ix, .. } => queue.base[ix].queue_item_id.clone(),
+            }
+        };
         let swiped = self.swipe.is_some_and(|(at, _)| at == row)
-            || self.unswipe.as_ref().is_some_and(|(at, _)| *at == row);
+            || self.unswipe.as_ref().is_some_and(|(at, _)| *at == row)
+            || self.gone.as_ref() == Some(&row_key);
         let touch = p.look.touch;
         let bad = p.bad;
         let on_bad = p.look.palette.bg.hsla();
@@ -1173,6 +1188,8 @@ impl QueueView {
                             return;
                         }
                         this.unswipe = None;
+                        this.gone = None;
+                        this.swipe_speed = crate::components::Speed::new();
                         let dx = delta.x.min(Pixels::ZERO);
                         this.swiped.follow(Point::new(dx, Pixels::ZERO), window);
                         this.swipe = Some((row, dx));
@@ -1191,6 +1208,7 @@ impl QueueView {
                             cx.perform_haptic(HapticFeedback::Light);
                         }
                         this.swiped.follow(Point::new(to, Pixels::ZERO), window);
+                        this.swipe_speed.step(f32::from(to - dx));
                         this.swipe = Some((at, to));
                         cx.stop_propagation();
                         return;
@@ -1199,11 +1217,33 @@ impl QueueView {
                         let Some((_, dx)) = this.swipe.take().filter(|(at, _)| *at == row) else {
                             return;
                         };
-                        if dx < -window.viewport_size().width / 4.0 {
+                        let width = window.viewport_size().width;
+                        let speed = this.swipe_speed.get();
+                        let flicked =
+                            speed < -crate::components::Speed::FLICK && dx < -Pixels::from(8.);
+                        if dx < -width / 4.0 || flicked {
+                            // Off at the finger's speed, and out of the
+                            // queue once it is.
                             let ids = this.acting_on(row, cx);
-                            this.remove(ids, cx);
+                            this.gone = Some(row_key.clone());
+                            let length = this.swiped.fling(
+                                Point::new(-width, Pixels::ZERO),
+                                Point::new(speed, 0.0),
+                                window,
+                                cx,
+                            );
+                            cx.spawn(async move |this, cx| {
+                                cx.background_executor().timer(length).await;
+                                this.update(cx, |this, cx| this.remove(ids, cx)).ok();
+                            })
+                            .detach();
                         } else {
-                            let length = this.swiped.settle(Point::default(), window, cx);
+                            let length = this.swiped.release(
+                                Point::default(),
+                                Point::new(speed, 0.0),
+                                window,
+                                cx,
+                            );
                             let back = cx.spawn(async move |this, cx| {
                                 cx.background_executor().timer(length).await;
                                 this.update(cx, |this, cx| {

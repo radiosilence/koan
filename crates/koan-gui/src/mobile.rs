@@ -153,12 +153,17 @@ pub struct TouchShell {
     pushing: bool,
     /// A finger is on the swipe from the edge.
     swiping: bool,
+    /// How fast the back swipe moves, in progress a second.
+    push_speed: crate::components::Speed,
     /// A push let go, easing the rest of the way: lands when it fires.
     settle: Option<Task<()>>,
     /// The settle under way ends in a back.
     backing: bool,
     /// Now Playing going back down: lets it go once it is down.
     closing: Option<Task<()>>,
+    /// Now Playing closing was swiped away, carried off by its own pull
+    /// rather than `SlideUp`.
+    flung: bool,
     /// The tab and page last drawn, so a move forward is seen and slid in.
     seen: Option<(usize, Route)>,
     /// Now Playing over everything, while it is open: a transport of its own
@@ -338,9 +343,11 @@ impl TouchShell {
             elastic: crate::components::Elastic::new(),
             pushing: false,
             swiping: false,
+            push_speed: crate::components::Speed::new(),
             settle: None,
             backing: false,
             closing: None,
+            flung: false,
             seen: None,
             now_playing: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
@@ -955,6 +962,11 @@ impl TouchShell {
         self.nav.read(cx).current()
     }
 
+    /// Whether Now Playing is over the page; for tools that drive it.
+    pub fn now_playing_open(&self) -> bool {
+        self.now_playing.is_some()
+    }
+
     /// Opens Now Playing, as tapping the mini player does.
     pub fn open_now_playing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.now_playing.is_some() || !self.compact {
@@ -973,13 +985,16 @@ impl TouchShell {
                 full.set_lib(lib);
             });
         }
-        let closed = cx.subscribe(&full, |this, _, _: &transport::Collapse, cx| {
+        let closed = cx.subscribe(&full, |this, _, closed: &transport::Collapse, cx| {
             if this.closing.is_some() {
                 return;
             }
-            // Down on the GPU (`SlideUp`), its rise in reverse, and let go
-            // once it is down.
-            let length = crate::components::SlideUp::leave_length(cx);
+            // Down on the GPU: swiped, already going at the finger's speed;
+            // tapped, `SlideUp`'s rise in reverse. Let go once it is down.
+            this.flung = closed.0.is_some();
+            let length = closed
+                .0
+                .unwrap_or_else(|| crate::components::SlideUp::leave_length(cx));
             this.closing = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(length).await;
                 this.update(cx, |this, cx| {
@@ -1128,30 +1143,17 @@ impl Render for TouchShell {
         let p = Paint::of(window, cx);
         let compact = p.look.compact;
         self.adapt(compact, window, cx);
-        // Now Playing over the page, on a wash of its own as the iOS app's
-        // bleed is, coming up from the foot and going back down to it.
-        // Now Playing is about the playing record, whatever page it covers:
-        // the window wears that record's colours until it has gone down.
+        // Now Playing over the page, coming up from the foot and going back
+        // down to it. Now Playing is about the playing record, whatever page
+        // it covers: the window wears that record's colours until it has
+        // gone down.
         crate::root::ShownRecord::now_playing(self.now_playing.is_some(), cx);
         let now_playing = self.now_playing.as_ref().map(|(full, ..)| {
-            let wash = crate::theme::wash::WindowWash::shared(window, cx);
             div().absolute().inset_0().occlude().child(
                 crate::components::SlideUp::new(
-                    div()
-                        .relative()
-                        .size_full()
-                        .map(|d| match wash {
-                            Some(wash) => d.child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .child(wash.cached(StyleRefinement::default().size_full())),
-                            ),
-                            None => d.bg(p.bg),
-                        })
-                        .child(full.clone().cached(StyleRefinement::default().size_full())),
+                    full.clone().cached(StyleRefinement::default().size_full()),
                 )
-                .leaving(self.closing.is_some()),
+                .leaving(self.closing.is_some() && !self.flung),
             )
         });
         self.see_push(cx);
@@ -1323,7 +1325,7 @@ impl Render for TouchShell {
             .on_action(cx.listener(|this, _: &ShowTracks, _, cx| this.show(Route::Tracks, cx)))
             // The swipe from the edge: the page follows the finger, and goes
             // back only once the platform says the swipe went far enough.
-            .on_back_gesture(cx.listener(|this, event: &BackGestureEvent, _, cx| {
+            .on_back_gesture(cx.listener(|this, event: &BackGestureEvent, window, cx| {
                 // Now Playing covers the page: the page underneath stays put.
                 if this.now_playing.is_some() {
                     return;
@@ -1336,6 +1338,11 @@ impl Render for TouchShell {
                             return;
                         }
                         this.settle = None;
+                        if this.swiping {
+                            this.push_speed.step(event.progress - this.push.at());
+                        } else {
+                            this.push_speed = crate::components::Speed::new();
+                        }
                         this.push.follow(event.progress);
                         if !this.swiping || !this.pushing {
                             this.swiping = true;
@@ -1349,7 +1356,14 @@ impl Render for TouchShell {
                         }
                         this.swiping = false;
                         let back = matches!(event.phase, BackGesturePhase::Committed);
-                        let length = this.push.settle(if back { 1.0 } else { 0.0 }, cx);
+                        // On from the finger's speed, whichever way it goes.
+                        this.push_speed.step(event.progress - this.push.at());
+                        let length = this.push.release(
+                            if back { 1.0 } else { 0.0 },
+                            this.push_speed.get(),
+                            window.viewport_size().width,
+                            cx,
+                        );
                         this.land(length, back, cx);
                     }
                 }

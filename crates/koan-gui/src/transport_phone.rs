@@ -23,8 +23,9 @@ pub enum Form {
 
 /// The mini player, tapped: Now Playing is asked for.
 pub struct Expand;
-/// Now Playing's close, tapped.
-pub struct Collapse;
+/// Now Playing's close: tapped (`None`), or swiped down and already on its
+/// way off the screen, gone after the length it carries.
+pub struct Collapse(pub Option<std::time::Duration>);
 /// Now Playing's title, tapped: the playing track's details are asked for.
 pub struct ShowInfo(pub i64);
 
@@ -364,7 +365,7 @@ impl Transport {
             .child(
                 div().flex().items_center().child(
                     Button::icon_only("np-close", Icon::Expand, "close")
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Collapse))),
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Collapse(None)))),
                 ),
             )
             // The art and the lyrics, a new record's sleeve and a new track's
@@ -467,6 +468,7 @@ impl Transport {
                         let at = dy.max(Pixels::ZERO);
                         this.pulled.follow(down(at), window);
                         this.pull = Some(at);
+                        this.pull_speed = crate::components::Speed::new();
                         if this.released.take().is_none() {
                             cx.notify();
                         }
@@ -478,30 +480,60 @@ impl Transport {
                             let at = (by + dy).max(Pixels::ZERO);
                             this.pulled.follow(down(at), window);
                             this.pull = Some(at);
+                            this.pull_speed.step(f32::from(dy));
                         }
                     }
                     koan_kit::app::platform::TouchPhase::Ended => {
                         let Some(by) = this.pull.take() else { return };
                         let at = (by + dy).max(Pixels::ZERO);
-                        if at > close_at {
+                        this.pull_speed.step(f32::from(dy));
+                        let speed = this.pull_speed.get();
+                        // Past a fifth of the screen, or flicked down.
+                        if at > close_at
+                            || (speed > crate::components::Speed::FLICK && at > Pixels::from(8.))
+                        {
                             this.pulled.follow(down(at), window);
                             this.released = Some(true);
                             // The swipe is spent on closing: its fling does
                             // not carry on into the page uncovered.
                             window.end_touch_scroll();
-                            cx.emit(Collapse);
+                            let gone = this.pulled.fling(
+                                down(viewport.height),
+                                Point::new(0.0, speed),
+                                window,
+                                cx,
+                            );
+                            cx.emit(Collapse(Some(gone)));
                         } else {
-                            this.ease_back(window, cx);
+                            this.ease_back(speed, window, cx);
                         }
                     }
                     koan_kit::app::platform::TouchPhase::Cancelled => {
                         if this.pull.take().is_some() {
-                            this.ease_back(window, cx);
+                            this.ease_back(0.0, window, cx);
                         }
                     }
                 }
             }))
             .clear_of_system(crate::components::Clear::System, window)
+            .child(page);
+        // On a wash of its own, as the iOS app's bleed is, inside the layer
+        // a pull moves: the page and its ground leave together, uncovering
+        // the page under them as they go, and nothing changes on screen when
+        // Now Playing is let go at the foot.
+        let wash = crate::theme::wash::WindowWash::shared(window, cx);
+        let page = div()
+            .relative()
+            .size_full()
+            .map(|d| match wash {
+                Some(wash) => d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .child(wash.cached(StyleRefinement::default().size_full())),
+                ),
+                None => d.bg(p.bg),
+            })
             .child(page);
         if layered {
             self.pulled.layer(page).into_any_element()
@@ -510,11 +542,14 @@ impl Transport {
         }
     }
 
-    /// A pull let go short of closing: the page eases back up on the GPU,
-    /// and its layer is let go once it is in place.
-    fn ease_back(&mut self, window: &Window, cx: &mut Context<Self>) {
+    /// A pull let go short of closing, moving `speed` points a second down:
+    /// the page goes back up on the GPU from the finger's speed, and its
+    /// layer is let go once it is in place.
+    fn ease_back(&mut self, speed: f32, window: &Window, cx: &mut Context<Self>) {
         self.released = Some(false);
-        let length = self.pulled.settle(Point::default(), window, cx);
+        let length = self
+            .pulled
+            .release(Point::default(), Point::new(0.0, speed), window, cx);
         self.returning = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(length).await;
             this.update(cx, |this, cx| {

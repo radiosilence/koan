@@ -1,7 +1,7 @@
 //! Walks the phone shell headlessly at an iPhone's size, under touch, and
 //! saves a PNG of each page, dark and light: the tabs' first pages, the
 //! library's pages, a record, an artist, a playlist, each Settings section and
-//! Now Playing, and each page again scrolled part way, its rows under the
+//! Now Playing, Now Playing swiped away frame by frame, and each page again scrolled part way, its rows under the
 //! bar, and to its end, its last row clear of the foot. Nothing is shown and nothing on the screen is read: GPUI's
 //! headless renderer draws it, as `walk` does for the desktop shell.
 //!
@@ -57,6 +57,10 @@ enum Step {
     Downloads(Vec<koan_runtime::Transfer>),
     /// A track's details over Now Playing, as its menu opens them.
     NowPlayingInfo(i64),
+    /// Now Playing swiped down and away, every frame pictured: failing if
+    /// the page under it is not uncovered as it goes, or if letting it go
+    /// at the foot changes what is on screen.
+    SwipeClose,
     /// The queue while picking: ticks and the selection bar.
     QueuePick,
     /// The "add to playlist" sheet.
@@ -128,6 +132,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             continue;
         }
         let page = matches!(step, Step::Page(_));
+        if let Step::SwipeClose = step {
+            swipe_close(&mut cx, window, &shell, &out)?;
+            continue;
+        }
         if let Step::SwipeBack(route) = step {
             swipe_back(&mut cx, window, &shell, route, &out)?;
             continue;
@@ -177,7 +185,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Step::PlaylistSheet(tracks) => cx.update_window(window, |_, window, cx| {
                 shell.update(cx, |s, cx| s.walk_playlist_sheet(tracks, window, cx))
             })?,
-            Step::SwipeBack(_) | Step::Across(_) => unreachable!(),
+            Step::SwipeBack(_) | Step::Across(_) | Step::SwipeClose => unreachable!(),
         }
         for dark in [true, false] {
             cx.update_window(window, |_, window, cx| {
@@ -303,6 +311,7 @@ fn prepare(engine: &std::sync::Arc<KoanEngine>) -> Result<Vec<(String, Step)>, B
         if let Some(&track) = ids.first() {
             steps.push(("now-playing-info".into(), Step::NowPlayingInfo(track)));
         }
+        steps.push(("now-playing-swipe".into(), Step::SwipeClose));
     }
     if !ids.is_empty() {
         steps.push(("queue-pick".into(), Step::QueuePick));
@@ -409,6 +418,112 @@ fn swipe_back(
     }
     if landed != Route::Library {
         return Err(format!("the swipe back landed on {landed:?}").into());
+    }
+    Ok(())
+}
+
+/// Opens Now Playing over the queue with motion on, pulls it down a finger
+/// at a time and lets go, picturing every frame until it has gone. The
+/// screen above the pulled page is the page under it, and the frame after
+/// Now Playing is let go is the frame before.
+fn swipe_close(
+    cx: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    shell: &Entity<TouchShell>,
+    out: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    use koan_kit::raw::{TouchEvent, TouchId};
+    use std::time::Instant;
+    const FRAME: Duration = Duration::from_millis(8);
+    cx.update_window(window, |_, window, cx| {
+        theme::pin_appearance(Some(false), window, cx)
+    })?;
+    cx.update(|cx| {
+        cx.set_reduce_motion(false);
+        shell.update(cx, |s, cx| s.show(Route::Queue, cx));
+    });
+    settle(cx, window)?;
+    cx.update_window(window, |_, window, cx| {
+        shell.update(cx, |s, cx| s.open_now_playing(window, cx))
+    })?;
+    // Up, and its rise over.
+    settle(cx, window)?;
+    let touch = |cx: &mut HeadlessAppContext, phase, y: f32, at: Instant| {
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                PlatformInput::Touch(TouchEvent {
+                    id: TouchId(1),
+                    phase,
+                    position: point(px(width() / 2.), px(y)),
+                    timestamp: Some(at),
+                    ..Default::default()
+                }),
+                cx,
+            );
+        })
+    };
+    // A frame of the display: its time passing, then the picture.
+    let frame = |cx: &mut HeadlessAppContext| -> Result<_, Box<dyn Error>> {
+        std::thread::sleep(FRAME);
+        cx.advance_clock(FRAME);
+        cx.update_window(window, |_, window, cx| window.simulate_next_frame(cx))?;
+        cx.run_until_parked();
+        let open = cx.update(|cx| shell.read(cx).now_playing_open());
+        Ok((open, cx.capture_screenshot(window)?))
+    };
+    let mut frames = Vec::new();
+    let mut y = 300.0;
+    let mut at = Instant::now();
+    touch(cx, TouchPhase::Started, y, at)?;
+    frames.push(frame(cx)?);
+    for _ in 0..12 {
+        y += 18.0;
+        at += FRAME;
+        touch(cx, TouchPhase::Moved, y, at)?;
+        frames.push(frame(cx)?);
+    }
+    let pulled = frames.len() - 1;
+    touch(cx, TouchPhase::Ended, y, at + FRAME / 2)?;
+    for _ in 0..200 {
+        let shot = frame(cx)?;
+        let gone = !shot.0;
+        frames.push(shot);
+        if gone {
+            break;
+        }
+    }
+    cx.update(|cx| cx.set_reduce_motion(true));
+    for (ix, (_, shot)) in frames.iter().enumerate() {
+        shot.save(out.join(format!("phone-now-playing-swipe-{ix:03}.png")))?;
+    }
+    let (closed, under) = frames.last().ok_or("no frames")?;
+    if *closed {
+        return Err("Now Playing was never let go".into());
+    }
+    // Mean difference per channel, over every other row and third column.
+    let differ = |a: &image::RgbaImage, b: &image::RgbaImage, rows: u32| {
+        let (mut sum, mut n) = (0.0_f64, 0);
+        for y in (0..rows.min(a.height())).step_by(2) {
+            for x in (0..a.width()).step_by(3) {
+                let (p, q) = (a.get_pixel(x, y), b.get_pixel(x, y));
+                sum += (0..3).map(|c| f64::from(p[c].abs_diff(q[c]))).sum::<f64>();
+                n += 1;
+            }
+        }
+        sum / f64::from(n.max(1))
+    };
+    // Pulled 216 points down: the top hundred points are the page under it.
+    let band = differ(&frames[pulled].1, under, 200);
+    let last_open = &frames[frames.len() - 2].1;
+    let jump = differ(last_open, under, u32::MAX);
+    println!("now playing swipe: page under shows to {band:.2}; letting go changes {jump:.2}");
+    if band > 0.5 {
+        return Err(format!("the page under a pulled Now Playing is covered ({band:.2})").into());
+    }
+    if jump > 0.5 {
+        return Err(
+            format!("letting Now Playing go at the foot changed the screen ({jump:.2})").into(),
+        );
     }
     Ok(())
 }

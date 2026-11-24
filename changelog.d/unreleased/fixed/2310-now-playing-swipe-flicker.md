@@ -1,0 +1,1 @@
+- **Now Playing swiped away.** On iPhone its background now leaves with it, uncovering the page underneath as it goes, rather than staying over the screen until Now Playing had gone and the page appeared at once.
