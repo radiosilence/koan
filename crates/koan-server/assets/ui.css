@@ -1505,11 +1505,7 @@
   }
   .notice {
     margin-block: calc(var(--spacing) * 4);
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    column-gap: calc(var(--spacing) * 3);
-    row-gap: var(--spacing);
+    display: block;
     border-left-style: var(--tw-border-style);
     border-left-width: 2px;
     border-color: var(--brand);
@@ -1527,7 +1523,8 @@
     color: var(--warn);
   }
   .notice > :is(button, .button) {
-    margin-left: auto;
+    margin-inline-start: calc(var(--spacing) * 3);
+    vertical-align: baseline;
   }
   .status {
     --tone: var(--muted);

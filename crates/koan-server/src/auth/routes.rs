@@ -1041,18 +1041,18 @@ mod tests {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(
             COOKIE,
-            format!("a=1; {REFRESH_COOKIE}=from-cookie; b=2")
+            format!("a=1; {REFRESH_COOKIE}=cookie-token; b=2")
                 .parse()
                 .unwrap(),
         );
 
         assert_eq!(
             refresh_token_from(None, &headers).as_deref(),
-            Some("from-cookie")
+            Some("cookie-token")
         );
         assert_eq!(
-            refresh_token_from(Some("from-body"), &headers).as_deref(),
-            Some("from-body")
+            refresh_token_from(Some("body-token"), &headers).as_deref(),
+            Some("body-token")
         );
         assert_eq!(
             refresh_token_from(None, &axum::http::HeaderMap::new()),
