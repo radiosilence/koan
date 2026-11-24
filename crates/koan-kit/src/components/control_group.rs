@@ -7,9 +7,11 @@ use gpui::{
 
 use crate::theme::HIT;
 
-/// Controls side by side, each in a slot a touch target wide (`HIT`) with
-/// none between, so the targets touch and the glyphs, whatever their
-/// widths, sit an even step apart with no gap of their own. A press in a
+/// Controls side by side, each in a slot exactly a touch target wide (`HIT`)
+/// with none between, so the targets touch and the glyphs, whatever their
+/// widths, sit an even step apart with no gap of their own. A slot never
+/// grows with its control, so the group keeps one width whatever the
+/// controls show and what sits beside it keeps its room. A press in a
 /// slot is the control's: it does not reach what the group sits in, such
 /// as a bar that opens on a tap. It never shrinks.
 #[derive(IntoElement, Default)]
@@ -36,7 +38,8 @@ impl RenderOnce for ControlGroup {
             self.controls.into_iter().enumerate().map(|(i, control)| {
                 div()
                     .id(i)
-                    .min_w(HIT)
+                    .w(HIT)
+                    .flex_none()
                     .h(HIT)
                     .flex()
                     .items_center()
