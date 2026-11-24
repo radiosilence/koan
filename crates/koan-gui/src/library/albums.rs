@@ -872,18 +872,7 @@ impl AlbumGrid {
             .child(chrome::album_sort_button(&self.lib, cx))
             .children(chrome::reshuffle_button(&self.lib, cx))
             .spacer()
-            .child(chrome::select_toggle(
-                self.selection.is_active(),
-                cx.listener(|this, _, _, cx| {
-                    if this.selection.is_active() {
-                        this.selection.end();
-                    } else {
-                        this.selection.begin(None);
-                    }
-                    cx.notify();
-                }),
-                cx,
-            ))
+            .child(chrome::pick_toggle(self.selection.is_active(), cx))
             .into_any_element()
     }
 }

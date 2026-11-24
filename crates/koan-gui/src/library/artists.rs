@@ -2,12 +2,17 @@
 //! filter and search, as the Mac's artist list draws them: a play mark under
 //! the pointer, the name, which opens the artist, the heart, and how many
 //! records and tracks.
+//!
+//! By name, the artists sit under a heading per initial, as a phone's
+//! contacts do; any other order is one flat list. The order is held in
+//! `Browse` for the run and never written, so a launch opens on the grouped
+//! list.
 
 use std::collections::HashSet;
 use std::ops::Range;
 
 use koan_kit::app::*;
-use koan_runtime::{Artist, BrowseFilter};
+use koan_runtime::{Artist, ArtistSort, BrowseFilter};
 
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
@@ -15,7 +20,7 @@ use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
 use crate::components::Text;
-use crate::components::{ROW_GROUP, RowKind, RowNumber, TableRow};
+use crate::components::{ROW_GROUP, RowKind, RowMetrics, RowNumber, SectionHeading, TableRow};
 use crate::navigator::{Listing, Shelf};
 use crate::theme::Icon;
 use crate::theme::Tone;
@@ -24,6 +29,43 @@ use crate::theme::Tone;
 struct Query {
     search: Option<String>,
     filter: BrowseFilter,
+    /// `None` for a shelf's "see all", which reads as the shelf does.
+    sort: Option<ArtistSort>,
+}
+
+impl Query {
+    /// Whether the listing draws a heading per initial.
+    fn grouped(&self) -> bool {
+        self.sort == Some(ArtistSort::Name)
+    }
+}
+
+/// One line of the list: an initial's heading, numbered by its run, or an
+/// artist by index.
+#[derive(Clone, Debug, PartialEq)]
+enum Line {
+    Initial(SharedString, usize),
+    Artist(usize),
+}
+
+/// `names` as lines: when `grouped`, a heading over each run of one initial
+/// as the listing orders them, so the headings follow the collation even
+/// where an initial (`#`) comes round twice.
+fn lay_out<'a>(names: impl IntoIterator<Item = &'a str>, grouped: bool) -> Vec<Line> {
+    let mut lines = Vec::new();
+    let mut last = None;
+    for (ix, name) in names.into_iter().enumerate() {
+        if grouped {
+            let initial = koan_runtime::name_initial(name);
+            if last != Some(initial) {
+                last = Some(initial);
+                let run = lines.len() - ix;
+                lines.push(Line::Initial(initial.to_string().into(), run));
+            }
+        }
+        lines.push(Line::Artist(ix));
+    }
+    lines
 }
 
 /// The browser's columns, in points at 100 %: the heart, the counts.
@@ -50,6 +92,10 @@ pub struct ArtistBrowser {
     page: Page,
     artists: Vec<Artist>,
     order: Vec<Playable>,
+    /// The list's lines, headings among the artists when grouped.
+    lines: Vec<Line>,
+    /// Each artist's line.
+    line_of: Vec<usize>,
     loaded: Option<(Query, u64)>,
     loading: Option<(Query, u64)>,
     request: u64,
@@ -152,6 +198,8 @@ impl ArtistBrowser {
             page,
             artists,
             order,
+            lines: Vec::new(),
+            line_of: Vec::new(),
             loaded,
             failed: None,
             loading: None,
@@ -185,7 +233,10 @@ impl ArtistBrowser {
             .as_ref()
             .map(|loaded| chrome::kept(loaded, &query, version))
         {
-            Some(chrome::Kept::Draw) => this.restore_scroll(),
+            Some(chrome::Kept::Draw) => {
+                this.lay_out();
+                this.restore_scroll();
+            }
             Some(kept) => {
                 if kept == chrome::Kept::Forget {
                     this.restore = None;
@@ -213,12 +264,26 @@ impl ArtistBrowser {
             return Query {
                 search: super::scope::search(shelf, &self.lib, cx),
                 filter: super::scope::filter(shelf),
+                sort: None,
             };
         }
         let browse = self.lib.browse.read(cx);
         Query {
             search: browse.search(),
             filter: browse.filter.clone(),
+            sort: Some(browse.effective_artist_sort()),
+        }
+    }
+
+    /// The lines for the listing loaded.
+    fn lay_out(&mut self) {
+        let grouped = self.loaded.as_ref().is_some_and(|(q, _)| q.grouped());
+        self.lines = lay_out(self.artists.iter().map(|a| a.name.as_str()), grouped);
+        self.line_of = vec![0; self.artists.len()];
+        for (line, l) in self.lines.iter().enumerate() {
+            if let Line::Artist(ix) = l {
+                self.line_of[*ix] = line;
+            }
         }
     }
 
@@ -236,7 +301,7 @@ impl ArtistBrowser {
         let engine = self.lib.engine.clone();
         self._load = Some(cx.spawn(async move |this, cx| {
             let q = wanted.0.clone();
-            let artists = engine.artists(q.search, q.filter).await;
+            let artists = engine.artist_listing(q.search, q.filter, q.sort).await;
             this.update(cx, |this, cx| {
                 if this.request != request {
                     return;
@@ -244,9 +309,24 @@ impl ArtistBrowser {
                 this.loading = None;
                 match artists {
                     Ok(artists) => {
+                        // Another order starts from the top, the keys too.
+                        if this
+                            .loaded
+                            .as_ref()
+                            .is_some_and(|(q, _)| q.sort != wanted.0.sort)
+                        {
+                            this.restore = None;
+                            this.cursor.place(0);
+                            this.scroll
+                                .0
+                                .borrow()
+                                .base_handle
+                                .set_offset(Point::default());
+                        }
                         this.order = artists.iter().map(|a| Playable::Artist(a.id)).collect();
                         this.artists = artists;
                         this.loaded = Some(wanted);
+                        this.lay_out();
                         this.failed = None;
                         this.restore_scroll();
                     }
@@ -331,6 +411,10 @@ impl ArtistBrowser {
             .child(artist.name.clone());
         let play = cx.weak_entity();
         let count = self.artists.len();
+        let (line, lines) = (
+            self.line_of.get(index).copied().unwrap_or(index),
+            self.lines.len(),
+        );
         let scroll = self.scroll.clone();
         let phone = p.look.compact;
         let albums = chrome::count(artist.album_count.max(0) as u64, "album", "albums");
@@ -348,7 +432,7 @@ impl ArtistBrowser {
                 if favourite { "favourite" } else { "" },
             ]))
             .place(index, count)
-            .on_reveal(move |_, _| crate::components::reveal_around(&scroll, index, count))
+            .on_reveal(move |_, _| crate::components::reveal_around(&scroll, line, lines))
         })
         .selected(selected)
         .cursor(self.keyed && self.cursor.at == Some(index))
@@ -404,6 +488,36 @@ impl ArtistBrowser {
         .into_any_element()
     }
 
+    /// Line `i` of the list: an initial's heading or an artist's row.
+    fn line(&mut self, p: &Paint, i: usize, cx: &mut Context<Self>) -> AnyElement {
+        match self.lines.get(i).cloned() {
+            Some(Line::Initial(initial, run)) => {
+                let kind = if p.look.compact {
+                    RowKind::Text
+                } else {
+                    RowKind::Line
+                };
+                let scroll = self.scroll.clone();
+                let lines = self.lines.len();
+                let heading = SectionHeading::new(initial.as_ref())
+                    .id(("artist-initial", run))
+                    .in_row(RowMetrics::height(kind, &p.look));
+                let heading = if p.a11y {
+                    heading
+                        .on_reveal(move |_, _| crate::components::reveal_around(&scroll, i, lines))
+                } else {
+                    heading
+                };
+                div()
+                    .px(RowMetrics::page_margin(&p.look))
+                    .child(heading)
+                    .into_any_element()
+            }
+            Some(Line::Artist(ix)) => self.row(p, ix, cx),
+            None => div().h(rows::height(p)).into_any_element(),
+        }
+    }
+
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
         self.selection.select_all(&self.order);
         cx.notify();
@@ -440,6 +554,9 @@ impl ArtistBrowser {
     pub fn controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         chrome::browser_controls(&self.search, window, cx)
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
+            .child(chrome::artist_sort_button(&self.lib, cx))
+            .spacer()
+            .child(chrome::pick_toggle(self.selection.is_active(), cx))
             .into_any_element()
     }
 }
@@ -519,10 +636,10 @@ impl Render for ArtistBrowser {
             crate::components::uniform_list(
                 "artists",
                 // Blank rows after the last pass under a phone's foot.
-                self.artists.len() + under_foot.0,
+                self.lines.len() + under_foot.0,
                 cx.processor(|this, range: Range<usize>, window, cx| {
                     let p = Paint::of(window, cx);
-                    range.map(|i| this.row(&p, i, cx)).collect::<Vec<_>>()
+                    range.map(|i| this.line(&p, i, cx)).collect::<Vec<_>>()
                 }),
             )
             .track_scroll(&self.scroll)
@@ -587,6 +704,21 @@ impl Render for ArtistBrowser {
                     )
                 })),
         )
+        .when(self.selection.is_active(), |d| {
+            d.child(chrome::selection_bar(
+                p,
+                &self.lib,
+                &self.selection,
+                cx.entity(),
+                cx,
+            ))
+        })
+    }
+}
+
+impl chrome::Picking for ArtistBrowser {
+    fn selection_mut(&mut self) -> &mut Selection {
+        &mut self.selection
     }
 }
 
@@ -604,19 +736,26 @@ impl super::keys::KeyedList for ArtistBrowser {
     }
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
-        self.selection.only(self.order[from]);
-        if to != from {
-            self.selection.click(self.order[to], true, &self.order);
-        }
+        super::keys::mark_range(&mut self.selection, &self.order, from, to);
     }
 
     fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
         self.selection.click(self.order[ix], false, &self.order);
     }
 
+    /// A run's first artist brings its heading too when reached from below
+    /// (Home, or the arrow up into it), or when the heading is the top line,
+    /// which may be cut off.
     fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
-        self.scroll
-            .scroll_to_item(ix, crate::components::ScrollStrategy::Nearest);
+        let line = self.line_of.get(ix).copied().unwrap_or(ix);
+        let top = self.scroll.logical_scroll_top_index();
+        let headed = line.checked_sub(1).filter(|above| {
+            line <= top + 1 && matches!(self.lines.get(*above), Some(Line::Initial(..)))
+        });
+        self.scroll.scroll_to_item(
+            headed.unwrap_or(line),
+            crate::components::ScrollStrategy::Nearest,
+        );
     }
 
     /// Return opens the artist, as a double click does.
@@ -635,5 +774,33 @@ impl super::keys::KeyedList for ArtistBrowser {
 impl Focusable for ArtistBrowser {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Line, lay_out};
+
+    #[test]
+    fn grouped_lines_head_each_run_and_flat_ones_have_none() {
+        let names = ["!!!", "aphex twin", "Âme", "Boards of Canada", "{x}"];
+        assert_eq!(
+            lay_out(names, true),
+            [
+                Line::Initial("#".into(), 0),
+                Line::Artist(0),
+                Line::Initial("A".into(), 1),
+                Line::Artist(1),
+                Line::Artist(2),
+                Line::Initial("B".into(), 2),
+                Line::Artist(3),
+                Line::Initial("#".into(), 3),
+                Line::Artist(4),
+            ]
+        );
+        assert_eq!(
+            lay_out(names, false),
+            (0..5).map(Line::Artist).collect::<Vec<_>>()
+        );
     }
 }

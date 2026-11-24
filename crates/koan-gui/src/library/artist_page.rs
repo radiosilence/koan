@@ -1006,20 +1006,8 @@ impl TrackList for ArtistPage {
                     .map(|r| r.appearances.iter().map(|t| t.id).collect())
                     .unwrap_or_default();
                 let item = Playable::Track(track);
-                let m = event.modifiers();
-                // Outside the mode a plain click marks the row alone: the
-                // mode would turn every tile's click into a tick.
-                let plays = if !m.shift && !m.secondary(cx) && !self.selection.is_active() {
-                    let double = event.click_count() >= 2;
-                    if !double {
-                        self.selection.mark(item);
-                    }
-                    double
-                } else {
-                    let order = || ids.iter().map(|id| Playable::Track(*id)).collect();
-                    rows::select(&mut self.selection, item, event, order, cx)
-                };
-                if plays {
+                let order = || ids.iter().map(|id| Playable::Track(*id)).collect();
+                if rows::select(&mut self.selection, item, event, order, cx) {
                     actions::play_list(&self.lib, self.row_tracks(), index, cx);
                 }
                 cx.notify();
@@ -1122,6 +1110,21 @@ impl super::keys::KeyedList for ArtistPage {
                 })),
             )
         });
+    }
+}
+
+impl ArtistPage {
+    /// Whether records and tracks are being picked: what the toolbar's
+    /// select shows.
+    pub fn picking(&self) -> bool {
+        self.selection.is_active()
+    }
+
+    /// The page's controls, in the window's toolbar: select.
+    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::components::ToolbarGroup::new()
+            .child(chrome::pick_toggle(self.selection.is_active(), cx))
+            .into_any_element()
     }
 }
 

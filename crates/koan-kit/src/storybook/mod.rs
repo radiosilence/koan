@@ -25,9 +25,10 @@ use crate::components::{
     ControlGroup, CopyButton, Cover, CoverArt, DragChip, EmptyState, FormRow, INSERTION,
     IconToggle, KoanContextMenu, KoanInsets, Level, ListRow, Menu, MenuEntry, MenuPanel, MenuRow,
     Meter, NavRow, PageHeader, Picker, Placeholder, ProgressBar, ProgressRing, ProgressRow,
-    RowKind, ScrollArea, SectionHeader, SectionHeading, Segmented, SelectionBar, Slider, Sparkline,
-    Spinner, StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextArea, TextField, TileArt,
-    TileMark, TileSleeve, Toggle, Toolbar, ToolbarButton, ToolbarTitle, Tooltip, TwoLines,
+    RowKind, RowMetrics, ScrollArea, SectionHeader, SectionHeading, Segmented, SelectionBar,
+    Slider, Sparkline, Spinner, StatusBlock, StatusLine, Stepper, TabStrip, TableRow, TextArea,
+    TextField, TileArt, TileMark, TileSleeve, Toggle, Toolbar, ToolbarButton, ToolbarTitle,
+    Tooltip, TwoLines,
 };
 use crate::theme::{
     self, Accent, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole,
@@ -1203,6 +1204,10 @@ impl StoryContent {
                         .badge(Badge::new("smart"))
                         .into_any_element(),
                     SectionHeading::new("Appears on").into_any_element(),
+                    // A letter over its run in a list of rows one height.
+                    SectionHeading::new("a")
+                        .in_row(RowMetrics::height(RowKind::Line, look))
+                        .into_any_element(),
                     SectionHeader::new("Frosted bar").into_any_element(),
                     frosted_bar(look),
                     // A touch window's bar over its tabs, composed from a

@@ -168,10 +168,10 @@ fn row_below(at: usize, rows: isize, columns: usize) -> usize {
     }
 }
 
-/// A grid's or a mixed page's pick from `from` to `to` of `order`, either
-/// way round, extending later from `from`: one item alone is marked without
-/// starting a pick, as a plain click marks a row, so a click on a tile still
-/// plays it; a range starts one.
+/// A library page's pick from `from` to `to` of `order`, either way round,
+/// extending later from `from`: one item alone is marked without starting a
+/// pick, as a plain click marks a row, so a click on a tile still plays it
+/// and the selection bar stays away; a range starts one.
 pub fn mark_range(selection: &mut Selection, order: &[Playable], from: usize, to: usize) {
     if from == to {
         selection.arrow(order[from]);

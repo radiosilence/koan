@@ -1465,6 +1465,52 @@ pub enum TrackBrowseSort {
     BestMatch,
 }
 
+/// How the artist browser orders the library's artists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtistSort {
+    /// By name, as the library's collation reads it: the order a list grouped
+    /// by initial draws.
+    Name,
+    /// Most records first.
+    Albums,
+    /// Most tracks first.
+    Tracks,
+    /// The artist whose newest record arrived most recently first.
+    RecentlyAdded,
+    /// Most recently played first. Only with [`BrowseFilter::recent`]; without
+    /// it, by name.
+    LastPlayed,
+    /// The closest match to the search first. Without a search, by name.
+    BestMatch,
+}
+
+impl From<ArtistSort> for koan_core::browse::ArtistSort {
+    fn from(sort: ArtistSort) -> Self {
+        match sort {
+            ArtistSort::Name => Self::Name,
+            ArtistSort::Albums => Self::Albums,
+            ArtistSort::Tracks => Self::Tracks,
+            ArtistSort::RecentlyAdded => Self::RecentlyAdded,
+            ArtistSort::LastPlayed => Self::LastPlayed,
+            ArtistSort::BestMatch => Self::BestMatch,
+        }
+    }
+}
+
+impl From<koan_core::browse::ArtistSort> for ArtistSort {
+    fn from(sort: koan_core::browse::ArtistSort) -> Self {
+        use koan_core::browse::ArtistSort as S;
+        match sort {
+            S::Name => Self::Name,
+            S::Albums => Self::Albums,
+            S::Tracks => Self::Tracks,
+            S::RecentlyAdded => Self::RecentlyAdded,
+            S::LastPlayed => Self::LastPlayed,
+            S::BestMatch => Self::BestMatch,
+        }
+    }
+}
+
 /// A page of the track browser, and how many tracks pass its filters in all.
 #[derive(Debug, Clone)]
 pub struct TrackListing {
@@ -3133,7 +3179,8 @@ pub struct ServerExtension {
 /// What a command acts on, named rather than resolved: the engine reads an
 /// album's, an artist's or a playlist's tracks on the command lane, in turn
 /// with every other command, so a client never waits on that read before its
-/// command takes its place.
+/// command takes its place. An artist's tracks come in release order, by
+/// date across every kind of record (`queries::tracks_for_artist`).
 #[derive(Debug, Clone)]
 pub enum TrackSet {
     Tracks { ids: Vec<i64> },

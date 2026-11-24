@@ -112,6 +112,8 @@ pub struct SectionHeading {
     count: Option<SharedString>,
     open: Option<(ElementId, super::Handler<ClickEvent>)>,
     reveal: Option<super::choice::Run>,
+    row: Option<Pixels>,
+    id: Option<ElementId>,
 }
 
 impl SectionHeading {
@@ -123,7 +125,24 @@ impl SectionHeading {
             count: None,
             open: None,
             reveal: None,
+            row: None,
+            id: None,
         }
+    }
+
+    /// The heading's element id, for a list where one title heads several
+    /// sections; otherwise it is named after its title.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// Drawn in `height`, a row's, for a list whose items are all one height
+    /// (a uniform list's letter headings): the title sits at the row's foot,
+    /// nearer the rows under it than the one above.
+    pub fn in_row(mut self, height: Pixels) -> Self {
+        self.row = Some(height);
+        self
     }
 
     /// Run when a screen reader moves to the heading in a list that draws
@@ -209,7 +228,9 @@ impl RenderOnce for SectionHeading {
         };
         let list_view = window.current_view();
         let heading = super::accessible(
-            div().id(ElementId::Name(format!("section-heading-{spoken}").into())),
+            div().id(self
+                .id
+                .unwrap_or_else(|| ElementId::Name(format!("section-heading-{spoken}").into()))),
             gpui::Role::Heading,
             Some(spoken),
         );
@@ -225,11 +246,15 @@ impl RenderOnce for SectionHeading {
         }
         .aria_level(2)
         .w_full()
-        .h(Self::height(&look))
-        .pt(Self::above(&look))
-        .pb(Self::below(&look))
-        .flex()
-        .items_center()
+        .map(|d| match self.row {
+            Some(height) => d.h(height).pb(look.space(Space::Xs)).flex().items_end(),
+            None => d
+                .h(Self::height(&look))
+                .pt(Self::above(&look))
+                .pb(Self::below(&look))
+                .flex()
+                .items_center(),
+        })
         .gap(look.space(Space::L))
         .child(title)
         .children(self.trailing)

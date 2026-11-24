@@ -179,6 +179,78 @@ impl TrackSort {
     }
 }
 
+/// The artist browser's orders.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ArtistSort {
+    /// By name, as the collation reads it: what a browser grouped by initial
+    /// ([`crate::helpers::initial`]) draws.
+    #[default]
+    Name,
+    /// Most records first.
+    Albums,
+    /// Most tracks first.
+    Tracks,
+    /// The artist whose newest record arrived most recently first.
+    RecentlyAdded,
+    /// Most recently played first: only offered with the Recently Played filter.
+    LastPlayed,
+    /// The closest match to the name filter first: only offered with one.
+    BestMatch,
+}
+
+impl ArtistSort {
+    /// Whether the menu offers this sort under `filter` and a search, as
+    /// `offered` lists them, without building the list.
+    pub fn is_offered(self, filter: &BrowseFilter, searching: bool) -> bool {
+        match self {
+            ArtistSort::BestMatch => searching,
+            ArtistSort::LastPlayed => filter.recent,
+            _ => true,
+        }
+    }
+
+    /// As [`AlbumSort::offered`].
+    pub fn offered(filter: &BrowseFilter, searching: bool) -> Vec<ArtistSort> {
+        let mut sorts = vec![ArtistSort::Name];
+        if searching {
+            sorts.push(ArtistSort::BestMatch);
+        }
+        if filter.recent {
+            sorts.push(ArtistSort::LastPlayed);
+        }
+        sorts.extend([
+            ArtistSort::Albums,
+            ArtistSort::Tracks,
+            ArtistSort::RecentlyAdded,
+        ]);
+        sorts
+    }
+
+    /// The order a client without a sort of its own lists in: Recently
+    /// Played's with that filter, else the closest match to the name filter,
+    /// and by name without one.
+    pub fn natural(filter: &BrowseFilter, searching: bool) -> ArtistSort {
+        if filter.recent {
+            ArtistSort::LastPlayed
+        } else if searching {
+            ArtistSort::BestMatch
+        } else {
+            ArtistSort::Name
+        }
+    }
+
+    fn order(self) -> ArtistOrder {
+        match self {
+            ArtistSort::Name => ArtistOrder::Name,
+            ArtistSort::Albums => ArtistOrder::AlbumCount,
+            ArtistSort::Tracks => ArtistOrder::TrackCount,
+            ArtistSort::RecentlyAdded => ArtistOrder::RecentlyAdded,
+            ArtistSort::LastPlayed => ArtistOrder::LastPlayed,
+            ArtistSort::BestMatch => ArtistOrder::Relevance,
+        }
+    }
+}
+
 /// A name filter someone typed, or nothing: whitespace is not a filter.
 pub fn trimmed(search: Option<&str>) -> Option<&str> {
     search.map(str::trim).filter(|s| !s.is_empty())
@@ -202,20 +274,17 @@ pub fn albums<'a>(
     }
 }
 
-/// The artist browser's listing. It has no sort of its own: Recently Played's
-/// order with that filter, else the closest match to the name filter, and by
-/// name without one.
-pub fn artists<'a>(filter: &'a BrowseFilter, search: Option<&'a str>) -> ArtistQuery<'a> {
-    let played = filter.played();
+/// The artist browser's listing, in `sort`'s order.
+pub fn artists<'a>(
+    filter: &'a BrowseFilter,
+    search: Option<&'a str>,
+    sort: ArtistSort,
+) -> ArtistQuery<'a> {
     ArtistQuery {
         search: trimmed(search),
         favourites_of: filter.favourites.then_some(LOCAL_USER),
-        order: if played.is_some() {
-            ArtistOrder::LastPlayed
-        } else {
-            ArtistOrder::Relevance
-        },
-        played,
+        order: sort.order(),
+        played: filter.played(),
         filter: filter.albums(),
         ..Default::default()
     }
@@ -308,6 +377,54 @@ mod tests {
     }
 
     #[test]
+    fn artist_sorts_are_offered_and_chosen_by_filter_and_search() {
+        let none = BrowseFilter::default();
+        let recent = BrowseFilter {
+            recent: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            ArtistSort::offered(&none, false),
+            [
+                ArtistSort::Name,
+                ArtistSort::Albums,
+                ArtistSort::Tracks,
+                ArtistSort::RecentlyAdded
+            ]
+        );
+        assert_eq!(
+            ArtistSort::offered(&recent, true)[..3],
+            [
+                ArtistSort::Name,
+                ArtistSort::BestMatch,
+                ArtistSort::LastPlayed
+            ]
+        );
+        assert_eq!(ArtistSort::natural(&none, false), ArtistSort::Name);
+        assert_eq!(ArtistSort::natural(&none, true), ArtistSort::BestMatch);
+        assert_eq!(ArtistSort::natural(&recent, true), ArtistSort::LastPlayed);
+        for filter in [&none, &recent] {
+            for searching in [false, true] {
+                let natural = ArtistSort::natural(filter, searching);
+                assert!(ArtistSort::offered(filter, searching).contains(&natural));
+                for sort in [
+                    ArtistSort::Name,
+                    ArtistSort::Albums,
+                    ArtistSort::Tracks,
+                    ArtistSort::RecentlyAdded,
+                    ArtistSort::LastPlayed,
+                    ArtistSort::BestMatch,
+                ] {
+                    assert_eq!(
+                        sort.is_offered(filter, searching),
+                        ArtistSort::offered(filter, searching).contains(&sort)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_year_range_counts_once() {
         let f = BrowseFilter {
             year_from: Some(1990),
@@ -323,6 +440,6 @@ mod tests {
     fn a_blank_name_filter_is_no_filter() {
         let f = BrowseFilter::default();
         assert_eq!(albums(&f, Some("  "), AlbumSort::Title, 0).search, None);
-        assert_eq!(artists(&f, Some(" x ")).search, Some("x"));
+        assert_eq!(artists(&f, Some(" x "), ArtistSort::Name).search, Some("x"));
     }
 }

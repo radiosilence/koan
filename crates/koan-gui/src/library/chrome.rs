@@ -216,32 +216,53 @@ pub fn with_filter(search: &Entity<SearchField>, p: &Paint) -> AnyElement {
 }
 
 pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
-    let current = lib.browse.read(cx).effective_album_sort();
+    sort_menu(
+        "album-sort",
+        lib,
+        cx,
+        |b| {
+            let offered = browse::album_sorts(&b.filter, b.search().is_some());
+            (b.effective_album_sort(), offered)
+        },
+        browse::album_sort_label,
+        |b, sort, cx| {
+            // Random again is a new shuffle.
+            if sort == koan_runtime::AlbumSort::Random && b.album_sort == sort {
+                b.reshuffle(cx);
+            }
+            b.update(cx, |b| b.album_sort = sort);
+        },
+    )
+}
+
+/// A browser's sort menu, in the toolbar: `sorts` gives the sort in force and
+/// those offered, `choose` takes the one picked.
+pub fn sort_menu<S: Copy + PartialEq + 'static>(
+    id: &'static str,
+    lib: &Lib,
+    cx: &App,
+    sorts: fn(&browse::Browse) -> (S, Vec<S>),
+    label: fn(S) -> &'static str,
+    choose: fn(&mut browse::Browse, S, &mut Context<browse::Browse>),
+) -> ToolbarMenu {
+    let (current, _) = sorts(lib.browse.read(cx));
     let browse = lib.browse.clone();
     ToolbarMenu::new(
-        "album-sort",
+        id,
         ToolbarButton::new(
-            "album-sort-trigger",
+            SharedString::from(format!("{id}-trigger")),
             Icon::Sort,
-            format!("sort: {}", browse::album_sort_label(current)),
+            format!("sort: {}", label(current)),
         ),
         move |dismiss, _, cx| {
-            let b = browse.read(cx);
-            let current = b.effective_album_sort();
-            let sorts = browse::album_sorts(&b.filter, b.search().is_some());
-            MenuPanel::new().children(sorts.into_iter().enumerate().map(|(i, sort)| {
+            let (current, offered) = sorts(browse.read(cx));
+            MenuPanel::new().children(offered.into_iter().enumerate().map(|(i, sort)| {
                 let (browse, dismiss) = (browse.clone(), dismiss.clone());
-                MenuRow::new(("album-sort", i), browse::album_sort_label(sort))
+                MenuRow::new((id, i), label(sort))
                     .checked(sort == current)
                     .on_click(move |_, window, cx| {
                         dismiss(window, cx);
-                        browse.update(cx, |b, cx| {
-                            // Random again is a new shuffle.
-                            if sort == koan_runtime::AlbumSort::Random && b.album_sort == sort {
-                                b.reshuffle(cx);
-                            }
-                            b.update(cx, |b| b.album_sort = sort);
-                        });
+                        browse.update(cx, |b, cx| choose(b, sort, cx));
                     })
             }))
         },
@@ -261,29 +282,32 @@ pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<ToolbarButton> {
 }
 
 pub fn track_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
-    let current = lib.browse.read(cx).effective_track_sort();
-    let browse = lib.browse.clone();
-    ToolbarMenu::new(
+    sort_menu(
         "track-sort",
-        ToolbarButton::new(
-            "track-sort-trigger",
-            Icon::Sort,
-            format!("sort: {}", browse::track_sort_label(current)),
-        ),
-        move |dismiss, _, cx| {
-            let b = browse.read(cx);
-            let current = b.effective_track_sort();
-            let sorts = browse::track_sorts(&b.filter, b.search().is_some());
-            MenuPanel::new().children(sorts.into_iter().enumerate().map(|(i, sort)| {
-                let (browse, dismiss) = (browse.clone(), dismiss.clone());
-                MenuRow::new(("track-sort", i), browse::track_sort_label(sort))
-                    .checked(sort == current)
-                    .on_click(move |_, window, cx| {
-                        dismiss(window, cx);
-                        browse.update(cx, |b, cx| b.update(cx, |b| b.track_sort = sort));
-                    })
-            }))
+        lib,
+        cx,
+        |b| {
+            let offered = browse::track_sorts(&b.filter, b.search().is_some());
+            (b.effective_track_sort(), offered)
         },
+        browse::track_sort_label,
+        |b, sort, cx| b.update(cx, |b| b.track_sort = sort),
+    )
+}
+
+/// The artist browser's: the list grouped by name, or one ordered by a
+/// count, by arrival or, under their filters, by play and match.
+pub fn artist_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
+    sort_menu(
+        "artist-sort",
+        lib,
+        cx,
+        |b| {
+            let offered = browse::artist_sorts(&b.filter, b.search().is_some());
+            (b.effective_artist_sort(), offered)
+        },
+        browse::artist_sort_label,
+        |b, sort, cx| b.set_artist_sort(sort, cx),
     )
 }
 
@@ -522,6 +546,21 @@ impl Render for FilterPanel {
 /// A page whose items can be picked.
 pub trait Picking: Sized + 'static {
     fn selection_mut(&mut self) -> &mut Selection;
+}
+
+/// The toolbar's select for a page that picks: starts the mode, or ends it
+/// while `active`.
+pub fn pick_toggle<V: Picking>(active: bool, cx: &mut Context<V>) -> ToolbarButton {
+    let on_click = cx.listener(|this: &mut V, _: &ClickEvent, _, cx| {
+        let selection = this.selection_mut();
+        if selection.is_active() {
+            selection.end();
+        } else {
+            selection.begin(None);
+        }
+        cx.notify();
+    });
+    select_toggle(active, on_click, cx)
 }
 
 /// Along the foot of a page while picking: how many, and the verbs. Each verb

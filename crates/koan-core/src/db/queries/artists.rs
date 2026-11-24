@@ -76,6 +76,9 @@ pub enum ArtistOrder {
     /// Fewest tracks first, then by name. Counts tracks, so not with
     /// `ArtistQuery::without_track_counts`; with it, `FewestAlbums`.
     FewestTracks,
+    /// Most tracks first, then by name. Counts tracks, so not with
+    /// `ArtistQuery::without_track_counts`; with it, `AlbumCount`.
+    TrackCount,
 }
 
 impl ArtistOrder {
@@ -88,6 +91,7 @@ impl ArtistOrder {
             Self::LastPlayed => "MAX(p.last) DESC, MAX(p.last_id) DESC",
             Self::FewestAlbums => "COUNT(DISTINCT al.id), a.name COLLATE LIBRARY",
             Self::FewestTracks => "COUNT(t.id), a.name COLLATE LIBRARY",
+            Self::TrackCount => "COUNT(t.id) DESC, a.name COLLATE LIBRARY",
         }
     }
 }
@@ -170,6 +174,7 @@ fn list_artists_resolved(conn: &Connection, q: &ArtistQuery) -> Result<Vec<Artis
     let order = match q.order {
         ArtistOrder::LastPlayed if q.played.is_none() => ArtistOrder::Name,
         ArtistOrder::FewestTracks if q.without_track_counts => ArtistOrder::FewestAlbums,
+        ArtistOrder::TrackCount if q.without_track_counts => ArtistOrder::AlbumCount,
         order => order,
     };
     let order_by = match (order, q.search, q.ids) {
@@ -498,6 +503,42 @@ mod tests {
         .into_iter()
         .map(|a| a.title)
         .collect()
+    }
+
+    #[test]
+    fn most_tracks_and_most_records_order_by_their_counts_then_name() {
+        use crate::db::queries::{sample_meta, upsert_track};
+        let db = stocked_db();
+        for (title, artist, album) in [
+            ("u", "Coil", "Album"),
+            ("v", "Coil", "Album"),
+            ("w", "Boards of Canada", "Other"),
+        ] {
+            let mut m = sample_meta(title, artist, album);
+            m.path = Some(format!("/music/{artist}/{title}.flac"));
+            upsert_track(&db.conn, &m).unwrap();
+        }
+        let names = |order| -> Vec<String> {
+            list_artists(
+                &db.conn,
+                &ArtistQuery {
+                    order,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect()
+        };
+        assert_eq!(
+            names(ArtistOrder::TrackCount),
+            ["Coil", "Boards of Canada", "Autechre", "Dopplereffekt"]
+        );
+        assert_eq!(
+            names(ArtistOrder::AlbumCount),
+            ["Boards of Canada", "Autechre", "Coil", "Dopplereffekt"]
+        );
     }
 
     #[test]

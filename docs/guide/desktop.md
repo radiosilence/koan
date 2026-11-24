@@ -75,6 +75,12 @@ Every name that links to a record or an artist, in the queue, the transport, Now
 
 The window follows the system's display settings as they change. With Increase Contrast on a Mac, or high contrast on GNOME, text and rules are drawn stronger, the record's colour is held to a contrast of 7:1, and picked rows are outlined. Reduce Transparency on a Mac takes away the colour wash behind the pages. Reduce Motion stops every animation. On GNOME the system's text scaling sets the starting text size, and Settings → Appearance → Text size scales it from there.
 
+## The library
+
+Albums, Artists and Tracks each hold a filter, a sort and Select in the toolbar; a record's page and an artist's page hold Select alone. Clicking a row marks it, double-clicking plays or opens it, and ⌘-click (Ctrl on Linux) or Shift-click starts picking, as Select does; while picking, clicks only tick rows and tiles, a double-click included, ⌘A ticks the whole page and a bar along the foot plays, queues, adds to a playlist, favourites or organises the pick. On iPad and iPhone a tap on a row plays it or opens it, on a record's or artist's page too, and Select is the only way to pick.
+
+The artist browser lists artists by name under a heading per initial, as a phone's contacts do, with names in scripts that have no capitals (Japanese, Chinese, Korean) under `#`; a search lists them by closest match and the Recently played filter by last played, until another order is chosen. Its sort menu also orders them flat by most records, most tracks or most recently added. The order chosen lasts until kōan quits, unlike the album and track sorts, which are remembered: each launch opens on the grouped list.
+
 ## The queue
 
 The queue is grouped by record: a heading with the sleeve over each record's run, and a track standing alone with its own sleeve. The playing track is in the accent colour.

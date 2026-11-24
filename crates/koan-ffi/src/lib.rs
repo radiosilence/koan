@@ -24,12 +24,12 @@ use std::sync::Arc;
 #[allow(unused_imports)]
 use koan_runtime::{
     AccountRole, Album, AlbumOnDevice, AlbumPage, AlbumSort, ApiKeyInfo, AppPasswordInfo,
-    Appearance, ArtEvictions, Artist, ArtistInfo, ArtistWalk, Assistants, AttestedKey, AutoEqEntry,
-    AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared, CommandNotice,
-    ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart, DeletedDsp, Device,
-    DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush, DspChannelLayout,
-    DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin, DspImportPlan, DspImportRefusal,
-    DspImportSummary, DspImpulse, DspInfo, DspJoin, DspLayerCurve, DspLayerInfo,
+    Appearance, ArtEvictions, Artist, ArtistInfo, ArtistSort, ArtistWalk, Assistants, AttestedKey,
+    AutoEqEntry, AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared,
+    CommandNotice, ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart, DeletedDsp,
+    Device, DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush,
+    DspChannelLayout, DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin, DspImportPlan,
+    DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin, DspLayerCurve, DspLayerInfo,
     DspMadeAgainstPreview, DspMeasurementReading, DspMixOutput, DspMixSource, DspOutputState,
     DspOverview, DspPoint, DspProfileDetail, DspProfileSummary, DspResponse, DspRole, DspSavedCopy,
     DspStarter, DspTargetName, DspTargetOption, DspTargets, DspTuningEntry, EntryStatus,
@@ -281,6 +281,28 @@ pub fn set_config_dir(path: String) {
 #[uniffi::export]
 pub fn album_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<AlbumSort> {
     koan_runtime::album_sorts_offered(filter, searching)
+}
+
+/// As `album_sorts_offered`, for the artist browser.
+#[uniffi::export]
+pub fn artist_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<ArtistSort> {
+    koan_runtime::artist_sorts_offered(filter, searching)
+}
+
+/// The artist sort a listing takes when none is chosen: Recently Played's
+/// under that filter, best match under a search, by name otherwise.
+#[uniffi::export]
+pub fn natural_artist_sort(filter: BrowseFilter, searching: bool) -> ArtistSort {
+    koan_runtime::natural_artist_sort(filter, searching)
+}
+
+/// The heading `name` sits under in a list of artists by name, grouped by
+/// initial: its first letter as the library's collation reads it, capitalised,
+/// or `#` for anything without case. Draw a heading per run of the listing,
+/// since `#` can be any number of runs.
+#[uniffi::export]
+pub fn name_initial(name: String) -> String {
+    koan_runtime::name_initial(&name).to_string()
 }
 
 /// As `album_sorts_offered`, for the track browser.
@@ -812,6 +834,17 @@ impl KoanEngine {
         filter: BrowseFilter,
     ) -> Result<Vec<Artist>, KoanError> {
         self.0.clone().artists(search, filter).await
+    }
+
+    /// As `artists`, ordered by `sort`; with none, Recently Played's order
+    /// under that filter, else the closest match to `search`, else by name.
+    pub async fn artist_listing(
+        self: Arc<Self>,
+        search: Option<String>,
+        filter: BrowseFilter,
+        sort: Option<ArtistSort>,
+    ) -> Result<Vec<Artist>, KoanError> {
+        self.0.clone().artist_listing(search, filter, sort).await
     }
 
     pub async fn artist(self: Arc<Self>, artist_id: i64) -> Result<Option<Artist>, KoanError> {
@@ -2909,12 +2942,12 @@ mod serve {
     #[allow(unused_imports)]
     use koan_runtime::{
         AccountRole, Album, AlbumOnDevice, AlbumPage, AlbumSort, ApiKeyInfo, AppPasswordInfo,
-        Appearance, ArtEvictions, Artist, ArtistInfo, ArtistWalk, Assistants, AttestedKey,
-        AutoEqEntry, AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared,
-        CommandNotice, ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart,
-        DeletedDsp, Device, DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush,
-        DspChannelLayout, DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin,
-        DspImportPlan, DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin,
+        Appearance, ArtEvictions, Artist, ArtistInfo, ArtistSort, ArtistWalk, Assistants,
+        AttestedKey, AutoEqEntry, AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter,
+        CacheCleared, CommandNotice, ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload,
+        CreditPart, DeletedDsp, Device, DeviceInfo, DeviceReach, DspBand, DspBandBounds,
+        DspBandKind, DspBrush, DspChannelLayout, DspCurve, DspDeviceAction, DspEarKind, DspEdited,
+        DspEqJoin, DspImportPlan, DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin,
         DspLayerCurve, DspLayerInfo, DspMadeAgainstPreview, DspMeasurementReading, DspMixOutput,
         DspMixSource, DspOutputState, DspOverview, DspPoint, DspProfileDetail, DspProfileSummary,
         DspResponse, DspRole, DspSavedCopy, DspStarter, DspTargetName, DspTargetOption, DspTargets,
@@ -3077,12 +3110,12 @@ mod state {
     #[allow(unused_imports)]
     use koan_runtime::{
         AccountRole, Album, AlbumOnDevice, AlbumPage, AlbumSort, ApiKeyInfo, AppPasswordInfo,
-        Appearance, ArtEvictions, Artist, ArtistInfo, ArtistWalk, Assistants, AttestedKey,
-        AutoEqEntry, AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared,
-        CommandNotice, ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart,
-        DeletedDsp, Device, DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush,
-        DspChannelLayout, DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin,
-        DspImportPlan, DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin,
+        Appearance, ArtEvictions, Artist, ArtistInfo, ArtistSort, ArtistWalk, Assistants,
+        AttestedKey, AutoEqEntry, AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter,
+        CacheCleared, CommandNotice, ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload,
+        CreditPart, DeletedDsp, Device, DeviceInfo, DeviceReach, DspBand, DspBandBounds,
+        DspBandKind, DspBrush, DspChannelLayout, DspCurve, DspDeviceAction, DspEarKind, DspEdited,
+        DspEqJoin, DspImportPlan, DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin,
         DspLayerCurve, DspLayerInfo, DspMadeAgainstPreview, DspMeasurementReading, DspMixOutput,
         DspMixSource, DspOutputState, DspOverview, DspPoint, DspProfileDetail, DspProfileSummary,
         DspResponse, DspRole, DspSavedCopy, DspStarter, DspTargetName, DspTargetOption, DspTargets,
@@ -3251,12 +3284,12 @@ mod types {
     #[allow(unused_imports)]
     use koan_runtime::{
         AccountRole, Album, AlbumOnDevice, AlbumPage, AlbumSort, ApiKeyInfo, AppPasswordInfo,
-        Appearance, ArtEvictions, Artist, ArtistInfo, ArtistWalk, Assistants, AttestedKey,
-        AutoEqEntry, AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter, CacheCleared,
-        CommandNotice, ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload, CreditPart,
-        DeletedDsp, Device, DeviceInfo, DeviceReach, DspBand, DspBandBounds, DspBandKind, DspBrush,
-        DspChannelLayout, DspCurve, DspDeviceAction, DspEarKind, DspEdited, DspEqJoin,
-        DspImportPlan, DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin,
+        Appearance, ArtEvictions, Artist, ArtistInfo, ArtistSort, ArtistWalk, Assistants,
+        AttestedKey, AutoEqEntry, AutoEqMaker, AutoEqOffer, BrowseChoices, BrowseFilter,
+        CacheCleared, CommandNotice, ConnectedInfo, ConnectionInfo, CoverArt, CoverPreload,
+        CreditPart, DeletedDsp, Device, DeviceInfo, DeviceReach, DspBand, DspBandBounds,
+        DspBandKind, DspBrush, DspChannelLayout, DspCurve, DspDeviceAction, DspEarKind, DspEdited,
+        DspEqJoin, DspImportPlan, DspImportRefusal, DspImportSummary, DspImpulse, DspInfo, DspJoin,
         DspLayerCurve, DspLayerInfo, DspMadeAgainstPreview, DspMeasurementReading, DspMixOutput,
         DspMixSource, DspOutputState, DspOverview, DspPoint, DspProfileDetail, DspProfileSummary,
         DspResponse, DspRole, DspSavedCopy, DspStarter, DspTargetName, DspTargetOption, DspTargets,
@@ -4059,6 +4092,25 @@ mod types {
         LastPlayed,
         /// The closest match to the search first: the search shelf's order.
         /// Without a search, as `Artist`.
+        BestMatch,
+    }
+
+    /// How the artist browser orders the library's artists.
+    #[uniffi::remote(Enum)]
+    pub enum ArtistSort {
+        /// By name, as the library's collation reads it: the order a list grouped
+        /// by initial draws.
+        Name,
+        /// Most records first.
+        Albums,
+        /// Most tracks first.
+        Tracks,
+        /// The artist whose newest record arrived most recently first.
+        RecentlyAdded,
+        /// Most recently played first. Only with [`BrowseFilter::recent`]; without
+        /// it, by name.
+        LastPlayed,
+        /// The closest match to the search first. Without a search, by name.
         BestMatch,
     }
 
@@ -5227,7 +5279,8 @@ mod types {
     /// What a command acts on, named rather than resolved: the engine reads an
     /// album's, an artist's or a playlist's tracks on the command lane, in turn
     /// with every other command, so a client never waits on that read before its
-    /// command takes its place.
+    /// command takes its place. An artist's tracks come in release order, by
+    /// date across every kind of record.
     #[uniffi::remote(Enum)]
     pub enum TrackSet {
         Tracks { ids: Vec<i64> },
