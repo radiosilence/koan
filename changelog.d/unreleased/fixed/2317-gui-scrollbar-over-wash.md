@@ -1,0 +1,1 @@
+- **The scrollbar shows again in the kōan GUI app.** Since 0.74.0 it was drawn beneath the window's wash, because a shader painted over another shader could share its draw order and be sorted under it.
