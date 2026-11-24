@@ -1,0 +1,1 @@
+- **Swiping Now Playing away.** On iPhone the page leaves at the speed it was swiped rather than slowing down as the finger lifts, and a quick flick closes it.
