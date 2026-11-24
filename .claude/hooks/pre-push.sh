@@ -29,8 +29,23 @@ dir=$(grep -oE 'git[[:space:]]+-C[[:space:]]+[^[:space:];&|]+' <<<"$cmd" | head 
 [ -n "$dir" ] && cd "$dir" 2>/dev/null
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 cd "$root" || exit 0
+# Only a Rust tree has anything to format.
+[ -f Cargo.toml ] || exit 0
 
-if ! cargo fmt --all >&2; then
+# Hooks run without the user's shell profile, so cargo may not be on PATH:
+# take it through mise, which pins the toolchain, or from rustup's bin.
+if command -v mise >/dev/null 2>&1; then
+  fmt=(mise exec -- cargo fmt --all)
+elif command -v cargo >/dev/null 2>&1; then
+  fmt=(cargo fmt --all)
+elif [ -x "$HOME/.cargo/bin/cargo" ]; then
+  fmt=("$HOME/.cargo/bin/cargo" fmt --all)
+else
+  echo "Pre-push: no cargo found to run cargo fmt in $root." >&2
+  exit 2
+fi
+
+if ! "${fmt[@]}" >&2; then
   echo "Pre-push: cargo fmt failed in $root; fix that before pushing." >&2
   exit 2
 fi
