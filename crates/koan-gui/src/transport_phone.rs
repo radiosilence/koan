@@ -515,6 +515,24 @@ impl Transport {
             }))
             .clear_of_system(crate::components::Clear::System, window)
             .child(page);
+        // On a wash of its own, as the iOS app's bleed is, inside the layer
+        // a pull moves: the page and its ground leave together, uncovering
+        // the page under them as they go, and nothing changes on screen when
+        // Now Playing is let go at the foot.
+        let wash = crate::theme::wash::WindowWash::shared(window, cx);
+        let page = div()
+            .relative()
+            .size_full()
+            .map(|d| match wash {
+                Some(wash) => d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .child(wash.cached(StyleRefinement::default().size_full())),
+                ),
+                None => d.bg(p.bg),
+            })
+            .child(page);
         if layered {
             self.pulled.layer(page).into_any_element()
         } else {
