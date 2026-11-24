@@ -241,6 +241,8 @@ impl<S: ScrollSource> Element for Scrollbar<S> {
             });
             (bar.clone(), bar)
         });
+        #[cfg(test)]
+        tests::LAST.with(|last| *last.borrow_mut() = Some(bar.clone()));
         let touch = Look::of(window, cx).touch;
         let edge = if touch { FINGER_EDGE } else { EDGE };
         let below = if self.under_bar {
@@ -488,7 +490,65 @@ mod tests {
     // `#[test]` into itself.
     use core::prelude::v1::test;
 
+    thread_local! {
+        pub(super) static LAST: RefCell<Option<Rc<RefCell<Bar>>>> = const { RefCell::new(None) };
+    }
+
+    fn last_bar() -> Rc<RefCell<Bar>> {
+        LAST.with(|last| last.borrow().clone()).expect("prepainted")
+    }
+
+    /// A scroll shows the bar at once: its fade stands at full opacity.
+    #[gpui::test]
+    fn a_scroll_shows_the_bar(cx: &mut TestAppContext) {
+        let (page, cx) = page(50, cx);
+        let bounds = cx.debug_bounds("page").expect("drawn");
+        assert_eq!(
+            last_bar().borrow().fade.at(0, Animated::now()),
+            0.0,
+            "at rest"
+        );
+        cx.simulate_event(ScrollEvent {
+            position: bounds.center(),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-60.0))),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        assert!(offset(&page, cx) > px(0.0), "the content scrolled");
+        let bar = last_bar();
+        assert!(bar.borrow().shown, "shown");
+        assert_eq!(bar.borrow().fade.at(0, Animated::now()), 1.0, "faded in");
+    }
+
+    static GROUND: ShaderProgram = ShaderProgram {
+        name: "test-ground",
+        msl: THUMB.msl,
+        wgsl: THUMB.wgsl,
+        prepare: None,
+    };
+
+    /// The thumb is drawn over a shader painted before it, though both are
+    /// shaders over the same pixels.
+    #[gpui::test]
+    fn the_thumb_is_drawn_over_a_shader_beneath(cx: &mut TestAppContext) {
+        let (_, cx) = page(50, cx);
+        let orders = cx.update(|window, _| {
+            let order = |name: &str| {
+                window
+                    .rendered_scene()
+                    .shaders
+                    .iter()
+                    .find(|shader| shader.program.name == name)
+                    .map(|shader| shader.order)
+                    .expect("painted")
+            };
+            (order(GROUND.name), order(THUMB.name))
+        });
+        assert!(orders.1 > orders.0, "drawn over the ground: {orders:?}");
+    }
+
     struct Page {
+        ground: Animated,
         scroll: ScrollHandle,
         rows: usize,
         pressed: Rc<Cell<u32>>,
@@ -497,11 +557,21 @@ mod tests {
     impl Render for Page {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let pressed = self.pressed.clone();
+            let ground = self.ground.clone();
             div()
                 .id("page")
                 .relative()
                 .size(px(200.0))
                 .debug_selector(|| "page".into())
+                // A shader under the content, as the window's wash is.
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, _, window, _| ground.paint(&GROUND, None, bounds, window),
+                    )
+                    .absolute()
+                    .size_full(),
+                )
                 .child(
                     div()
                         .id("content")
@@ -520,6 +590,7 @@ mod tests {
     fn page(rows: usize, cx: &mut TestAppContext) -> (Entity<Page>, &mut VisualTestContext) {
         cx.update(crate::theme::init);
         let (page, cx) = cx.add_window_view(|_, _| Page {
+            ground: Animated::new(),
             scroll: ScrollHandle::new(),
             rows,
             pressed: Rc::new(Cell::new(0)),
