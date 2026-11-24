@@ -1,0 +1,1 @@
+- **GPUI keeps its layout between frames.** Only the parts of a page whose style or children changed are laid out again, which makes each frame cheaper on large pages.
