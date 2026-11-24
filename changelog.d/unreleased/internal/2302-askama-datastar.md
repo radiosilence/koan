@@ -1,0 +1,1 @@
+- **The standard asks for askama_datastar.** Six servers each wrote their own Datastar patches, SSE responses, request checks and copy of `datastar.js`, on two Datastar releases and with differences nobody chose. `STANDARD.md` §8 now asks for the crate, its one vendored copy of the script, and every fragment written once; §2 names it and §23 audits for glue written by hand.

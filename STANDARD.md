@@ -15,6 +15,7 @@ Reference implementations, at `github.com/radiosilence/<name>`. They show the sh
 | A service with a web UI, OIDC sign-in, GraphQL, MCP and metrics | `slsk-mcp` |
 | A public service holding a credential for others, with a client crate | `koan-push-relay` |
 | A CLI and MCP server over someone else's API | `fastmail-cli` |
+| A small library published to crates.io | `askama-datastar` |
 | An engine that parses hostile input; benchmarks, fuzzing, a threat model | `sbr` |
 | An app on every platform over a Rust core; the design system | `koan` (`koan-core`, `koan-runtime`, `koan-gui`, `koan-kit`) |
 | A static site | `blit` |
@@ -49,7 +50,7 @@ Always:
 | Crypto | `rustls` on `aws-lc-rs`; RustCrypto (`argon2`, `chacha20poly1305`, `sha2`, `hmac`, `subtle`) | Hardware AES and ChaCha; reviewed primitives |
 | Storage | SQLite through `rusqlite` (`bundled`) | One file, no server; `rusqlite` because koan and the shared `sift` crate use it, and two bundled SQLites cannot share a binary |
 | HTML | `askama` | A template is bound to a struct at compile time |
-| Interactivity | Datastar over SSE, vendored | The server keeps the state; about 13 KB gzipped |
+| Interactivity | Datastar over SSE, through `askama_datastar` | The server keeps the state; about 14 KB gzipped. One crate holds the glue and the one pinned copy of the script, so every UI moves to a new Datastar release together |
 | CSS | Tailwind v4's standalone CLI from mise + `@radiosilence/theme` | Shared tokens; the compiled CSS is committed, so `cargo build` needs no Node or Tailwind |
 | Type | Geist Mono | One monospace face: figures align, and every surface reads alike |
 | API | GraphQL (`async-graphql`) | One typed schema for remotes, scripts and agents (§4) |
@@ -170,13 +171,16 @@ For deployment packages, scripts in a TypeScript repository, and browser scripts
 ## 8. Web UI
 
 - **The server renders HTML (`askama`) and Datastar patches it over SSE,** so reloading a page loses nothing. `templates/` holds a shell, `pages/`, and a directory of fragments per area.
+- **A fragment is written once.** It is a template of its own, or a block of the page's template that askama's `blocks` attribute renders alone. The page renders it in place and a patch renders the same template, so there is no second copy of the markup for an update to drift from.
+- **The glue is `askama_datastar`, never written by hand.** `Html::render(&template)?.patch()` is a patch, its line breaks normalised so a `\r` in a value cannot cut an SSE line; `events` answers with patches and signal updates, and `stream` holds a live stream open with a comment after 15 s of quiet, both `Cache-Control: no-store`; `is_datastar` tells Datastar's requests from page loads; `Signals<T>` reads a view's signals and falls back to its default, while an action reads its own with the SDK's `ReadSignals` or axum's `Json`, which refuse what does not parse. Something the crate lacks goes into it once three servers need it; until then the server keeps its own, and a variation on what the crate does (mariastew's heartbeat event in place of the keep-alive) carries a comment naming this rule.
+- **Datastar is the crate's vendored copy,** served by `askama_datastar::script::serve` at the address `script::url` gives and loaded with `<script type="module">`. No server keeps a copy of its own or bundles one, so a release of the crate moves every UI to a new Datastar; a script that imports Datastar's API imports that same address, so the page runs one instance.
 - **Script is the exception.** Each file says what it does that HTML and Datastar cannot. No framework or bundler. A UI whose scripts import one another writes them in TypeScript (§5), its imports through the page's import map at versioned URLs, stripped by oxc in `build.rs` and typechecked in CI, so `cargo build` needs no Node; a lone script may be a plain ES module. A static site ships none.
 - **Native elements before script:** `<dialog>` opened by `commandfor` and `command="show-modal"`, closed by `closedby="any"` or `<form method="dialog">`; `popover`; `autofocus`.
 - **Links have real `href`s and forms real `action`s,** so they work before Datastar loads and a modified click (a new tab) is the browser's.
 - **An element that starts hidden uses `hidden` with `data-attr:hidden`,** never `data-show`, so it does not flash before Datastar loads.
 - **No text goes inside a Datastar expression,** which runs as script. It goes in a `data-*` attribute or `href`, read with `el.dataset`; only ids and numbers the server made are interpolated.
-- **A state-changing request is a POST** carrying Datastar's `datastar-request` header, which a cross-site form cannot set. A plain form checks `Sec-Fetch-Site`, or that `Origin` matches `Host`. Nothing changes state on GET, sign-out included.
-- **Escaping stays on.** Markup the server built is a newtype (`Html`) implementing askama's `HtmlSafe`, made where it is built, so it renders unescaped with no `|safe`. `|safe` appears only on what the server made from nothing a person or peer supplied (an import map, the repository's own Typst output).
+- **A state-changing request is a POST** carrying Datastar's `datastar-request` header, which a cross-site form cannot set (`askama_datastar::require_datastar_on_post`). A plain form checks `Sec-Fetch-Site`, or that `Origin` matches `Host`. Nothing changes state on GET, sign-out included.
+- **Escaping stays on.** Markup the server built is `askama_datastar::Html`, which implements askama's `HtmlSafe`, made where it is built (`Html::render`, or `Html::trusted` for markup the code writes), so it renders unescaped with no `|safe`. `|safe` appears only on what the server made from nothing a person or peer supplied (an import map, the repository's own Typst output).
 - **Styles:** Tailwind utilities in the templates over `@radiosilence/theme`; `@import "tailwindcss" source(none)` with explicit `@source`s; element rules inside `@layer base`, since unlayered CSS beats every layer; class names in Rust as literal strings and every `class` attribute quoted, or the scanner misses them; no `style=` attributes, which the CSP blocks. A test fails on a rendered class that has no rule.
 - **Assets are embedded in the binary** and served under a content hash (`?v=<hash>`, or in the file name) with `Cache-Control: public, max-age=31536000, immutable`; an unhashed URL gets an hour. Signed-in pages are `no-store`.
 - **Every response carries:**
@@ -374,7 +378,7 @@ One line per section that can be checked. Run what can be run, read the rest, an
 - [ ] **§5** Edition 2024, resolver 3, shared dependencies in the workspace, the release profile; no bare `#[allow]`, no `unwrap` outside tests, a `SAFETY` comment on every `unsafe`, no derived `Debug` on a struct holding a secret. Every tsconfig sets the six flags (the build one, `noEmit` off); private TypeScript runs from source.
 - [ ] **§6** The pragmas, `BEGIN IMMEDIATE` for writes, numbered migrations, a newer schema refused, statements off async workers.
 - [ ] **§7** Listeners split by trust; the perimeter layers; SIGTERM handled with a drain; `/healthz`; `Host` and `Origin` checked on a local server; `tracing` to stderr; nothing identifying in logs or metric labels.
-- [ ] **§8** The CSP without `'unsafe-inline'` (`'unsafe-eval'` only with Datastar) and the other headers, with a test; every state change a POST behind the Datastar header or an `Origin` check; `|safe`, `style=` and `data-show` only as §8 allows; assets fingerprinted; `__Host-` cookies.
+- [ ] **§8** The CSP without `'unsafe-inline'` (`'unsafe-eval'` only with Datastar) and the other headers, with a test; every state change a POST behind the Datastar header or an `Origin` check; `|safe`, `style=` and `data-show` only as §8 allows; assets fingerprinted; `__Host-` cookies. Datastar's glue from `askama_datastar`: no `datastar-patch-*` event, `datastar-request` check, `Sse` of patches or copy of `datastar.js` written by hand, bar a variation with a comment naming §8; every fragment written once.
 - [ ] **§9** GraphQL depth capped and lists batched; MCP as two tools; PREVIEW → CONFIRM on anything outward or irreversible; third-party text marked untrusted; MCP below admin.
 - [ ] **§10** Built from `koan-kit` under its ratchet; the design rules; accessibility tested; a storybook.
 - [ ] **§11** An exposed service's bound, threat model, audit and fuzz targets; fetched URLs and named paths guarded; credentials hashed or sealed as §11 says.
