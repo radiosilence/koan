@@ -3244,7 +3244,7 @@ pub fn labelled(label: impl Into<SharedString>, child: impl IntoElement) -> Labe
 pub struct Labelled { /* private fields */ }
 ```
 
-Implements `Element`, `IntoElement`.
+Implements `Element`.
 
 ### components::filter_field
 
@@ -4736,7 +4736,7 @@ pub struct AnimatedLayer { /* private fields */ }
   with its bounds and the window's scale, each paint: a scroll that
   moves what is inside it.
 
-Implements `Element`, `IntoElement`.
+Implements `Element`.
 
 ### components::layout
 
@@ -7442,7 +7442,7 @@ pub struct Scrollbar<S: ScrollSource> { /* private fields */ }
   Over content that scrolls under a phone's foot alone: the track ends
   above it (`foot_inset`).
 
-Implements `Element`, `IntoElement`.
+Implements `Element`.
 
 ### components::segmented
 

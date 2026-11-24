@@ -8,8 +8,8 @@
 use gpui::prelude::FluentBuilder;
 use gpui::{
     A11ySubtreeBuilder, AnyElement, App, Bounds, Div, DivFrameState, Element, ElementId,
-    GlobalElementId, Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, ParentElement, Pixels, StyleRefinement, Styled, Window, accesskit, div,
+    GlobalElementId, Hitbox, InspectorElementId, InteractiveElement, Interactivity, LayoutId,
+    ParentElement, Pixels, StyleRefinement, Styled, Window, accesskit, div,
 };
 
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Measure, Space, Tone, TypeRole};
@@ -356,14 +356,6 @@ macro_rules! themed_div {
         impl InteractiveElement for $ty {
             fn interactivity(&mut self) -> &mut Interactivity {
                 self.div.interactivity()
-            }
-        }
-
-        impl IntoElement for $ty {
-            type Element = Self;
-
-            fn into_element(self) -> Self {
-                self
             }
         }
 

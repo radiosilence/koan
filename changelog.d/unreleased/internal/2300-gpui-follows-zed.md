@@ -1,0 +1,1 @@
+- **GPUI follows Zed's main again.** The fork takes Zed's renderer rework: depth-buffered opaque quads, tiled paths and wider batching, with koan's shaders, layer groups and backdrop blurs fitted to it.

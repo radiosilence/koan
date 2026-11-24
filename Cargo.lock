@@ -943,7 +943,7 @@ dependencies = [
 [[package]]
 name = "bench_metrics"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1530,7 +1530,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "gpui-koan-util",
  "indexmap",
@@ -2291,7 +2291,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2798,12 +2798,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ce81f49ae8a0482e4c55ea62ebbd7e5a686af544c00b9d090bba3ff9be97b3d"
 
 [[package]]
-name = "float_next_after"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bf7cc16383c4b8d58b9905a8509f02926ce3058053c056376248d958c9df1e8"
-
-[[package]]
 name = "flume"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3181,8 +3175,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3212,7 +3206,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "lyon",
+ "lyon_path",
  "num_cpus",
  "objc2-core-foundation",
  "objc2-core-video",
@@ -3240,6 +3234,7 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.21",
+ "tiny-skia-path",
  "ttf-parser",
  "unicode-segmentation",
  "url",
@@ -3253,8 +3248,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-apple"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "anyhow",
  "async-task",
@@ -3292,8 +3287,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-ios"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "anyhow",
  "block2 0.6.2",
@@ -3315,8 +3310,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-linux"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3342,8 +3337,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-macos"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -3375,6 +3370,7 @@ dependencies = [
  "raw-window-handle",
  "scheduler",
  "semver",
+ "serde_json",
  "smallvec",
  "strum 0.28.0",
  "uuid",
@@ -3382,8 +3378,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-macros"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3393,8 +3389,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-platform"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -3409,8 +3405,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-shared-string"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "schemars",
  "serde",
@@ -3419,8 +3415,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-util"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "anyhow",
  "log",
@@ -3429,8 +3425,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-web"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -3458,8 +3454,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-wgpu"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3470,6 +3466,7 @@ dependencies = [
  "gpui-koan-util",
  "image",
  "itertools 0.14.0",
+ "js-sys",
  "log",
  "parking_lot 0.12.5",
  "profiling",
@@ -3484,8 +3481,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-koan-windows"
-version = "0.2.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+version = "0.2.1"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3735,7 +3732,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4942,26 +4939,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
-name = "lyon"
-version = "1.0.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd0578bdecb7d6d88987b8b2b1e3a4e2f81df9d0ece1078623324a567904e7b7"
-dependencies = [
- "lyon_algorithms",
- "lyon_tessellation",
-]
-
-[[package]]
-name = "lyon_algorithms"
-version = "1.0.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3a6b9d4e8b48acd531fbf1241ad9b270df6e60b6b92bdea1469f4f40899d805"
-dependencies = [
- "lyon_path",
- "num-traits",
-]
-
-[[package]]
 name = "lyon_geom"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4979,17 +4956,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c463f9c428b7fc5ec885dcd39ce4aa61e29111d0e33483f6f98c74e89d8621e"
 dependencies = [
  "lyon_geom",
- "num-traits",
-]
-
-[[package]]
-name = "lyon_tessellation"
-version = "1.0.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd4872650e70dc907dd4f7ebc449d7d657a0d2658e423b2e724970870bbbf75b"
-dependencies = [
- "float_next_after",
- "lyon_path",
  "num-traits",
 ]
 
@@ -7799,7 +7765,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "derive_refineable",
 ]
@@ -8316,7 +8282,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "async-task",
  "backtrace",
@@ -8982,7 +8948,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "heapless 0.9.4",
  "rayon",
@@ -11807,7 +11773,7 @@ dependencies = [
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 dependencies = [
  "tracing",
  "ztracing_macro",
@@ -11816,7 +11782,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=be8db535bac465333448ec87099ba5faa7fd37aa#be8db535bac465333448ec87099ba5faa7fd37aa"
+source = "git+https://github.com/radiosilence/zed?rev=4615a4c4305ea641445f5e16aa6814c237acc052#4615a4c4305ea641445f5e16aa6814c237acc052"
 
 [[package]]
 name = "zune-core"
