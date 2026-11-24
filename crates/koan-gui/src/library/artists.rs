@@ -746,12 +746,7 @@ impl super::keys::KeyedList for ArtistBrowser {
     /// (Home, or the arrow up into it).
     fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
         let line = self.line_of.get(ix).copied().unwrap_or(ix);
-        let top = self
-            .scroll
-            .0
-            .borrow()
-            .base_handle
-            .logical_scroll_top_index();
+        let top = self.scroll.logical_scroll_top_index();
         let headed = line.checked_sub(1).filter(|above| {
             line <= top && matches!(self.lines.get(*above), Some(Line::Initial(..)))
         });
