@@ -438,11 +438,17 @@ impl Transport {
         })
     }
 
-    /// The control button: the devices glyph, and while another device is
-    /// controlled its name beside it in an accent badge, since everything the
-    /// window shows is then that device's. A device out of reach turns the
-    /// glyph into a warning in `bad`.
-    fn control_button(&self, p: &Paint, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    /// The control button: the devices glyph, in the accent while another
+    /// device is controlled, since everything the window shows is then that
+    /// device's, and with `named` its name beside it in an accent badge. A
+    /// device out of reach turns the glyph into a warning in `bad`.
+    fn control_button(
+        &self,
+        named: bool,
+        p: &Paint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let away = matches!(
             self.devices.read(cx).0.target_reach,
             Some(koan_runtime::DeviceReach::OutOfReach { .. })
@@ -478,7 +484,7 @@ impl Transport {
                 }))
                 .gap(p.space(Space::Xs))
                 .child(glyph)
-                .child(Badge::new(name).accent(!away)),
+                .when(named, |d| d.child(Badge::new(name).accent(!away))),
             |this: &mut Self| &mut this.menus,
             |this, window, cx| this.build(Menu::Devices, window, cx),
             cx,
@@ -1160,7 +1166,7 @@ impl Render for Transport {
         trailing.push((
             Trailing::Devices,
             devices_width,
-            self.control_button(&p, window, cx).into_any_element(),
+            self.control_button(true, &p, window, cx).into_any_element(),
         ));
         trailing.push((
             Trailing::Output,

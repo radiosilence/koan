@@ -1,0 +1,1 @@
+- **The mini player keeps its width for the names.** While another device is controlled, the phone's mini player shows the devices glyph lit in the accent rather than the device's name; Now Playing and the desktop still name it.

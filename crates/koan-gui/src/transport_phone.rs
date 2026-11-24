@@ -93,8 +93,10 @@ impl Transport {
             .zip(entry.and_then(|e| e.track_id.map(|track| (track, e.album_id))))
             .map(|(lib, (track, album))| super::playing_menu(lib, track, album));
         let controls = crate::components::ControlGroup::new()
-            // Where the music plays, a thumb away on every page, as on iOS.
-            .control(self.control_button(&p, window, cx))
+            // Where the music plays, a thumb away on every page, as on iOS:
+            // the glyph alone, lit while another device is controlled, so
+            // the names keep the bar's width.
+            .control(self.control_button(false, &p, window, cx))
             .control(
                 Button::icon_only(
                     "mini-play-pause",
@@ -329,7 +331,7 @@ impl Transport {
             window,
             cx,
         );
-        let devices = self.control_button(&p, window, cx);
+        let devices = self.control_button(true, &p, window, cx);
         let output = self.menu_button(
             super::Menu::Output,
             Icon::Speaker,
