@@ -1,0 +1,1 @@
+- **Haptics for pull to refresh and reordering.** On iPhone, a pull felt as it passes the point where letting go refreshes, and a tick each time a dragged row's place in the queue or a playlist moves.
