@@ -1,1 +1,1 @@
-- **Swiping Now Playing away.** On iPhone the page leaves at the speed it was swiped rather than slowing down as the finger lifts, and a quick flick closes it.
+- **Motion follows the finger.** On iPhone and iPad, whatever a finger lets go of carries on at the speed it was moving: Now Playing swiped away or back, a queue row swiped off, a page swiped back, a list's rubber band. A quick flick closes Now Playing or removes a row however short the swipe.

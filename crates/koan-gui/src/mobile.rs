@@ -153,6 +153,8 @@ pub struct TouchShell {
     pushing: bool,
     /// A finger is on the swipe from the edge.
     swiping: bool,
+    /// How fast the back swipe moves, in progress a second.
+    push_speed: crate::components::Speed,
     /// A push let go, easing the rest of the way: lands when it fires.
     settle: Option<Task<()>>,
     /// The settle under way ends in a back.
@@ -341,6 +343,7 @@ impl TouchShell {
             elastic: crate::components::Elastic::new(),
             pushing: false,
             swiping: false,
+            push_speed: crate::components::Speed::new(),
             settle: None,
             backing: false,
             closing: None,
@@ -1330,7 +1333,7 @@ impl Render for TouchShell {
             .on_action(cx.listener(|this, _: &ShowTracks, _, cx| this.show(Route::Tracks, cx)))
             // The swipe from the edge: the page follows the finger, and goes
             // back only once the platform says the swipe went far enough.
-            .on_back_gesture(cx.listener(|this, event: &BackGestureEvent, _, cx| {
+            .on_back_gesture(cx.listener(|this, event: &BackGestureEvent, window, cx| {
                 // Now Playing covers the page: the page underneath stays put.
                 if this.now_playing.is_some() {
                     return;
@@ -1343,6 +1346,11 @@ impl Render for TouchShell {
                             return;
                         }
                         this.settle = None;
+                        if this.swiping {
+                            this.push_speed.step(event.progress - this.push.at());
+                        } else {
+                            this.push_speed = crate::components::Speed::new();
+                        }
                         this.push.follow(event.progress);
                         if !this.swiping || !this.pushing {
                             this.swiping = true;
@@ -1356,7 +1364,14 @@ impl Render for TouchShell {
                         }
                         this.swiping = false;
                         let back = matches!(event.phase, BackGesturePhase::Committed);
-                        let length = this.push.settle(if back { 1.0 } else { 0.0 }, cx);
+                        // On from the finger's speed, whichever way it goes.
+                        this.push_speed.step(event.progress - this.push.at());
+                        let length = this.push.release(
+                            if back { 1.0 } else { 0.0 },
+                            this.push_speed.get(),
+                            window.viewport_size().width,
+                            cx,
+                        );
                         this.land(length, back, cx);
                     }
                 }

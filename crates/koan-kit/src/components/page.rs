@@ -281,7 +281,6 @@ impl RenderOnce for PageHeader {
                         .aria_level(1)
                         .text_role(TypeRole::Title, &look)
                         .text_color(p.strong.hsla())
-                        .line_clamp(2)
                         .child(self.title);
                         #[cfg(test)]
                         let title = title.debug_selector(|| "page-header-title".into());
@@ -342,7 +341,6 @@ impl PageHeader {
         .aria_level(1)
         .text_role(TypeRole::Title, look)
         .text_color(p.strong.hsla())
-        .line_clamp(3)
         .child(self.title);
         #[cfg(test)]
         let title = title.debug_selector(|| "page-header-title".into());

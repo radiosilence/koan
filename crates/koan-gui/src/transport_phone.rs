@@ -466,7 +466,7 @@ impl Transport {
                         let at = dy.max(Pixels::ZERO);
                         this.pulled.follow(down(at), window);
                         this.pull = Some(at);
-                        this.pull_speed = (std::time::Instant::now(), 0.0);
+                        this.pull_speed = crate::components::Speed::new();
                         if this.released.take().is_none() {
                             cx.notify();
                         }
@@ -478,17 +478,18 @@ impl Transport {
                             let at = (by + dy).max(Pixels::ZERO);
                             this.pulled.follow(down(at), window);
                             this.pull = Some(at);
-                            this.pull_speed = speed(this.pull_speed, dy);
+                            this.pull_speed.step(f32::from(dy));
                         }
                     }
                     koan_kit::app::platform::TouchPhase::Ended => {
                         let Some(by) = this.pull.take() else { return };
                         let at = (by + dy).max(Pixels::ZERO);
-                        // A finger that stopped before lifting threw nothing.
-                        let (last, speed) = speed(this.pull_speed, dy);
-                        let speed = if last.elapsed() < STILL { speed } else { 0.0 };
+                        this.pull_speed.step(f32::from(dy));
+                        let speed = this.pull_speed.get();
                         // Past a fifth of the screen, or flicked down.
-                        if at > close_at || (speed > FLICK && at > Pixels::from(8.)) {
+                        if at > close_at
+                            || (speed > crate::components::Speed::FLICK && at > Pixels::from(8.))
+                        {
                             this.pulled.follow(down(at), window);
                             this.released = Some(true);
                             // The swipe is spent on closing: its fling does
@@ -502,12 +503,12 @@ impl Transport {
                             );
                             cx.emit(Collapse(Some(gone)));
                         } else {
-                            this.ease_back(window, cx);
+                            this.ease_back(speed, window, cx);
                         }
                     }
                     koan_kit::app::platform::TouchPhase::Cancelled => {
                         if this.pull.take().is_some() {
-                            this.ease_back(window, cx);
+                            this.ease_back(0.0, window, cx);
                         }
                     }
                 }
@@ -521,11 +522,14 @@ impl Transport {
         }
     }
 
-    /// A pull let go short of closing: the page eases back up on the GPU,
-    /// and its layer is let go once it is in place.
-    fn ease_back(&mut self, window: &Window, cx: &mut Context<Self>) {
+    /// A pull let go short of closing, moving `speed` points a second down:
+    /// the page goes back up on the GPU from the finger's speed, and its
+    /// layer is let go once it is in place.
+    fn ease_back(&mut self, speed: f32, window: &Window, cx: &mut Context<Self>) {
         self.released = Some(false);
-        let length = self.pulled.settle(Point::default(), window, cx);
+        let length = self
+            .pulled
+            .release(Point::default(), Point::new(0.0, speed), window, cx);
         self.returning = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(length).await;
             this.update(cx, |this, cx| {
@@ -536,23 +540,4 @@ impl Transport {
             .ok();
         }));
     }
-}
-
-/// The least speed down, in points a second, at which a pull let go closes
-/// Now Playing however short it is: a flick, as a sheet takes one on iOS.
-const FLICK: f32 = 700.0;
-
-/// How long a pull may stand still before letting go and still be thrown.
-const STILL: std::time::Duration = std::time::Duration::from_millis(80);
-
-/// The pull's speed after a step of `dy`, from the last step's time: the
-/// time of the last step that moved and the speed, in points a second. A
-/// step that moves nothing (a lift usually) leaves both as they were.
-fn speed((last, was): (std::time::Instant, f32), dy: Pixels) -> (std::time::Instant, f32) {
-    let now = std::time::Instant::now();
-    let dt = now.duration_since(last).as_secs_f32();
-    if dt < 0.001 || dy == Pixels::ZERO {
-        return (last, was);
-    }
-    (now, f32::from(dy) / dt)
 }

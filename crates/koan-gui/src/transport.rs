@@ -93,7 +93,7 @@ pub struct Transport {
     /// The ease back up, letting the page's layer go once it is in place.
     returning: Option<Task<()>>,
     /// When the pull last moved and how fast, in points a second down.
-    pull_speed: (std::time::Instant, f32),
+    pull_speed: crate::components::Speed,
     _subscriptions: [Subscription; 8],
 }
 
@@ -278,7 +278,7 @@ impl Transport {
             released: None,
             pulled: crate::components::Follow::new(),
             returning: None,
-            pull_speed: (std::time::Instant::now(), 0.0),
+            pull_speed: crate::components::Speed::new(),
         };
         this.reload_eq(cx);
         this

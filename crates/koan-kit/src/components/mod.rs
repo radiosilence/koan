@@ -158,7 +158,7 @@ pub use field::{
 pub use filter_field::{FieldLead, FilterButton, FilterField};
 pub use follow::{
     Elastic, Follow, PULL_RING, PUSH_FRONT, PUSH_UNDER, Push, Refresh, RefreshStart, SWIPE_ACTION,
-    SwipeAction, settle_length,
+    Speed, SwipeAction, settle_length,
 };
 pub use foot_card::{FootCard, ShellFoot};
 pub use form::{
