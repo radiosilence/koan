@@ -159,6 +159,9 @@ pub struct TouchShell {
     backing: bool,
     /// Now Playing going back down: lets it go once it is down.
     closing: Option<Task<()>>,
+    /// Now Playing closing was swiped away, carried off by its own pull
+    /// rather than `SlideUp`.
+    flung: bool,
     /// The tab and page last drawn, so a move forward is seen and slid in.
     seen: Option<(usize, Route)>,
     /// Now Playing over everything, while it is open: a transport of its own
@@ -341,6 +344,7 @@ impl TouchShell {
             settle: None,
             backing: false,
             closing: None,
+            flung: false,
             seen: None,
             now_playing: None,
             banner: cx.new(crate::server_banner::ServerBanner::new),
@@ -973,13 +977,16 @@ impl TouchShell {
                 full.set_lib(lib);
             });
         }
-        let closed = cx.subscribe(&full, |this, _, _: &transport::Collapse, cx| {
+        let closed = cx.subscribe(&full, |this, _, closed: &transport::Collapse, cx| {
             if this.closing.is_some() {
                 return;
             }
-            // Down on the GPU (`SlideUp`), its rise in reverse, and let go
-            // once it is down.
-            let length = crate::components::SlideUp::leave_length(cx);
+            // Down on the GPU: swiped, already going at the finger's speed;
+            // tapped, `SlideUp`'s rise in reverse. Let go once it is down.
+            this.flung = closed.0.is_some();
+            let length = closed
+                .0
+                .unwrap_or_else(|| crate::components::SlideUp::leave_length(cx));
             this.closing = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(length).await;
                 this.update(cx, |this, cx| {
@@ -1151,7 +1158,7 @@ impl Render for TouchShell {
                         })
                         .child(full.clone().cached(StyleRefinement::default().size_full())),
                 )
-                .leaving(self.closing.is_some()),
+                .leaving(self.closing.is_some() && !self.flung),
             )
         });
         self.see_push(cx);

@@ -23,8 +23,9 @@ pub enum Form {
 
 /// The mini player, tapped: Now Playing is asked for.
 pub struct Expand;
-/// Now Playing's close, tapped.
-pub struct Collapse;
+/// Now Playing's close: tapped (`None`), or swiped down and already on its
+/// way off the screen, gone after the length it carries.
+pub struct Collapse(pub Option<std::time::Duration>);
 /// Now Playing's title, tapped: the playing track's details are asked for.
 pub struct ShowInfo(pub i64);
 
@@ -362,7 +363,7 @@ impl Transport {
             .child(
                 div().flex().items_center().child(
                     Button::icon_only("np-close", Icon::Expand, "close")
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Collapse))),
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Collapse(None)))),
                 ),
             )
             // The art and the lyrics, a new record's sleeve and a new track's
@@ -465,6 +466,7 @@ impl Transport {
                         let at = dy.max(Pixels::ZERO);
                         this.pulled.follow(down(at), window);
                         this.pull = Some(at);
+                        this.pull_speed = (std::time::Instant::now(), 0.0);
                         if this.released.take().is_none() {
                             cx.notify();
                         }
@@ -476,18 +478,29 @@ impl Transport {
                             let at = (by + dy).max(Pixels::ZERO);
                             this.pulled.follow(down(at), window);
                             this.pull = Some(at);
+                            this.pull_speed = speed(this.pull_speed, dy);
                         }
                     }
                     koan_kit::app::platform::TouchPhase::Ended => {
                         let Some(by) = this.pull.take() else { return };
                         let at = (by + dy).max(Pixels::ZERO);
-                        if at > close_at {
+                        // A finger that stopped before lifting threw nothing.
+                        let (last, speed) = speed(this.pull_speed, dy);
+                        let speed = if last.elapsed() < STILL { speed } else { 0.0 };
+                        // Past a fifth of the screen, or flicked down.
+                        if at > close_at || (speed > FLICK && at > Pixels::from(8.)) {
                             this.pulled.follow(down(at), window);
                             this.released = Some(true);
                             // The swipe is spent on closing: its fling does
                             // not carry on into the page uncovered.
                             window.end_touch_scroll();
-                            cx.emit(Collapse);
+                            let gone = this.pulled.fling(
+                                down(viewport.height),
+                                Point::new(0.0, speed),
+                                window,
+                                cx,
+                            );
+                            cx.emit(Collapse(Some(gone)));
                         } else {
                             this.ease_back(window, cx);
                         }
@@ -523,4 +536,23 @@ impl Transport {
             .ok();
         }));
     }
+}
+
+/// The least speed down, in points a second, at which a pull let go closes
+/// Now Playing however short it is: a flick, as a sheet takes one on iOS.
+const FLICK: f32 = 700.0;
+
+/// How long a pull may stand still before letting go and still be thrown.
+const STILL: std::time::Duration = std::time::Duration::from_millis(80);
+
+/// The pull's speed after a step of `dy`, from the last step's time: the
+/// time of the last step that moved and the speed, in points a second. A
+/// step that moves nothing (a lift usually) leaves both as they were.
+fn speed((last, was): (std::time::Instant, f32), dy: Pixels) -> (std::time::Instant, f32) {
+    let now = std::time::Instant::now();
+    let dt = now.duration_since(last).as_secs_f32();
+    if dt < 0.001 || dy == Pixels::ZERO {
+        return (last, was);
+    }
+    (now, f32::from(dy) / dt)
 }

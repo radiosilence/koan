@@ -85,6 +85,45 @@ impl Follow {
         length
     }
 
+    /// The offset carried on from where it stands to `to` by a release
+    /// moving at `velocity` (points a second): it leaves at the finger's
+    /// speed rather than from rest, so a flick goes as fast as it was thrown,
+    /// and ends at the average pace, never slowing to land. A release slower
+    /// than `FLING_SPEED` goes at that speed. How long it takes; nothing
+    /// under Reduce Motion, which puts it at `to` at once.
+    pub fn fling(
+        &self,
+        to: Point<Pixels>,
+        velocity: Point<f32>,
+        window: &Window,
+        cx: &App,
+    ) -> Duration {
+        let scale = window.scale_factor();
+        let from = self.at();
+        let to = point(f32::from(to.x) * scale, f32::from(to.y) * scale);
+        if !moves(cx) {
+            self.0.hold(1, to.x);
+            self.0.hold(2, to.y);
+            return Duration::ZERO;
+        }
+        let far = (to.x - from.x).hypot(to.y - from.y) / scale;
+        if far < 0.5 {
+            return Duration::ZERO;
+        }
+        // Speed toward `to`, in points a second.
+        let toward = ((to.x - from.x) * velocity.x + (to.y - from.y) * velocity.y) / (far * scale);
+        let length = (far / toward.max(FLING_SPEED)).clamp(FLING_SHORTEST, FLING_LONGEST);
+        // Leaving at the finger's speed: a curve whose slope at the start is
+        // that speed over the average one, and 1 at its end. Its x controls
+        // at thirds make progress linear in time, so the slopes are speeds.
+        let start = (toward.max(0.0) * length / far).min(3.0);
+        let ease = Ease::Bezier(1.0 / 3.0, start / 3.0, 2.0 / 3.0, 2.0 / 3.0);
+        let length = Duration::from_secs_f32(length);
+        self.0.to(1, to.x, length, ease);
+        self.0.to(2, to.y, length, ease);
+        length
+    }
+
     /// Where the offset stands now, in device pixels.
     pub fn at(&self) -> Point<f32> {
         let now = Animated::now();
@@ -103,6 +142,13 @@ impl Follow {
         &self.0
     }
 }
+
+/// The least speed a fling leaves at, in points a second: a release that has
+/// all but stopped still goes briskly.
+const FLING_SPEED: f32 = 1400.0;
+/// How quickly the fastest fling may arrive, and how slowly the slowest.
+const FLING_SHORTEST: f32 = 0.12;
+const FLING_LONGEST: f32 = 0.4;
 
 /// How much of the finger's travel past a list's end shows, UIKit's constant.
 const RUBBER: f32 = 0.55;
