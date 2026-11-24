@@ -47,7 +47,7 @@ pub use super::track::{
 pub use gpui::SHADER_UNIFORMS;
 
 /// Track `k` of `uniforms` as one publish left it, never half of two.
-fn track_of(uniforms: &ShaderUniforms, k: usize) -> Track {
+pub(super) fn track_of(uniforms: &ShaderUniforms, k: usize) -> Track {
     let base = SHADER_PLAIN + k * TRACK_FLOATS;
     let floats: [f32; TRACK_FLOATS] =
         uniforms.read(|| std::array::from_fn(|i| uniforms.get(base + i)));
@@ -63,7 +63,7 @@ fn put_track(uniforms: &ShaderUniforms, k: usize, track: Track) {
 }
 
 /// Seconds of shader time at `at`.
-fn time_at(uniforms: &ShaderUniforms, at: Instant) -> f32 {
+pub(super) fn time_at(uniforms: &ShaderUniforms, at: Instant) -> f32 {
     uniforms.time_at(at) as f32
 }
 
