@@ -507,21 +507,29 @@ mod tests {
         assert!(offset(page, cx) > px(0.0), "the content scrolled");
     }
 
-    /// The draw order of each shader painted, and the thumb's opacity as
-    /// its program reads it now.
-    fn drawn(cx: &mut VisualTestContext) -> (u32, u32, f32) {
+    /// The draw order of a shader painted, found by its program's name.
+    fn order(name: &str, cx: &mut VisualTestContext) -> u32 {
         cx.update(|window, _| {
-            let shaders = &window.rendered_scene().shaders;
-            let find = |name: &str| {
-                shaders
-                    .iter()
-                    .find(|shader| shader.program.name == name)
-                    .expect("painted")
-            };
-            let thumb = find(THUMB.name);
-            let at = super::super::animated::time_at(&thumb.uniforms, Animated::now());
-            let opacity = super::super::animated::track_of(&thumb.uniforms, 0).at(at);
-            (find(GROUND.name).order, thumb.order, opacity)
+            window
+                .rendered_scene()
+                .shaders
+                .iter()
+                .find(|shader| shader.program.name == name)
+                .expect("painted")
+                .order
+        })
+    }
+
+    /// The thumb's opacity, as its program reads it now.
+    fn opacity(cx: &mut VisualTestContext) -> f32 {
+        cx.update(|window, _| {
+            let thumb = window
+                .rendered_scene()
+                .shaders
+                .iter()
+                .find(|shader| shader.program.name == THUMB.name)
+                .expect("painted");
+            Animated::at_in(&thumb.uniforms, 0, Animated::now())
         })
     }
 
@@ -532,9 +540,9 @@ mod tests {
             return;
         }
         let (page, cx) = page(50, cx);
-        assert_eq!(drawn(cx).2, 0.0, "at rest");
+        assert_eq!(opacity(cx), 0.0, "at rest");
         scroll(&page, cx);
-        assert_eq!(drawn(cx).2, 1.0, "shown");
+        assert_eq!(opacity(cx), 1.0, "shown");
     }
 
     /// The thumb a scroll shows is drawn over a shader painted before it,
@@ -546,8 +554,8 @@ mod tests {
         }
         let (page, cx) = page(50, cx);
         scroll(&page, cx);
-        let (ground, thumb, opacity) = drawn(cx);
-        assert_eq!(opacity, 1.0, "shown");
+        assert_eq!(opacity(cx), 1.0, "shown");
+        let (ground, thumb) = (order(GROUND.name, cx), order(THUMB.name, cx));
         assert!(
             thumb > ground,
             "drawn over the ground: {ground} then {thumb}"
