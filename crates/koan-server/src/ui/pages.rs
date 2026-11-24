@@ -717,7 +717,7 @@ async fn share(s: UiState, user: AuthUser, target: ShareTarget) -> Response {
         Err("This account cannot make share links.".into())
     };
     let html = ShareResult { result }.html();
-    events(vec![patch(&html, None)])
+    events(vec![patch(&html)])
 }
 
 #[derive(Template)]
@@ -1037,22 +1037,28 @@ pub(super) async fn search(
     respond(&s, &headers, &user, "Search", &inner)
 }
 
+/// What a search asks: Datastar sends `q` among its signals.
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+pub(super) struct Search {
+    q: Option<String>,
+}
+
 /// Datastar sends its signals as JSON in `datastar`; a plain request sends `q`.
 pub(super) async fn search_results(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
     Query(params): Query<HashMap<String, String>>,
+    askama_datastar::Signals(search): askama_datastar::Signals<Search>,
 ) -> Response {
-    let q = params
-        .get("datastar")
-        .and_then(|d| serde_json::from_str::<serde_json::Value>(d).ok())
-        .and_then(|v| v.get("q")?.as_str().map(str::to_owned))
+    let q = search
+        .q
         .or_else(|| params.get("q").cloned())
         .unwrap_or_default();
     let html = blocking(move || Some(results(&s, &user, &q)))
         .await
         .unwrap_or_default();
-    events(vec![patch(&html, None)])
+    events(vec![patch(&html)])
 }
 
 #[derive(Template)]

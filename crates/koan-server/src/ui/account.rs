@@ -10,7 +10,6 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use axum::response::sse::Event;
 use koan_core::auth::Role;
 use koan_core::db::queries::api_keys::{self, ApiKeyRow};
 use koan_core::db::queries::app_passwords::{self, AppPasswordRow};
@@ -166,7 +165,7 @@ fn refused(result: &str, message: &str) -> Response {
         message,
     }
     .html();
-    events(vec![patch(&html, None)])
+    events(vec![patch(&html)])
 }
 
 #[derive(Template)]
@@ -188,12 +187,9 @@ fn made(result: &str, what: &str, secret: &str, list: Html, signal: &str) -> Res
                 secret,
             }
             .html(),
-            None,
         ),
-        patch(&list, None),
-        Event::default()
-            .event("datastar-patch-signals")
-            .data(format!("signals {{\"{signal}\":\"\"}}")),
+        patch(&list),
+        askama_datastar::PatchSignals::new(serde_json::json!({ signal: "" }).to_string()).into(),
     ])
 }
 
@@ -237,8 +233,8 @@ pub(super) async fn revoke_key(
     .await
     .unwrap_or_default();
     events(vec![
-        patch(&key_list(&keys), None),
-        patch("<div id=key-result></div>", None),
+        patch(&key_list(&keys)),
+        patch("<div id=key-result></div>"),
     ])
 }
 
@@ -299,7 +295,7 @@ pub(super) async fn revoke_app_password(
     .await
     .unwrap_or_default();
     events(vec![
-        patch(&app_password_list(&passwords), None),
-        patch("<div id=app-password-result></div>", None),
+        patch(&app_password_list(&passwords)),
+        patch("<div id=app-password-result></div>"),
     ])
 }

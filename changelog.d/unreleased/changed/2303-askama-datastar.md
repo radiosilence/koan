@@ -1,0 +1,1 @@
+- **Datastar 1.0.5, through askama_datastar.** The web UI's patches, event streams, POST guard and Datastar's script come from the shared crate rather than code of koan's own. Datastar moves from 1.0.2 to 1.0.5, and a carriage return in a name or tag no longer cuts a patch short: the rest of its line used to be dropped from the page.

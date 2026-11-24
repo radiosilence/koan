@@ -30,6 +30,8 @@ mod setup;
 mod tests;
 mod users;
 
+use askama_datastar::events;
+
 pub use oauth::RESOURCE_METADATA;
 pub use session::ProxyAuth;
 
@@ -39,7 +41,7 @@ use std::sync::Arc;
 use axum::extract::{Path, RawQuery, Request, State};
 use axum::http::{Extensions, HeaderMap, HeaderValue, Method, StatusCode, Version, header};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use koan_core::auth;
@@ -51,6 +53,7 @@ use tower_http::compression::predicate::{DefaultPredicate, Predicate};
 use crate::auth::AuthUser;
 use crate::auth::routes::{AuthRouteState, RateLimiter, login_rate_limit, rate_limit};
 use crate::covers::Covers;
+use crate::html::Html;
 use crate::share::{asset, blocking, not_found};
 
 /// `'unsafe-eval'` because Datastar compiles its attribute expressions.
@@ -74,7 +77,6 @@ const PARTIAL: &str = "x-koan-partial";
 
 const UI_CSS: &str = include_str!("../../assets/ui.css");
 const UI_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/ui.js"));
-const DATASTAR_JS: &str = include_str!("../../assets/datastar.js");
 const NO_COVER_SVG: &str = include_str!("../../assets/no-cover.svg");
 
 /// The page's stylesheet and scripts, each URL carrying a hash of its asset.
@@ -96,7 +98,7 @@ pub(super) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::
         ui_js: versioned("./ui/assets/ui.js", UI_JS),
         imports: crate::share::ImportMap::player(&player_js),
         player_js,
-        datastar_js: versioned("./ui/assets/datastar.js", DATASTAR_JS),
+        datastar_js: askama_datastar::script::url("./ui/assets/datastar.js"),
     }
 });
 
@@ -218,7 +220,7 @@ pub(crate) fn router(
         .route("/users/{id}/delete", post(users::delete))
         .route("/ui/stream/{id}", get(stream))
         .route("/ui/cover/{id}", get(cover))
-        .layer(from_fn(require_datastar_on_post))
+        .layer(from_fn(askama_datastar::require_datastar_on_post))
         .layer(from_fn_with_state(state.clone(), gate))
         .layer(axum::middleware::map_response(stamp_stylesheet));
     // A plain form, since it answers with a redirect to the client: it proves
@@ -346,7 +348,7 @@ async fn ui_asset(Path(name): Path<String>, query: RawQuery) -> Response {
         "ui.css" => asset(UI_CSS, "text/css; charset=utf-8", query),
         "ui.js" => asset(UI_JS, JS, query),
         "player.js" => asset(crate::share::ENGINE_JS, JS, query),
-        "datastar.js" => asset(DATASTAR_JS, JS, query),
+        "datastar.js" => askama_datastar::script::serve(query).await,
         other => crate::share::binary_asset(other).unwrap_or_else(not_found),
     }
 }
@@ -366,7 +368,7 @@ fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 fn is_navigation(req: &Request) -> bool {
     req.method() == Method::GET
         && !req.headers().contains_key(PARTIAL)
-        && !req.headers().contains_key("datastar-request")
+        && !askama_datastar::is_datastar(req.headers())
         && !req.uri().path().starts_with("/ui/")
 }
 
@@ -422,16 +424,6 @@ async fn gate(State(s): State<UiState>, mut req: Request, next: Next) -> Respons
     }
 }
 
-/// Datastar sends this header on every request it makes, and a cross-site form
-/// or a CORS-safelisted fetch cannot set it: a state-changing POST without it
-/// did not come from this UI.
-async fn require_datastar_on_post(req: Request, next: Next) -> Response {
-    if req.method() == Method::POST && !req.headers().contains_key("datastar-request") {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    next.run(req).await
-}
-
 fn encode(s: &str) -> String {
     form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
@@ -473,26 +465,9 @@ fn html(status: StatusCode, body: impl Into<String>) -> Response {
     resp
 }
 
-/// A Datastar `patch-elements` event. Without a selector the element replaces
-/// the one with its id; with one, `mode` says where it goes.
-fn patch(html: &str, target: Option<(&str, &str)>) -> Event {
-    let mut lines = Vec::new();
-    if let Some((selector, mode)) = target {
-        lines.push(format!("selector {selector}"));
-        lines.push(format!("mode {mode}"));
-    }
-    lines.extend(html.lines().map(|l| format!("elements {l}")));
-    Event::default()
-        .event("datastar-patch-elements")
-        .data(lines.join("\n"))
-}
-
-fn events(events: Vec<Event>) -> Response {
-    let stream = tokio_stream::iter(events.into_iter().map(Ok::<_, std::convert::Infallible>));
-    let mut resp = Sse::new(stream).into_response();
-    resp.headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    resp
+/// Markup this server built, as a patch of the elements with its ids.
+fn patch(html: &str) -> Event {
+    Html::trusted(html).patch().into()
 }
 
 fn open(pool: &Pool) -> Option<Handle<'_>> {

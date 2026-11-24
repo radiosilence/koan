@@ -54,7 +54,7 @@ struct UserResult<'a> {
 }
 
 fn show(shown: Shown) -> Event {
-    patch(&UserResult { shown }.html(), None)
+    patch(&UserResult { shown }.html())
 }
 
 fn result(html: &Html) -> Event {
@@ -206,10 +206,8 @@ pub(super) async fn create(
     match made {
         Ok(i) => events(vec![
             result(&invite_panel(&i)),
-            patch(&user_list(&rows, me), None),
-            Event::default()
-                .event("datastar-patch-signals")
-                .data("signals {\"newuser\":\"\"}"),
+            patch(&user_list(&rows, me)),
+            askama_datastar::PatchSignals::new(r#"{"newuser":""}"#).into(),
         ]),
         Err(e) => events(vec![failure(&e.to_string())]),
     }
@@ -266,9 +264,7 @@ pub(super) async fn invite(
 }
 
 fn clear_password_signal() -> Event {
-    Event::default()
-        .event("datastar-patch-signals")
-        .data("signals {\"setpassword\":\"\"}")
+    askama_datastar::PatchSignals::new(r#"{"setpassword":""}"#).into()
 }
 
 #[derive(Template)]
@@ -363,12 +359,9 @@ pub(super) async fn set_role(
     })
     .await;
     match done {
-        Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me), None), result(&NOTHING)]),
+        Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me)), result(&NOTHING)]),
         // Redraw the list too, so the select goes back to what is stored.
-        Some((Err(e), rows)) => events(vec![
-            patch(&user_list(&rows, me), None),
-            failure(&e.to_string()),
-        ]),
+        Some((Err(e), rows)) => events(vec![patch(&user_list(&rows, me)), failure(&e.to_string())]),
         None => events(vec![failure("No such account.")]),
     }
 }
@@ -396,7 +389,7 @@ pub(super) async fn delete(
     })
     .await;
     match done {
-        Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me), None), result(&NOTHING)]),
+        Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me)), result(&NOTHING)]),
         Some((Err(e), _)) => events(vec![failure(&e.to_string())]),
         None => events(vec![failure("No such account.")]),
     }

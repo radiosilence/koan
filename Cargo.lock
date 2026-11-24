@@ -362,6 +362,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "askama_datastar"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e5cd2f874d2d2450e68be63cd87a3ede3b67454adf6e39c326a63c23611ecde"
+dependencies = [
+ "askama",
+ "axum",
+ "datastar",
+ "form_urlencoded",
+ "futures-util",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "askama_derive"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2176,6 +2191,17 @@ name = "data-url"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
+
+[[package]]
+name = "datastar"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49a2209ee5f8954be4d6d90f253630d2be400965e604e7f8df446a75400a4ca8"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "dbus"
@@ -4581,6 +4607,7 @@ name = "koan-server"
 version = "0.73.1"
 dependencies = [
  "askama",
+ "askama_datastar",
  "async-graphql",
  "async-graphql-axum",
  "async-stream",
