@@ -962,6 +962,11 @@ impl TouchShell {
         self.nav.read(cx).current()
     }
 
+    /// Whether Now Playing is over the page; for tools that drive it.
+    pub fn now_playing_open(&self) -> bool {
+        self.now_playing.is_some()
+    }
+
     /// Opens Now Playing, as tapping the mini player does.
     pub fn open_now_playing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.now_playing.is_some() || !self.compact {
@@ -1138,28 +1143,15 @@ impl Render for TouchShell {
         let p = Paint::of(window, cx);
         let compact = p.look.compact;
         self.adapt(compact, window, cx);
-        // Now Playing over the page, on a wash of its own as the iOS app's
-        // bleed is, coming up from the foot and going back down to it.
-        // Now Playing is about the playing record, whatever page it covers:
-        // the window wears that record's colours until it has gone down.
+        // Now Playing over the page, coming up from the foot and going back
+        // down to it. Now Playing is about the playing record, whatever page
+        // it covers: the window wears that record's colours until it has
+        // gone down.
         crate::root::ShownRecord::now_playing(self.now_playing.is_some(), cx);
         let now_playing = self.now_playing.as_ref().map(|(full, ..)| {
-            let wash = crate::theme::wash::WindowWash::shared(window, cx);
             div().absolute().inset_0().occlude().child(
                 crate::components::SlideUp::new(
-                    div()
-                        .relative()
-                        .size_full()
-                        .map(|d| match wash {
-                            Some(wash) => d.child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .child(wash.cached(StyleRefinement::default().size_full())),
-                            ),
-                            None => d.bg(p.bg),
-                        })
-                        .child(full.clone().cached(StyleRefinement::default().size_full())),
+                    full.clone().cached(StyleRefinement::default().size_full()),
                 )
                 .leaving(self.closing.is_some() && !self.flung),
             )
