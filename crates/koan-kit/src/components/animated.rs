@@ -216,7 +216,12 @@ impl Animated {
 
     /// Where track `k` stands at `at`, as the program draws it.
     pub fn at(&self, k: usize, at: Instant) -> f32 {
-        let uniforms = &self.0.uniforms;
+        Self::at_in(&self.0.uniforms, k, at)
+    }
+
+    /// Where track `k` of `uniforms` stands at `at`: `at` for uniforms read
+    /// back from a painted scene.
+    pub(super) fn at_in(uniforms: &ShaderUniforms, k: usize, at: Instant) -> f32 {
         uniforms.read(|| track_of(uniforms, k).at(time_at(uniforms, at)))
     }
 
@@ -742,5 +747,73 @@ impl RenderOnce for AnimatedQuad {
         );
         *quad.style() = style;
         quad
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{TestAppContext, canvas};
+
+    use super::*;
+    // `gpui::*` brings GPUI's `test` attribute, which would expand its own
+    // `#[test]` into itself.
+    use core::prelude::v1::test;
+
+    static FIRST: ShaderProgram = ShaderProgram {
+        name: "test-first",
+        msl: "",
+        wgsl: "",
+        prepare: None,
+    };
+
+    static SECOND: ShaderProgram = ShaderProgram {
+        name: "test-second",
+        msl: "",
+        wgsl: "",
+        prepare: None,
+    };
+
+    struct Layered {
+        programs: [&'static ShaderProgram; 2],
+        animated: Animated,
+    }
+
+    impl Render for Layered {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let (programs, animated) = (self.programs, self.animated.clone());
+            canvas(
+                |_, _, _| (),
+                move |bounds, _, window, _| {
+                    window.paint_layer(|window| {
+                        for program in programs {
+                            animated.paint(program, None, bounds, window);
+                        }
+                    })
+                },
+            )
+            .size(px(100.0))
+        }
+    }
+
+    /// Shaders painted in one layer share its draw order, and are drawn in
+    /// the order they were painted whatever their programs.
+    #[gpui::test]
+    fn shaders_in_a_layer_keep_their_paint_order(cx: &mut TestAppContext) {
+        for programs in [[&FIRST, &SECOND], [&SECOND, &FIRST]] {
+            let (_, cx) = cx.add_window_view(|_, _| Layered {
+                programs,
+                animated: Animated::new(),
+            });
+            cx.run_until_parked();
+            let drawn: Vec<&str> = cx.update(|window, _| {
+                window
+                    .rendered_scene()
+                    .shaders
+                    .iter()
+                    .map(|shader| shader.program.name)
+                    .collect()
+            });
+            assert_eq!(drawn, programs.map(|program| program.name));
+        }
     }
 }
