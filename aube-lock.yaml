@@ -9,15 +9,15 @@ importers:
   .:
     dependencies:
       '@radiosilence/theme':
-        specifier: 0.2.0
-        version: 0.2.0
+        specifier: 0.2.1
+        version: 0.2.1
 
 packages:
 
-  '@radiosilence/theme@0.2.0':
-    resolution: {gitHosted: true, integrity: sha512-PMDHJsYjOLc7k37ZbKkN633bSEqzLWXCvNY4u20iqKJmnlzMDSt9km3PBiKqo7yzYBUEvMXBzPEX89U9RzQvag==, tarball: https://npm.pkg.github.com/download/@radiosilence/theme/0.2.0/9766568ceae7b8d3b53b7dea58571f7a25f8f233}
+  '@radiosilence/theme@0.2.1':
+    resolution: {gitHosted: true, integrity: sha512-HOGMv9SHMTXVkPrKfAxj1kXv/xBQXFNMwRjiPmHqc/IBSxHH+N3j+y4ARxhD7TMDVs/lvDWiRVo9E+gAzWNBTA==, tarball: https://npm.pkg.github.com/download/@radiosilence/theme/0.2.1/de45aaede83ece722b7a9f9b2b92f99b51e2e992}
     hasBin: true
 
 snapshots:
 
-  '@radiosilence/theme@0.2.0': {}
+  '@radiosilence/theme@0.2.1': {}

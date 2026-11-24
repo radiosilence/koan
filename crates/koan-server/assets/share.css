@@ -612,6 +612,10 @@
     flex: none;
     cursor: pointer;
     appearance: none;
+    border-style: var(--tw-border-style);
+    border-width: 1px;
+    border-color: var(--muted);
+    background-color: transparent;
     padding: 0px;
     vertical-align: -2px;
     &:checked {
