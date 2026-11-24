@@ -1,1 +1,1 @@
-- **Haptics for pull to refresh and reordering.** On iPhone, a pull felt as it passes the point where letting go refreshes, and a tick each time a dragged row's place in the queue or a playlist moves.
+- **Haptics for pulling, dragging and dropping.** On iPhone and iPad, a pull is felt as it passes the point where letting go refreshes, a drag ticks as it enters a drop target or its place in a list moves, and a drop taps as it lands.
