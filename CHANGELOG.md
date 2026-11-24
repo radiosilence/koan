@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.74.0
+
+### Changed
+
+- **Names open their own menus.** In the desktop app a right click on a linked record or artist, in the queue, the transport, Now Playing or a library row, opens that record's or artist's context menu; the playing track's title opens the track's. Record and artist pages have ⋯ in their header for the rest of their menu.
+- **Datastar 1.0.5, through askama_datastar.** The web UI's patches, event streams, POST guard and Datastar's script come from the shared crate rather than code of koan's own. Datastar moves from 1.0.2 to 1.0.5, and a carriage return in a name or tag no longer cuts a patch short: the rest of its line used to be dropped from the page.
+
+### Internal
+
+- **GPUI follows Zed's main again.** The fork takes Zed's renderer rework: depth-buffered opaque quads, tiled paths and wider batching, with koan's shaders, layer groups and backdrop blurs fitted to it.
+- **The standard asks for askama_datastar.** Six servers each wrote their own Datastar patches, SSE responses, request checks and copy of `datastar.js`, on two Datastar releases and with differences nobody chose. `STANDARD.md` §8 now asks for the crate, its one vendored copy of the script, and every fragment written once; §2 names it and §23 audits for glue written by hand.
+- **§8's Datastar rules agree with each other.** The POST guard covers the routes Datastar posts to and leaves plain forms outside it; a page reopens its own live stream; an action's signals accept fields it does not name; a server's askama follows the crate's release; and §23 audits the crate's version and any copy of `datastar.js` a server keeps, vendored or bundled.
+
 ## 0.73.1
 
 ### Security
