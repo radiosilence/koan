@@ -748,7 +748,9 @@ impl super::keys::KeyedList for ArtistBrowser {
     /// which may be cut off.
     fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
         let line = self.line_of.get(ix).copied().unwrap_or(ix);
-        let top = self.scroll.logical_scroll_top_index();
+        // The top line as drawn; GPUI's `logical_scroll_top_index` exists
+        // only in its test builds.
+        let top = self.scroll.0.borrow().base_handle.logical_scroll_top().0;
         let headed = line.checked_sub(1).filter(|above| {
             line <= top + 1 && matches!(self.lines.get(*above), Some(Line::Initial(..)))
         });
