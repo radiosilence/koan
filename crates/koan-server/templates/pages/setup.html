@@ -2,9 +2,9 @@
 {% block body %}
 <p class="text-meta text-muted">This server has no accounts yet. Choose the admin's name and password; this page closes once it exists.</p>
 <form class="grid gap-3.5" method="post" action="setup">
-<label class="field"><span>Username</span><input name="username" value="{{ username }}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>
-<label class="field"><span>Password</span><input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
-<label class="field"><span>Confirm password</span><input name="confirm" type="password" minlength="8" autocomplete="new-password" required></label>
+<label class="field"><span>username</span><input name="username" value="{{ username }}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>
+<label class="field"><span>password</span><input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
+<label class="field"><span>confirm password</span><input name="confirm" type="password" minlength="8" autocomplete="new-password" required></label>
 {% if let Some(e) = error %}<p class="m-0 {{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>{% endif %}
 <button class="primary">Create admin</button></form>
 {% endblock %}
