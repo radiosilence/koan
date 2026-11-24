@@ -943,7 +943,7 @@ dependencies = [
 [[package]]
 name = "bench_metrics"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1530,7 +1530,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "gpui-koan-util",
  "indexmap",
@@ -2291,7 +2291,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2348,7 +2348,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2574,7 +2574,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3170,13 +3170,13 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.21",
- "windows 0.62.2",
+ "windows 0.58.0",
 ]
 
 [[package]]
 name = "gpui-koan"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3249,7 +3249,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-apple"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "anyhow",
  "async-task",
@@ -3288,7 +3288,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-ios"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "anyhow",
  "block2 0.6.2",
@@ -3311,7 +3311,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-linux"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3338,7 +3338,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-macos"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -3379,7 +3379,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-macros"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3390,7 +3390,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-platform"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -3406,7 +3406,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-shared-string"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "schemars",
  "serde",
@@ -3416,7 +3416,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-util"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "anyhow",
  "log",
@@ -3426,7 +3426,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-web"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -3455,7 +3455,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-wgpu"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3482,7 +3482,7 @@ dependencies = [
 [[package]]
 name = "gpui-koan-windows"
 version = "0.2.1"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3732,7 +3732,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3843,7 +3843,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.58.0",
 ]
 
 [[package]]
@@ -4169,7 +4169,7 @@ version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82cb6a9f675da968c63b6208c641b9dca58fc0133ae53375736b1767b0cab8bd"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7331,7 +7331,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7765,7 +7765,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "derive_refineable",
 ]
@@ -8132,7 +8132,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8189,7 +8189,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8282,7 +8282,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "async-task",
  "backtrace",
@@ -8948,7 +8948,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "heapless 0.9.4",
  "rayon",
@@ -9322,7 +9322,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10718,7 +10718,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
- "ordered-float 5.5.1",
+ "ordered-float 4.6.0",
  "profiling",
  "range-alloc",
  "raw-window-handle",
@@ -10817,7 +10817,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11300,7 +11300,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11773,7 +11773,7 @@ dependencies = [
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 dependencies = [
  "tracing",
  "ztracing_macro",
@@ -11782,7 +11782,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/radiosilence/zed?rev=8620449c9233dae3922907993146832ca53b7c3a#8620449c9233dae3922907993146832ca53b7c3a"
+source = "git+https://github.com/radiosilence/zed?rev=7a8891bbeac28240e7fa7aca2f361787ba6742a6#7a8891bbeac28240e7fa7aca2f361787ba6742a6"
 
 [[package]]
 name = "zune-core"

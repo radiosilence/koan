@@ -5036,9 +5036,11 @@ pub fn rows_under_foot(row: Pixels, window: &gpui::Window, cx: &App) -> (usize, 
 
 #### `scrolls_away`
 
-*function* · A page's header over a virtual list that scrolls it away with the rows:
-drawn `above` the list's scroll, as the list lays it out, over the room the list leaves above its
-first row, which is `height` once measured (`owner` is told).
+*function* · A page's header over a virtual list that scrolls it away with the rows,
+in the room the list leaves above its first row, which is `height` once
+measured (`owner` is told). It stands `above` below the top of the
+list's content, wherever the list's `scroll` has that: the room a bar
+over the list takes.
 
 ```rust
 pub fn scrolls_away(
