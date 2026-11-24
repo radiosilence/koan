@@ -1,0 +1,1 @@
+- **§8's Datastar rules agree with each other.** The POST guard covers the routes Datastar posts to and leaves plain forms outside it; a page reopens its own live stream; an action's signals accept fields it does not name; a server's askama follows the crate's release; and §23 audits the crate's version and any copy of `datastar.js` a server keeps, vendored or bundled.
