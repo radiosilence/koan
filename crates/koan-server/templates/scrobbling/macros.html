@@ -1,8 +1,8 @@
 {#- A connection's state: its last error, or how many plays are still to send. -#}
 {% macro state(s) %}
 {%- if let Some(e) = s.error %}<p class="{{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>
-{%- else if s.pending > 0 %}<p class="{{ crate::ui::pages::EMPTY }}">{{ crate::ui::scrobbling::plays(*s.pending) }} waiting to be sent.</p>
-{%- else %}<p class="{{ crate::ui::pages::EMPTY }}">Every play has been sent.</p>
+{%- else if s.pending > 0 %}<p><span class="status wait">{{ crate::ui::scrobbling::plays(*s.pending) }} waiting to be sent</span></p>
+{%- else %}<p><span class="status ok">Every play has been sent</span></p>
 {%- endif %}
 {%- endmacro %}
 

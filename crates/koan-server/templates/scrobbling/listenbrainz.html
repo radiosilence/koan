@@ -5,7 +5,7 @@
 {%- when None %}
 <p>Paste your user token from <a href="https://listenbrainz.org/settings/">your ListenBrainz settings</a>. The plays already in your history here are sent when you connect.</p>
 <form class="mb-2 flex max-w-form gap-2" data-on:submit__prevent="@post('scrobbling/listenbrainz')">
-<input class="flex-1" type="password" name="token" data-bind:lbtoken placeholder="User token" required autocomplete="off" aria-label="ListenBrainz user token"><button class="primary">Connect</button></form>
+<input class="flex-1" type="password" name="token" data-bind:lbtoken placeholder="User token" required autocomplete="off" aria-label="ListenBrainz user token"><button>Connect</button></form>
 {%- if let Some(m) = message %}<p>{{ m }}</p>{% endif %}
 {%- when Some(s) %}
 {% call scrobbling::connected(s) %}{% endcall %}

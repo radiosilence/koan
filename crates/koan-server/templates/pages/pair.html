@@ -8,7 +8,7 @@
 <h2>Sign in a device</h2>
 <p>Type the code the device shows.</p>
 <form class="grid gap-3.5" method="get" action="pair">
-<label class="{{ crate::ui::pages::SIGNIN_LABEL }}">Code<input class="text-input" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="20" required autofocus data-on:input="let at = el.value.slice(0, el.selectionStart).replace(/[^0-9a-z]/gi, '').length; el.value = el.value.toUpperCase().replace(/[IL]/g, '1').replace(/O/g, '0').replace(/[^0-9A-HJKMNP-TV-Z]/g, '').slice(0, 8).replace(/^.{4}(?=.)/, (m) => m + '-'); at = Math.min(at > 4 ? at + 1 : at, el.value.length); el.setSelectionRange(at, at)"></label>
+<label class="field"><span>Code</span><input name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="20" required autofocus data-on:input="let at = el.value.slice(0, el.selectionStart).replace(/[^0-9a-z]/gi, '').length; el.value = el.value.toUpperCase().replace(/[IL]/g, '1').replace(/O/g, '0').replace(/[^0-9A-HJKMNP-TV-Z]/g, '').slice(0, 8).replace(/^.{4}(?=.)/, (m) => m + '-'); at = Math.min(at > 4 ? at + 1 : at, el.value.length); el.setSelectionRange(at, at)"></label>
 {% if let Some(e) = error %}<p class="m-0 {{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>{% endif %}
 <button class="primary">Continue</button></form>
 {%- when View::NoAccounts %}

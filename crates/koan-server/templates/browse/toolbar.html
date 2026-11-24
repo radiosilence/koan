@@ -2,7 +2,7 @@
 {%- import "browse/macros.html" as m -%}
 {%- let label = crate::ui::browse::LABEL -%}
 {%- let field = crate::ui::browse::FIELD -%}
-<details class="browse group -mt-1 mb-5"><summary class="hidden cursor-pointer list-none items-center gap-1.5 border border-muted px-3 py-[7px] text-control text-ink group-open:border-brand max-wide:inline-flex [&::-webkit-details-marker]:hidden">Sort · Filter{% if active > 0 %} <span class="inline-block min-w-[1.5em] bg-brand px-[5px] text-center text-[11px] font-bold text-bg">{{ active }}</span>{% endif %}</summary>
+<details class="browse group -mt-1 mb-5"><summary class="button hidden list-none group-open:border-brand max-wide:inline-flex [&::-webkit-details-marker]:hidden">Sort · Filter{% if active > 0 %} <span class="text-brand tabular-nums">{{ active }}</span>{% endif %}</summary>
 <form class="toolbar flex flex-wrap items-center gap-x-3.5 gap-y-2 text-meta text-muted max-wide:mt-2.5 max-wide:flex-col max-wide:items-stretch max-wide:gap-3 max-wide:border max-wide:border-rule max-wide:p-3.5 max-wide:text-body" method="get" action="{{ path }}">
 <label class="{{ label }}">Name<input class="{{ name_width }} {{ field }} max-wide:w-auto max-wide:flex-1" type="search" name="q" placeholder="{{ name_hint }}" value="{{ q }}" aria-label="Filter by name"></label>
 {%- call m::select("sort", "Sort", sorts) %}{% endcall %}

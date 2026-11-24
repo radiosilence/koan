@@ -64,7 +64,7 @@ fn status(job: Option<&Job>, on_load: bool) -> Html {
                     Some(_) => format!("{doing} {}", j.message),
                     None => doing,
                 };
-                ("text-muted", text)
+                ("status wait busy", text)
             }
             JobState::Succeeded => {
                 let what = if j.kind == REREAD {
@@ -72,10 +72,10 @@ fn status(job: Option<&Job>, on_load: bool) -> Html {
                 } else {
                     format!("Last scan{reason}")
                 };
-                ("text-muted", format!("{what}: {}", j.message))
+                ("status ok", format!("{what}: {}", j.message))
             }
             JobState::Failed => (
-                "text-bad",
+                "notice bad",
                 format!("The scan failed{reason}: {}", j.message),
             ),
         }

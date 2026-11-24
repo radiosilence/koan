@@ -2,7 +2,8 @@
 @source "../public/**/*.html";
 @source "./docs.html";
 
-@import "@radiosilence/theme";
+/* The tokens alone: the site's markup is its own, so the web kit's element defaults and controls would only fight it. */
+@import "@radiosilence/theme/tokens.css";
 
 /* Syntax colours for the documentation's code, which the web UI has no use for. */
 :root {
@@ -30,7 +31,7 @@
   }
 
   body {
-    @apply bg-bg text-[15px]/relaxed text-ink;
+    @apply bg-bg text-body/relaxed text-ink;
   }
 
   a {
@@ -38,7 +39,7 @@
   }
 
   :focus-visible {
-    @apply rounded-xs outline-2 outline-offset-2 outline-brand;
+    @apply outline-2 outline-offset-2 outline-brand;
   }
 
   h1,
@@ -47,11 +48,11 @@
   }
 
   h2 {
-    @apply mb-6 text-2xl font-thin;
+    @apply mb-6 text-title-sm font-thin;
   }
 
   h3 {
-    @apply mt-8 mb-2 text-sm font-semibold;
+    @apply mt-8 mb-2 text-control font-semibold;
   }
 
   p {
@@ -71,7 +72,7 @@
   }
 
   h4 {
-    @apply mt-6 mb-2 text-sm font-semibold text-muted;
+    @apply mt-6 mb-2 text-control font-semibold text-muted;
   }
 
   blockquote {
@@ -83,7 +84,7 @@
   }
 
   table {
-    @apply my-4 block w-full overflow-x-auto border-collapse text-[13px]/relaxed;
+    @apply my-4 block w-full overflow-x-auto border-collapse text-meta/relaxed;
   }
 
   th,
@@ -96,12 +97,12 @@
   }
 
   pre {
-    @apply my-4 overflow-x-auto rounded-md border border-rule bg-surface px-4 py-3 text-[13px]/relaxed;
+    @apply my-4 overflow-x-auto border border-rule bg-surface px-4 py-3 text-meta/relaxed;
   }
 
   :not(pre) > code,
   kbd {
-    @apply rounded-sm bg-surface px-1 text-[0.9em];
+    @apply bg-surface px-1 text-[0.9em];
   }
 
   kbd {
@@ -117,7 +118,7 @@
 /* Documentation pages: markdown rendered by pandoc, so styled by context rather than class. */
 @layer components {
   .doc h1 {
-    @apply mb-6 text-4xl font-extralight lowercase;
+    @apply mb-6 text-display font-extralight lowercase;
   }
 
   .doc h2 {
@@ -129,7 +130,7 @@
   }
 
   .doc .toc {
-    @apply mb-10 border-s border-rule ps-4 text-sm;
+    @apply mb-10 border-s border-rule ps-4 text-control;
   }
 
   .doc .toc ul {
@@ -145,11 +146,11 @@
   }
 
   .docs-nav h2 {
-    @apply mt-6 mb-2 text-xs font-semibold tracking-wide text-muted uppercase;
+    @apply mt-6 mb-2 text-fine font-semibold tracking-wide text-muted uppercase;
   }
 
   .docs-nav ul {
-    @apply my-0 list-none space-y-1 ps-0 text-sm;
+    @apply my-0 list-none space-y-1 ps-0 text-control;
   }
 
   .docs-nav a {
@@ -189,7 +190,7 @@
   }
 
   .carousel-btn {
-    @apply absolute top-1/2 z-10 -mt-5 h-10 w-10 border border-muted bg-bg text-xl leading-none text-ink hover:bg-hover;
+    @apply absolute top-1/2 z-10 -mt-5 h-10 w-10 border border-muted bg-bg text-title-sm leading-none text-ink hover:bg-hover;
   }
 
   .carousel-btn[hidden] {
@@ -228,11 +229,11 @@
  */
 @layer components {
   .cmp {
-    @apply my-6 max-h-[85vh] overflow-auto rounded-md border border-rule;
+    @apply my-6 max-h-[85vh] overflow-auto border border-rule;
   }
 
   .cmp table {
-    @apply my-0 table w-max min-w-full text-[13px]/snug;
+    @apply my-0 table w-max min-w-full text-meta/snug;
   }
 
   .cmp th,
@@ -257,7 +258,7 @@
   }
 
   .cmp tbody tr.group th {
-    @apply pt-6 text-xs font-semibold tracking-wide text-muted uppercase;
+    @apply pt-6 text-fine font-semibold tracking-wide text-muted uppercase;
   }
 
   .cmp td.us {
@@ -281,7 +282,7 @@
   }
 
   .cmp .l {
-    @apply rounded-sm border border-rule px-1 text-[11px] font-semibold;
+    @apply border border-rule px-1 text-fine font-semibold;
   }
 }
 

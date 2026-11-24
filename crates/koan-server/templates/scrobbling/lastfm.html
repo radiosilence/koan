@@ -5,7 +5,7 @@
 {%- when None %}
 {%- if offered %}
 <p>You will be sent to Last.fm to approve kōan, then back here. The plays in your history from the last two weeks are sent when you connect: Last.fm takes no older ones.</p>
-<a class="primary" href="scrobbling/lastfm/connect">Connect Last.fm</a>
+<a class="button" href="scrobbling/lastfm/connect">Connect Last.fm</a>
 {%- else %}
 <p class="{{ crate::ui::pages::EMPTY }}">Last.fm is not set up on this server. Its admin needs to add a Last.fm API key and secret.</p>
 {%- endif %}
