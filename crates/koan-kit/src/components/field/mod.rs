@@ -188,8 +188,8 @@ impl RenderOnce for TextField {
                 field.child(
                     gpui::canvas(
                         move |bounds, _, cx| {
-                            if state.read(cx).keeps != Some(bounds) {
-                                state.update(cx, |state, _| state.keeps = Some(bounds));
+                            if state.read(cx).keeps != [bounds] {
+                                state.update(cx, |state, _| state.keeps = vec![bounds]);
                             }
                         },
                         |_, _, _, _| {},
@@ -271,6 +271,24 @@ fn editor(
     let placeholder = s.placeholder.clone();
     let value = s.text.clone();
     let (anchor, active) = s.selection_in_chars();
+    // What a clear took, fading out leftward from where it stood, in the
+    // field's own type and ink.
+    let ghost = s.ghost.clone().map(|(ghost, scrolled)| {
+        div()
+            .map(|d| {
+                #[cfg(test)]
+                let d = d.debug_selector(|| "field-cleared".into());
+                d
+            })
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .child(super::AnimatedLayer::new(
+                &s.fading,
+                div().ml(-scrolled).whitespace_nowrap().child(ghost),
+            ))
+    });
     let spans = s
         .spans
         .iter()
@@ -345,7 +363,9 @@ fn editor(
                     focus: at(active),
                 });
         })
-        .child(element);
+        .relative()
+        .child(element)
+        .children(ghost);
     // A disabled field takes no focus, so Tab passes it by.
     if !enabled {
         return el;

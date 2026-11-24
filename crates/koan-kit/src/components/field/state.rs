@@ -127,9 +127,14 @@ pub struct FieldState {
     /// until something else redraws the view.
     pub(super) drawn_in: Option<EntityId>,
     /// Where a press keeps the keyboard under touch, beyond the text: the
-    /// control the field is part of (a filter field's clear mark), as its
-    /// owner lays it out.
-    pub(crate) keeps: Option<Bounds<Pixels>>,
+    /// control the field is part of (a filter field's row and its clear
+    /// mark), as its owner lays it out.
+    pub(crate) keeps: Vec<Bounds<Pixels>>,
+    /// What a clear took, as drawn, and how far the field had scrolled it,
+    /// fading out over the field on `fading`'s tracks until `ghost_end`.
+    pub(super) ghost: Option<(SharedString, Pixels)>,
+    pub(super) fading: Animated,
+    ghost_end: Task<()>,
     /// The kind of text it takes, which a software keyboard lays out for.
     mode: gpui::TextInputMode,
     content: gpui::TextContentType,
@@ -193,7 +198,10 @@ impl FieldState {
             caret: Animated::new(),
             blink: Task::ready(()),
             drawn_in: None,
-            keeps: None,
+            keeps: Vec::new(),
+            ghost: None,
+            fading: Animated::default(),
+            ghost_end: Task::ready(()),
             mode: gpui::TextInputMode::Unspecified,
             content: gpui::TextContentType::Unspecified,
             _focus: [focused, blurred, activation, redraw],
@@ -301,6 +309,7 @@ impl FieldState {
             return;
         }
         self.text = value;
+        self.ghost = None;
         self.selected = self.text.len()..self.text.len();
         self.reversed = false;
         self.marked = None;
@@ -317,6 +326,64 @@ impl FieldState {
     /// filter): says `Change`, and can be undone.
     pub fn clean(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.edit(0..self.text.len(), "", Kind::Other, window, cx);
+    }
+
+    /// Empties the field as a clear mark does: what it held fades out
+    /// leftward over `Motion::SETTLE` from where it stood, and the
+    /// placeholder shows once it has gone, or as soon as the field is edited
+    /// again. Several lines, and Reduce Motion, empty at once, as `clean`
+    /// does; a read-only field keeps its text. For an owner's key that
+    /// clears, as Escape does.
+    pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text: SharedString = self.drawn().into();
+        let scrolled = self.scroll.x;
+        self.clean(window, cx);
+        if text.is_empty()
+            || !self.text.is_empty()
+            || self.multi_line()
+            || !crate::theme::KoanTheme::motion_allowed(cx)
+        {
+            return;
+        }
+        let at = Animated::now();
+        crate::components::layer::standing(&self.fading);
+        // Opacity from whole to nothing, and the leftward travel.
+        let travel = -12.0 * window.scale_factor();
+        for (k, from, to) in [(0, 1.0, 0.0), (1, 0.0, travel)] {
+            self.fading.segment(
+                k,
+                from,
+                to,
+                at,
+                crate::theme::Motion::SETTLE,
+                crate::components::Ease::QuickOut,
+                crate::components::Repeat::Once,
+            );
+        }
+        self.ghost = Some((text, scrolled));
+        self.ghost_end = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(crate::theme::Motion::SETTLE)
+                .await;
+            this.update(cx, |state, cx| {
+                state.ghost = None;
+                cx.notify();
+            })
+            .ok();
+        });
+        cx.notify();
+    }
+
+    /// Whether the person can change the text: a clear mark shows only
+    /// where they can.
+    pub(crate) fn editable(&self) -> bool {
+        !self.read_only
+    }
+
+    /// The cleared text as it fades.
+    #[cfg(test)]
+    pub(crate) fn ghost(&self) -> Option<&str> {
+        self.ghost.as_ref().map(|(text, _)| text.as_ref())
     }
 
     /// The whole text replaced by a screen reader's request: an edit of
@@ -743,6 +810,7 @@ impl FieldState {
     }
 
     fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ghost = None;
         self.announce = false;
         self.rehighlight();
         self.blink_from_shown(window, cx);

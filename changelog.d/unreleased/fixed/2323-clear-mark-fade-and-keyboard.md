@@ -1,0 +1,1 @@
+- **The search box clears as its mark does.** Escape fades the query out as the clear mark does, and under touch a tap on the mark keeps the keyboard; the cleared text fades from where it stood and the prompt returns once it has gone.
