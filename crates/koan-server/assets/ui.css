@@ -1500,6 +1500,9 @@
   .panel > :first-child {
     margin-top: 0px;
   }
+  .panel > :last-child {
+    margin-bottom: 0px;
+  }
   .notice {
     margin-block: calc(var(--spacing) * 4);
     display: flex;
@@ -1738,6 +1741,7 @@
     max-height: min(85dvh, calc(100dvh - var(--keyboard-inset, 0px) - 1rem));
     margin: 0;
     border-width: 1px 0 0;
+    padding-bottom: max(var(--sheet-padding-bottom, 0px), env(safe-area-inset-bottom));
   }
   @media (width >= 40rem) {
     dialog.sheet {
@@ -1747,6 +1751,7 @@
       max-height: 85dvh;
       margin: auto;
       border-width: 1px;
+      padding-bottom: var(--sheet-padding-bottom, 0px);
     }
   }
 }
