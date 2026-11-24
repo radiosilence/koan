@@ -133,7 +133,7 @@ pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use details::DetailGroup;
-pub use drag::{DragChip, DropTarget, INSERTION};
+pub use drag::{DragChip, DropTarget, INSERTION, landed};
 pub use gesture::{GESTURE, Gesture, Heading, raster as gesture_raster};
 pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
 pub use slot::{ColorSlot, install as install_color_slots, present_now};

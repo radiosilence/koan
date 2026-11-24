@@ -2767,7 +2767,8 @@ What a drag shows: the chip under the pointer, saying what is carried,
 and the target lit while a drag it accepts is over it. A target lights
 only for the payloads it takes, so a drag over something that refuses it
 shows nothing. Between rows, where a drop lands is the list's insertion
-line, `INSERTION`, in the accent.
+line, `INSERTION`, in the accent. Under touch a drag entering a target
+is felt as a tick, and a drop that lands as a tap (`landed`).
 
 #### `INSERTION`
 
@@ -2799,12 +2800,22 @@ Implements `RenderOnce`.
 
 #### `DropTarget`
 
-*trait* · A drop target lit while a drag of `T` is over it.
+*trait* · A drop target lit while a drag of `T` is over it, and felt as the drag
+enters it.
 
 ```rust
 pub trait DropTarget: InteractiveElement + Sized {
     fn drop_highlight<T: 'static>(self, look: &Look) -> Self;
 }
+```
+
+#### `landed`
+
+*function* · A drop that landed, felt as a light tap. Every drop handler that takes
+what it is given calls it; one that refuses stays still.
+
+```rust
+pub fn landed(cx: &App)
 ```
 
 ### components::empty

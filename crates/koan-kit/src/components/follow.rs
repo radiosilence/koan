@@ -526,6 +526,7 @@ impl Elastic {
                     return;
                 }
                 TouchPhase::Moved if state.finger && state.pulled != 0.0 => {
+                    let was = rubber(state.pulled, dimension);
                     let next = state.pulled + dy;
                     // Past the place it stands at rest, the page has its
                     // ordinary pan back.
@@ -535,6 +536,9 @@ impl Elastic {
                         next
                     };
                     let shown = rubber(state.pulled, dimension);
+                    if arms(&state, was, shown) {
+                        cx.perform_haptic(HapticFeedback::Light);
+                    }
                     self.follow.follow(point(Pixels::ZERO, px(shown)), window);
                     cx.stop_propagation();
                     return;
@@ -610,8 +614,12 @@ impl Elastic {
         state.travelled -= dy;
         match event.touch_phase {
             TouchPhase::Moved if state.finger && dy != 0.0 => {
+                let was = rubber(state.pulled, dimension);
                 state.pulled += dy;
                 let shown = rubber(state.pulled, dimension);
+                if arms(&state, was, shown) {
+                    cx.perform_haptic(HapticFeedback::Light);
+                }
                 let layered = std::mem::replace(&mut state.layered, true);
                 self.follow.follow(point(Pixels::ZERO, px(shown)), window);
                 if !layered {
@@ -648,6 +656,16 @@ impl Elastic {
             _ => {}
         }
     }
+}
+
+/// Whether a pull from `was` to `shown` (as drawn) crosses the threshold
+/// where letting go refreshes: felt then, as UIKit's refresh control
+/// answers.
+fn arms(state: &ElasticState, was: f32, shown: f32) -> bool {
+    state.refresh.as_ref().is_some_and(|r| !r.busy)
+        && state.held.is_none()
+        && was < PULL
+        && shown >= PULL
 }
 
 /// The ring in the gap over a page pulled from its top: it rides in the

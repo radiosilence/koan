@@ -1,0 +1,1 @@
+- **Haptics for pulling, dragging and dropping.** On iPhone and iPad, a pull is felt as it passes the point where letting go refreshes, a drag ticks as it enters a drop target or its place in a list moves, and a drop taps as it lands.

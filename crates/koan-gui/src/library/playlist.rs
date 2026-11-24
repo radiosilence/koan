@@ -417,7 +417,7 @@ impl PlaylistPage {
                 crate::notice::show(why, crate::theme::Tone::Muted, cx);
                 return;
             }
-            Lands::Row => {}
+            Lands::Row => crate::components::landed(cx),
         }
         // Places are named by entry, never by index: offline, entries with
         // no file here are not listed, and the engine moves the rows shown
@@ -1145,6 +1145,9 @@ impl PlaylistPage {
             };
             if this.drop_at != at {
                 this.drop_at = at;
+                if at.is_some() {
+                    cx.perform_haptic(HapticFeedback::Selection);
+                }
                 cx.notify();
             }
         };
@@ -1275,6 +1278,9 @@ impl PlaylistPage {
         };
         if self.drop_at != wanted {
             self.drop_at = wanted;
+            if wanted.is_some() {
+                cx.perform_haptic(HapticFeedback::Selection);
+            }
             cx.notify();
         }
     }

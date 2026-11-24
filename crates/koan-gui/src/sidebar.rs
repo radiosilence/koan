@@ -257,6 +257,7 @@ impl Sidebar {
         let Some(from) = self.playlists.iter().position(|p| p.id == id) else {
             return;
         };
+        crate::components::landed(cx);
         // Dropped where it already was: nothing to write.
         if at == from || at == from + 1 {
             return;
@@ -494,6 +495,7 @@ impl Render for Sidebar {
                     .id("nav-playlists")
                     .drop_highlight::<PlayableDrag>(&p.look)
                     .on_drop(cx.listener(|this, dragged: &PlayableDrag, window, cx| {
+                        crate::components::landed(cx);
                         let sets = dragged.sets.to_vec();
                         new_playlist(engine(cx), this.nav.clone(), sets, window, cx);
                     }))
@@ -661,6 +663,7 @@ impl Render for Sidebar {
                                     let at = index + usize::from(lower);
                                     if this.drop_playlist != Some(at) {
                                         this.drop_playlist = Some(at);
+                                        cx.perform_haptic(HapticFeedback::Selection);
                                         cx.notify();
                                     }
                                 },
