@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "GraphQL, Subsonic REST, and MCP server for koan music player."
 keywords = ["audio", "music", "graphql", "subsonic"]
 categories = ["multimedia::audio"]

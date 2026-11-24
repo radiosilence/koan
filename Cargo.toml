@@ -5,7 +5,7 @@ members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-runtime", "crates
 [workspace.package]
 version = "0.74.1"
 edition = "2024"
-homepage = "https://github.com/radiosilence/koan"
+homepage = "https://koan.rocks"
 repository = "https://github.com/radiosilence/koan"
 license = "AGPL-3.0-or-later"
 
