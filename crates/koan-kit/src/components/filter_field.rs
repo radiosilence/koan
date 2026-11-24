@@ -53,7 +53,7 @@ impl FilterField {
 impl RenderOnce for FilterField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let clear = ClearMark::of(&self.input, TypeRole::Control, false, cx);
+        let clear = ClearMark::of(&self.input, TypeRole::Control, false);
         let (escape, focus) = (self.input.clone(), self.input.clone());
         // Under touch a toolbar's field, focused, opens out to the toolbar's
         // width over the buttons beside it, easing from where it stood, as

@@ -187,7 +187,7 @@ impl RenderOnce for CommandField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let target = look.target();
-        ClearMark::of(&self.input, self.role, self.disabled, cx)
+        ClearMark::of(&self.input, self.role, self.disabled)
             .row(
                 None,
                 TextField::new(&self.input)
@@ -610,11 +610,11 @@ mod tests {
         );
         typed(&input, "abba", cx);
         press_mark(cx);
-        assert!(cx.update(|_, cx| input.read(cx).cleared.fading()));
+        assert!(cx.update(|_, cx| input.read(cx).ghost().is_some()));
         cx.simulate_input("x");
         cx.run_until_parked();
         assert_eq!(value(&input, cx), "x");
-        assert!(!cx.update(|_, cx| input.read(cx).cleared.fading()));
+        assert!(!cx.update(|_, cx| input.read(cx).ghost().is_some()));
         assert!(cx.debug_bounds("field-cleared").is_none());
     }
 
@@ -632,7 +632,7 @@ mod tests {
         );
         typed(&input, "abba", cx);
         press_mark(cx);
-        let ghost = cx.update(|_, cx| input.read(cx).cleared.ghost().map(str::to_owned));
+        let ghost = cx.update(|_, cx| input.read(cx).ghost().map(str::to_owned));
         let ghost = ghost.expect("the cleared text fades");
         assert!(!ghost.contains("abba"), "{ghost:?}");
         assert_eq!(ghost.chars().count(), 4);
@@ -648,10 +648,9 @@ mod tests {
         }
     }
 
-    /// A field with no clear mark empties at once on `clear`: nothing
-    /// fades and the placeholder is not held back.
+    /// Any field fades what `clear` took, a clear mark or none.
     #[gpui::test]
-    fn a_plain_field_clears_at_once(cx: &mut TestAppContext) {
+    fn a_plain_field_fades_on_clear(cx: &mut TestAppContext) {
         cx.update(|cx| {
             crate::theme::init(cx);
         });
@@ -664,6 +663,62 @@ mod tests {
         cx.update(|window, cx| input.update(cx, |i, cx| i.clear(window, cx)));
         cx.run_until_parked();
         assert_eq!(value(&input, cx), "");
-        assert!(!cx.update(|_, cx| input.read(cx).cleared.fading()));
+        assert!(cx.debug_bounds("field-cleared").is_some());
+    }
+
+    /// A read-only query shows no mark, and `clear` leaves its text, with
+    /// nothing fading over it.
+    #[gpui::test]
+    fn a_read_only_query_keeps_its_text(cx: &mut TestAppContext) {
+        let (input, cx) = open(
+            Setup {
+                observed: true,
+                ..Setup::default()
+            },
+            cx,
+        );
+        cx.update(|window, cx| {
+            input.update(cx, |i, cx| {
+                i.set_value("abba", window, cx);
+                i.set_read_only(true, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("field-clear").is_none());
+        cx.update(|window, cx| input.update(cx, |i, cx| i.clear(window, cx)));
+        cx.run_until_parked();
+        assert_eq!(value(&input, cx), "abba");
+        assert!(cx.update(|_, cx| input.read(cx).ghost().is_none()));
+        assert!(cx.debug_bounds("field-cleared").is_none());
+    }
+
+    /// Under touch the mark's hit area stands past the row, and only it
+    /// does: a tap in the band beside it, above the row, puts the keyboard
+    /// away.
+    #[gpui::test]
+    fn a_tap_beside_the_mark_lets_the_keyboard_go(cx: &mut TestAppContext) {
+        let (input, cx) = open(
+            Setup {
+                touch: true,
+                observed: true,
+                ..Setup::default()
+            },
+            cx,
+        );
+        typed(&input, "abba", cx);
+        let clear = cx
+            .debug_bounds("field-clear")
+            .expect("the mark shows with text");
+        tap(1, point(clear.left() - px(40.), clear.center().y), cx);
+        let clear = cx.debug_bounds("field-clear").expect("still there");
+        let line = cx.update(|window, cx| CommandBar::field_height(window, cx));
+        let at = point(clear.left() - px(20.), clear.top() + px(2.));
+        assert!(at.y < clear.center().y - line / 2., "{at:?} is in the row");
+        tap(2, at, cx);
+        assert_eq!(value(&input, cx), "abba");
+        assert!(
+            !focused(&input, cx),
+            "a tap beside the mark kept the keyboard"
+        );
     }
 }

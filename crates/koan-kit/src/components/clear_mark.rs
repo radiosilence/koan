@@ -1,100 +1,20 @@
 //! The clear mark a text field shows at its trailing edge while it holds
-//! text (the Mac's): `muted`, `ink` under the pointer, emptying the field on
-//! a press and keeping the keyboard there. What was cleared fades out
-//! leftward for a moment from where it stood, a layer the GPU moves, and the
-//! placeholder waits for it to go, so the clear is seen and the two never
-//! overlap. The filter field and the command bar's query both draw it, and
-//! their owners run the same clear from a key with `FieldState::clear`.
+//! text the person can change (the Mac's): `muted`, `ink` under the
+//! pointer, emptying the field on a press with `FieldState::clear` and
+//! keeping the keyboard there. The filter field and the command bar's query
+//! both draw it, and their owners run the same clear from a key.
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use crate::components::field::FieldState as InputState;
 use gpui::prelude::*;
 use gpui::*;
 
-use super::{Animated, AnimatedLayer, Ease, Repeat};
-use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Motion, Tone, TypeRole};
+use crate::theme::{Icon, KoanIcon, Look, Tone, TypeRole};
 
-/// A field's clear mark, kept on the field's state: the text a clear took,
-/// fading out, so a clear run from outside the field's render (a key) fades
-/// as the mark's does, and the bounds the keyboard is kept over.
-#[derive(Default)]
-pub(crate) struct Cleared {
-    /// A clear mark's row draws the field: only then does a clear fade, and
-    /// only then does the row own `FieldState::keeps`.
-    pub(crate) drawn: bool,
-    animated: Animated,
-    /// What was cleared, as drawn, and how far the field had scrolled it.
-    ghost: Option<(SharedString, Pixels)>,
-    _end: Option<Task<()>>,
-    /// The row and the mark's hit area as last painted, whose union keeps
-    /// the keyboard under touch.
-    row: Option<Bounds<Pixels>>,
-    mark: Option<Bounds<Pixels>>,
-}
-
-impl Cleared {
-    /// Whether cleared text is still fading: the placeholder waits for it.
-    pub(crate) fn fading(&self) -> bool {
-        self.ghost.is_some()
-    }
-
-    /// The cleared text as it fades.
-    #[cfg(test)]
-    pub(crate) fn ghost(&self) -> Option<&str> {
-        self.ghost.as_ref().map(|(text, _)| text.as_ref())
-    }
-
-    /// `text`, scrolled `scrolled` into its field, fading out leftward over
-    /// `Motion::SETTLE` from now; `end` lets it go once it has.
-    pub(crate) fn fade(
-        &mut self,
-        text: SharedString,
-        scrolled: Pixels,
-        window: &Window,
-        end: Task<()>,
-    ) {
-        let travel = -12.0 * window.scale_factor();
-        let at = Animated::now();
-        super::layer::standing(&self.animated);
-        self.animated.segment(
-            0,
-            1.0,
-            0.0,
-            at,
-            Motion::SETTLE,
-            Ease::QuickOut,
-            Repeat::Once,
-        );
-        self.animated.segment(
-            1,
-            0.0,
-            travel,
-            at,
-            Motion::SETTLE,
-            Ease::QuickOut,
-            Repeat::Once,
-        );
-        self.ghost = Some((text, scrolled));
-        self._end = Some(end);
-    }
-
-    /// The fade over, or cut short by an edit: the placeholder shows again.
-    pub(crate) fn gone(&mut self) {
-        self.ghost = None;
-        self._end = None;
-    }
-}
-
-/// Where a press keeps the keyboard under touch: the row, and the mark's
-/// hit area where it stands past the row.
-fn keep(state: &mut InputState) {
-    state.keeps = match (state.cleared.row, state.cleared.mark) {
-        (Some(row), Some(mark)) => Some(row.union(&mark)),
-        (row, mark) => row.or(mark),
-    };
-}
-
-/// A field's clear: the row holding the field and its mark, and the cleared
-/// text's fade. Made at render.
+/// A field's clear: the row holding the field and its mark, which owns
+/// where the keyboard is kept under touch. Made at render.
 pub(super) struct ClearMark {
     input: Entity<InputState>,
     role: TypeRole,
@@ -105,18 +25,27 @@ pub(super) struct ClearMark {
 /// stood, for it to open out from.
 pub(super) type Measured = Box<dyn FnOnce(Bounds<Pixels>, &mut App)>;
 
+/// A full-size canvas over its parent, handing its bounds to `measured` as
+/// it is painted.
+fn measure(measured: impl FnOnce(Bounds<Pixels>, &mut App) + 'static) -> impl IntoElement {
+    canvas(move |bounds, _, cx| measured(bounds, cx), |_, _, _, _| {})
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+}
+
+/// Sets where `input` keeps the keyboard, only when it moved.
+fn keep(input: &Entity<InputState>, keeps: Vec<Bounds<Pixels>>, cx: &mut App) {
+    if input.read(cx).keeps != keeps {
+        input.update(cx, |state, _| state.keeps = keeps);
+    }
+}
+
 impl ClearMark {
     /// The clear of `input`, whose text is set in `role`; a `disabled` field
     /// draws no mark.
-    pub(super) fn of(
-        input: &Entity<InputState>,
-        role: TypeRole,
-        disabled: bool,
-        cx: &mut App,
-    ) -> Self {
-        if !input.read(cx).cleared.drawn {
-            input.update(cx, |state, _| state.cleared.drawn = true);
-        }
+    pub(super) fn of(input: &Entity<InputState>, role: TypeRole, disabled: bool) -> Self {
         Self {
             input: input.clone(),
             role,
@@ -124,12 +53,13 @@ impl ClearMark {
         }
     }
 
-    /// A row of `leading`, `field` taking the rest of it with the cleared
-    /// text fading over it, and the mark while there is text. Under touch
-    /// the row and the mark's hit area keep the keyboard: a tap on the mark
-    /// or the glyph is the field's, not somewhere else to tap. `mark`
-    /// dresses the mark (its hit size) for the owner's row; `measured` hears
-    /// the row's bounds each paint.
+    /// A row of `leading`, `field` taking the rest of it, and the mark while
+    /// there is text to clear. Under touch the row and the mark's hit area,
+    /// two rectangles, keep the keyboard: a tap on the mark or the glyph is
+    /// the field's, not somewhere else to tap, and a tap beside a mark that
+    /// stands past the row is elsewhere. `mark` dresses the mark (its hit
+    /// size) for the owner's row; `measured` hears the row's bounds each
+    /// paint.
     pub(super) fn row(
         &self,
         leading: Option<AnyElement>,
@@ -139,92 +69,48 @@ impl ClearMark {
         look: &Look,
         cx: &App,
     ) -> Div {
+        // The row is painted before its mark: with a mark, the mark's
+        // measure writes both rectangles at once, once a frame.
+        let row = Rc::new(Cell::new(None));
+        let shown = self.mark(row.clone(), look, cx);
         let input = self.input.clone();
-        let measure = canvas(
-            move |bounds, _, cx| {
-                input.update(cx, |state, _| {
-                    state.cleared.row = Some(bounds);
-                    state.cleared.mark = None;
-                    keep(state);
-                });
-                if let Some(measured) = measured {
-                    measured(bounds, cx);
-                }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full();
+        let has_mark = shown.is_some();
+        let measured_row = measure(move |bounds, cx| {
+            if has_mark {
+                row.set(Some(bounds));
+            } else {
+                keep(&input, vec![bounds], cx);
+            }
+            if let Some(measured) = measured {
+                measured(bounds, cx);
+            }
+        });
         div()
             .relative()
             .flex()
             .items_center()
-            .child(measure)
+            .child(measured_row)
             .children(leading)
-            .child(self.text(field, look, cx))
-            .children(self.mark(look, cx).map(mark))
+            // An input is as wide as its parent, which a flex row otherwise
+            // sizes to the input's content, nothing.
+            .child(div().flex_1().min_w_0().child(field))
+            .children(shown.map(mark))
     }
 
-    /// `field` taking the rest of the row, with the cleared text fading over
-    /// it from where the field had scrolled it. An input is as wide as its
-    /// parent, which a flex row otherwise sizes to the input's content,
-    /// nothing.
-    fn text(&self, field: impl IntoElement, look: &Look, cx: &App) -> Div {
-        let cleared = &self.input.read(cx).cleared;
-        let fading = cleared.animated.clone();
-        div()
-            .relative()
-            .flex_1()
-            .min_w_0()
-            .child(field)
-            .children(cleared.ghost.clone().map(|(ghost, scrolled)| {
-                div()
-                    .map(|d| {
-                        #[cfg(test)]
-                        let d = d.debug_selector(|| "field-cleared".into());
-                        d
-                    })
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .items_center()
-                    .overflow_hidden()
-                    .child(AnimatedLayer::new(
-                        &fading,
-                        div()
-                            .ml(-scrolled)
-                            .whitespace_nowrap()
-                            .text_role(self.role, look)
-                            .text_color(look.palette.ink.hsla())
-                            .child(ghost),
-                    ))
-            }))
-    }
-
-    /// The mark, while the field holds text and is not disabled. Its whole
-    /// hit area, which the owner may make taller than the row, keeps the
-    /// keyboard.
-    fn mark(&self, look: &Look, cx: &App) -> Option<Stateful<Div>> {
-        if self.disabled || self.input.read(cx).value().is_empty() {
+    /// The mark, while the field holds text the person can change and is
+    /// not disabled. Its whole hit area, which the owner may make taller
+    /// than the row, keeps the keyboard beside the row's.
+    fn mark(
+        &self,
+        row: Rc<Cell<Option<Bounds<Pixels>>>>,
+        look: &Look,
+        cx: &App,
+    ) -> Option<Stateful<Div>> {
+        let state = self.input.read(cx);
+        if self.disabled || !state.editable() || state.value().is_empty() {
             return None;
         }
-        let input = self.input.clone();
-        let measured = self.input.clone();
-        let measure = canvas(
-            move |bounds, _, cx| {
-                measured.update(cx, |state, _| {
-                    state.cleared.mark = Some(bounds);
-                    keep(state);
-                });
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full();
+        let (input, measured) = (self.input.clone(), self.input.clone());
         Some(
             div()
                 .id("field-clear")
@@ -237,7 +123,10 @@ impl ClearMark {
                 .flex_none()
                 .cursor_pointer()
                 .group("field-clear")
-                .child(measure)
+                .child(measure(move |bounds, cx| {
+                    let keeps = row.get().into_iter().chain([bounds]).collect();
+                    keep(&measured, keeps, cx);
+                }))
                 .child(
                     KoanIcon::new(Icon::ClearField)
                         .role(self.role)

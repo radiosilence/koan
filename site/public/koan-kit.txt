@@ -9613,12 +9613,12 @@ pub struct FieldState { /* private fields */ }
 
 - `pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>)`
 
-  Empties the field as its clear mark does. Where a clear mark's row
-  draws the field (the filter field, the command bar's query), what it
-  held fades out leftward over `Motion::SETTLE` and the placeholder
-  shows once it has gone, or as soon as the field is edited again;
-  elsewhere, and under Reduce Motion, this is `clean`. For an owner's
-  key that clears, as Escape does.
+  Empties the field as a clear mark does: what it held fades out
+  leftward over `Motion::SETTLE` from where it stood, and the
+  placeholder shows once it has gone, or as soon as the field is edited
+  again. Several lines, and Reduce Motion, empty at once, as `clean`
+  does; a read-only field keeps its text. For an owner's key that
+  clears, as Escape does.
 
 - `pub fn focus(&self, window: &mut Window, cx: &mut App)`
 

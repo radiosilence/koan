@@ -108,7 +108,7 @@ impl gpui::Element for FieldElement {
         let line_height = window.line_height();
         let empty = state.text.is_empty() && state.marked.is_none();
         // The placeholder waits for cleared text to finish fading over it.
-        let drawn: String = if empty && state.cleared.fading() {
+        let drawn: String = if empty && state.ghost.is_some() {
             String::new()
         } else if empty {
             state.placeholder.to_string()
@@ -290,11 +290,11 @@ impl gpui::Element for FieldElement {
         // has it.
         if focus.is_focused(window) && window.last_input_was_touch() {
             let focus = focus.clone();
-            let keeps = self.state.read(cx).keeps;
+            let keeps = self.state.read(cx).keeps.clone();
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                 if phase != DispatchPhase::Capture
                     || bounds.contains(&event.position)
-                    || keeps.is_some_and(|keeps| keeps.contains(&event.position))
+                    || keeps.iter().any(|keeps| keeps.contains(&event.position))
                 {
                     return;
                 }
