@@ -458,7 +458,8 @@ fn read(ask: &Ask) -> Listing {
             listing.albums = queries::list_albums(&db.conn, &query).unwrap_or_default();
         }
         Source::Artists => {
-            let sort = core_browse::ArtistSort::natural(&ask.filter);
+            let sort =
+                core_browse::ArtistSort::natural(&ask.filter, core_browse::trimmed(text).is_some());
             let query = core_browse::artists(&ask.filter, text, sort);
             listing.artists = queries::list_artists(&db.conn, &query).unwrap_or_default();
         }

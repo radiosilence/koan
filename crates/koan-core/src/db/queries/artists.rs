@@ -506,6 +506,42 @@ mod tests {
     }
 
     #[test]
+    fn most_tracks_and_most_records_order_by_their_counts_then_name() {
+        use crate::db::queries::{sample_meta, upsert_track};
+        let db = stocked_db();
+        for (title, artist, album) in [
+            ("u", "Coil", "Album"),
+            ("v", "Coil", "Album"),
+            ("w", "Boards of Canada", "Other"),
+        ] {
+            let mut m = sample_meta(title, artist, album);
+            m.path = Some(format!("/music/{artist}/{title}.flac"));
+            upsert_track(&db.conn, &m).unwrap();
+        }
+        let names = |order| -> Vec<String> {
+            list_artists(
+                &db.conn,
+                &ArtistQuery {
+                    order,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect()
+        };
+        assert_eq!(
+            names(ArtistOrder::TrackCount),
+            ["Coil", "Boards of Canada", "Autechre", "Dopplereffekt"]
+        );
+        assert_eq!(
+            names(ArtistOrder::AlbumCount),
+            ["Boards of Canada", "Autechre", "Coil", "Dopplereffekt"]
+        );
+    }
+
+    #[test]
     fn a_collaboration_is_listed_under_each_artist_it_credits() {
         let db = collaboration_db(true);
         let ep = "Revenant du nord / Siilent".to_string();

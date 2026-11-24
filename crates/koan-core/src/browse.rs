@@ -219,11 +219,13 @@ impl ArtistSort {
     /// The order a client without a sort of its own lists in: Recently
     /// Played's with that filter, else the closest match to the name filter,
     /// and by name without one.
-    pub fn natural(filter: &BrowseFilter) -> ArtistSort {
+    pub fn natural(filter: &BrowseFilter, searching: bool) -> ArtistSort {
         if filter.recent {
             ArtistSort::LastPlayed
-        } else {
+        } else if searching {
             ArtistSort::BestMatch
+        } else {
+            ArtistSort::Name
         }
     }
 
@@ -362,6 +364,41 @@ mod tests {
             ]
         );
         assert_eq!(TrackSort::offered(&recent, false)[0], TrackSort::LastPlayed);
+    }
+
+    #[test]
+    fn artist_sorts_are_offered_and_chosen_by_filter_and_search() {
+        let none = BrowseFilter::default();
+        let recent = BrowseFilter {
+            recent: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            ArtistSort::offered(&none, false),
+            [
+                ArtistSort::Name,
+                ArtistSort::Albums,
+                ArtistSort::Tracks,
+                ArtistSort::RecentlyAdded
+            ]
+        );
+        assert_eq!(
+            ArtistSort::offered(&recent, true)[..3],
+            [
+                ArtistSort::Name,
+                ArtistSort::BestMatch,
+                ArtistSort::LastPlayed
+            ]
+        );
+        assert_eq!(ArtistSort::natural(&none, false), ArtistSort::Name);
+        assert_eq!(ArtistSort::natural(&none, true), ArtistSort::BestMatch);
+        assert_eq!(ArtistSort::natural(&recent, true), ArtistSort::LastPlayed);
+        for filter in [&none, &recent] {
+            for searching in [false, true] {
+                let natural = ArtistSort::natural(filter, searching);
+                assert!(ArtistSort::offered(filter, searching).contains(&natural));
+            }
+        }
     }
 
     #[test]

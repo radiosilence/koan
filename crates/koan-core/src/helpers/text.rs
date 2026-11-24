@@ -99,15 +99,24 @@ pub fn year_of(date: &str) -> Option<&str> {
 }
 
 /// The heading a name is listed under in a list grouped by initial: its first
-/// letter as the `LIBRARY` collation reads it (accents dropped), capitalised,
-/// or `#` for a name opening with a digit, a sign or nothing. Walked in that
-/// collation's order, names under one heading are contiguous.
+/// character as the `LIBRARY` collation folds it (accents dropped, lowercased),
+/// capitalised where that is one character, or `#` for a name opening with a
+/// digit, a sign or nothing. In that collation's order each letter's names are
+/// one run; `#` can be two, since signs sort both before `a` and after `z`, so
+/// a list draws a heading per run rather than per initial.
 pub fn initial(name: &str) -> char {
     use unicode_normalization::UnicodeNormalization;
     name.nfd()
         .find(|c| !matches!(*c as u32, 0x0300..=0x036F))
+        .and_then(|c| c.to_lowercase().next())
         .filter(|c| c.is_alphabetic())
-        .and_then(|c| c.to_uppercase().next())
+        .map(|c| {
+            let mut upper = c.to_uppercase();
+            match (upper.next(), upper.next()) {
+                (Some(u), None) => u,
+                _ => c,
+            }
+        })
         .unwrap_or('#')
 }
 
@@ -124,6 +133,9 @@ mod initial_tests {
         assert_eq!(initial("!!!"), '#');
         assert_eq!(initial(""), '#');
         assert_eq!(initial("Øyvind"), 'Ø');
+        // Uppercased, ß is two letters, and it sorts after z, not with S.
+        assert_eq!(initial("ßeta"), 'ß');
+        assert_eq!(initial("{x}"), '#');
     }
 }
 

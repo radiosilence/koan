@@ -113,6 +113,7 @@ pub struct SectionHeading {
     open: Option<(ElementId, super::Handler<ClickEvent>)>,
     reveal: Option<super::choice::Run>,
     row: Option<Pixels>,
+    id: Option<ElementId>,
 }
 
 impl SectionHeading {
@@ -125,7 +126,15 @@ impl SectionHeading {
             open: None,
             reveal: None,
             row: None,
+            id: None,
         }
+    }
+
+    /// The heading's element id, for a list where one title heads several
+    /// sections; otherwise it is named after its title.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     /// Drawn in `height`, a row's, for a list whose items are all one height
@@ -219,7 +228,9 @@ impl RenderOnce for SectionHeading {
         };
         let list_view = window.current_view();
         let heading = super::accessible(
-            div().id(ElementId::Name(format!("section-heading-{spoken}").into())),
+            div().id(self
+                .id
+                .unwrap_or_else(|| ElementId::Name(format!("section-heading-{spoken}").into()))),
             gpui::Role::Heading,
             Some(spoken),
         );

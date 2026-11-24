@@ -77,9 +77,9 @@ The window follows the system's display settings as they change. With Increase C
 
 ## The library
 
-Albums, Artists and Tracks each hold a filter, a sort and Select in the toolbar; a record's page and an artist's page hold Select alone. Clicking a row marks it, and ⌘-click (Ctrl on Linux) or Shift-click starts picking, as Select does; while picking, clicks tick rows and tiles, ⌘A ticks the whole page and a bar along the foot plays, queues, adds to a playlist, favourites or organises the pick. On iPad and iPhone, where a tap plays or opens, Select is the only way to pick.
+Albums, Artists and Tracks each hold a filter, a sort and Select in the toolbar; a record's page and an artist's page hold Select alone. Clicking a row marks it, double-clicking plays or opens it, and ⌘-click (Ctrl on Linux) or Shift-click starts picking, as Select does; while picking, clicks tick rows and tiles, a double-click still plays or opens, ⌘A ticks the whole page and a bar along the foot plays, queues, adds to a playlist, favourites or organises the pick. On iPad and iPhone, where a tap plays or opens, Select is the only way to pick.
 
-The artist browser lists artists by name under a heading per initial, as a phone's contacts do. Its sort menu also orders them flat by most records, most tracks or most recently added, and by last played or closest match while the Recently played filter or a search is on. Unlike the album and track sorts, this one is not remembered: every visit opens on the grouped list.
+The artist browser lists artists by name under a heading per initial, as a phone's contacts do; a search lists them by closest match and the Recently played filter by last played, until another order is chosen. Its sort menu also orders them flat by most records, most tracks or most recently added. The order chosen lasts until kōan quits, unlike the album and track sorts, which are remembered: each launch opens on the grouped list.
 
 ## The queue
 

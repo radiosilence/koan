@@ -96,8 +96,14 @@ impl Selection {
     /// A click on an item while selecting: ⇧ extends from the last one
     /// clicked, anything else flips just this one. `page` is what the page
     /// shows, in its order.
+    /// Starting the mode, a row marked by a plain click is dropped, as
+    /// `begin` drops it, but stays where a ⇧ range starts.
     pub fn click(&mut self, item: Playable, shift: bool, page: &[Playable]) {
-        self.active = true;
+        if !self.active {
+            let anchor = self.anchor;
+            self.begin(None);
+            self.anchor = anchor;
+        }
         match self.anchor {
             Some(anchor) if shift => self.extend(anchor, item, page),
             _ => self.toggle(item),
@@ -227,6 +233,20 @@ mod tests {
         assert!(!s.is_clear());
         s.mark(A(2));
         assert_eq!(s.picked(), &[A(2)]);
+    }
+
+    #[test]
+    fn a_modified_click_after_a_mark_drops_it_but_ranges_from_it() {
+        let page = [A(1), A(2), A(3)];
+        let mut s = Selection::default();
+        s.mark(A(1));
+        s.click(A(3), false, &page);
+        assert!(s.is_active());
+        assert_eq!(s.picked(), &[A(3)]);
+        let mut s = Selection::default();
+        s.mark(A(1));
+        s.click(A(3), true, &page);
+        assert_eq!(s.picked(), &[A(1), A(2), A(3)]);
     }
 
     #[test]

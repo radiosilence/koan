@@ -742,24 +742,9 @@ impl TrackList for ShelfPage {
         match part {
             RowPart::Row => {
                 let item = Playable::Track(track);
-                let touch = cx.global::<crate::theme::KoanTheme>().touch;
                 let order = self.order();
-                let m = event.modifiers();
-                self.place(item, m.shift, &order);
-                // Outside the mode a plain click marks the row alone: the
-                // mode would turn every tile's and pill's click into a tick.
-                let plays = if !touch && !m.shift && !m.secondary(cx) && !self.selection.is_active()
-                {
-                    let double = event.click_count() >= 2;
-                    if !double {
-                        self.selection.mark(item);
-                    }
-                    double
-                } else {
-                    let order = self.order();
-                    rows::select(&mut self.selection, item, event, || order, cx)
-                };
-                if plays {
+                self.place(item, event.modifiers().shift, &order);
+                if rows::select(&mut self.selection, item, event, || order, cx) {
                     actions::play_list(&self.lib, self.row_tracks(), index, cx);
                 }
                 cx.notify();

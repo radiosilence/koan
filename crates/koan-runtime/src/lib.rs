@@ -473,6 +473,20 @@ pub fn artist_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<Artist
         .collect()
 }
 
+/// The artist sort a listing takes when none is chosen (`ArtistSort::natural`
+/// in koan-core): Recently Played's under that filter, best match under a
+/// search, by name otherwise.
+pub fn natural_artist_sort(filter: BrowseFilter, searching: bool) -> ArtistSort {
+    koan_core::browse::ArtistSort::natural(&filter.into(), searching).into()
+}
+
+/// The heading `name` sits under in a list of artists by name, grouped by
+/// initial: its first letter as the library's collation reads it, or `#`.
+/// Draw a heading per run of the listing, since `#` can be two.
+pub fn name_initial(name: &str) -> char {
+    koan_core::helpers::initial(name)
+}
+
 /// As `album_sorts_offered`, for the track browser.
 pub fn track_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<TrackBrowseSort> {
     koan_core::browse::TrackSort::offered(&filter.into(), searching)
@@ -1690,7 +1704,7 @@ impl KoanEngine {
             let db = self.db()?;
             let filter = filter.into();
             let sort = sort.map_or_else(
-                || koan_core::browse::ArtistSort::natural(&filter),
+                || koan_core::browse::ArtistSort::natural(&filter, search.is_some()),
                 Into::into,
             );
             let rows = queries::list_artists(

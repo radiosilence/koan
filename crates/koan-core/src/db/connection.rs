@@ -384,6 +384,43 @@ mod collation_tests {
     }
 
     #[test]
+    fn each_initial_is_one_run_in_collation_order() {
+        let names = sorted(&[
+            "Zomby",
+            "aphex twin",
+            "Âme",
+            "2814",
+            "!!!",
+            "{x}",
+            "~tilde",
+            "¡Hola",
+            "\u{201C}Quoted\u{201D}",
+            "\u{1F600} smile",
+            "ßeta",
+            "Øyvind",
+            "Émilie Simon",
+            "Boards of Canada",
+            "boa",
+            "Sigur Rós",
+            "100 gecs",
+            "Ελένη",
+            "Ωmega",
+        ]);
+        let initials: Vec<char> = names.iter().map(|n| crate::helpers::initial(n)).collect();
+        let mut seen = Vec::new();
+        for (i, c) in initials.iter().enumerate() {
+            if i > 0 && initials[i - 1] == *c {
+                continue;
+            }
+            assert!(
+                *c == '#' || !seen.contains(c),
+                "{c} is two runs in {names:?}"
+            );
+            seen.push(*c);
+        }
+    }
+
+    #[test]
     fn lowercase_does_not_sort_after_everything() {
         assert_eq!(
             sorted(&["Zebra", "aphex twin", "Boards of Canada"]),

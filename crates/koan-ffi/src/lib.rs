@@ -289,6 +289,21 @@ pub fn artist_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<Artist
     koan_runtime::artist_sorts_offered(filter, searching)
 }
 
+/// The artist sort a listing takes when none is chosen: Recently Played's
+/// under that filter, best match under a search, by name otherwise.
+#[uniffi::export]
+pub fn natural_artist_sort(filter: BrowseFilter, searching: bool) -> ArtistSort {
+    koan_runtime::natural_artist_sort(filter, searching)
+}
+
+/// The heading `name` sits under in a list of artists by name, grouped by
+/// initial: its first letter as the library's collation reads it, or `#`.
+/// Draw a heading per run of the listing, since `#` can be two.
+#[uniffi::export]
+pub fn name_initial(name: String) -> String {
+    koan_runtime::name_initial(&name).to_string()
+}
+
 /// As `album_sorts_offered`, for the track browser.
 #[uniffi::export]
 pub fn track_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<TrackBrowseSort> {

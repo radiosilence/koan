@@ -3,12 +3,13 @@
 //! listing keeps its own sort. Kept in `gui-state.json` in the configuration's
 //! state directory (`places::state`): these are one front end's runtime
 //! state, not engine settings, so they stay out of `config.toml` and out of
-//! the config directory.
+//! the config directory. The artist sort is held for the run alone: a launch
+//! opens the artist browser grouped by name.
 
 use std::path::PathBuf;
 
 use koan_kit::app::*;
-use koan_runtime::{AlbumSort, BrowseFilter, TrackBrowseSort};
+use koan_runtime::{AlbumSort, ArtistSort, BrowseFilter, TrackBrowseSort};
 use serde::{Deserialize, Serialize};
 
 /// The sorts before any is chosen.
@@ -21,6 +22,9 @@ pub struct Browse {
     pub search: String,
     pub album_sort: AlbumSort,
     pub track_sort: TrackBrowseSort,
+    /// The artist sort chosen this run, never written: without one the
+    /// listing takes the natural order (`effective_artist_sort`).
+    pub artist_sort: Option<ArtistSort>,
     /// Fixes the order under `AlbumSort::Random`, so narrowing a shuffled
     /// listing does not deal it again. A reshuffle is a new seed.
     pub seed: i64,
@@ -56,6 +60,7 @@ impl Browse {
                 .as_deref()
                 .and_then(track_sort)
                 .unwrap_or(DEFAULT_TRACK_SORT),
+            artist_sort: None,
             seed: seed(),
         }
     }
@@ -70,6 +75,7 @@ impl Browse {
             search: String::new(),
             album_sort: DEFAULT_ALBUM_SORT,
             track_sort: DEFAULT_TRACK_SORT,
+            artist_sort: None,
             seed: seed(),
         }
     }
@@ -91,6 +97,22 @@ impl Browse {
         } else {
             DEFAULT_TRACK_SORT
         }
+    }
+
+    /// The artist sort chosen, while the menu offers it; otherwise the
+    /// natural one: by name, best match under a search, last played under
+    /// Recently played.
+    pub fn effective_artist_sort(&self) -> ArtistSort {
+        let searching = self.search().is_some();
+        self.artist_sort
+            .filter(|sort| artist_sorts(&self.filter, searching).contains(sort))
+            .unwrap_or_else(|| koan_runtime::natural_artist_sort(self.filter.clone(), searching))
+    }
+
+    /// Chooses the artist sort, which is not written to disk.
+    pub fn set_artist_sort(&mut self, sort: ArtistSort, cx: &mut Context<Self>) {
+        self.artist_sort = Some(sort);
+        cx.notify();
     }
 
     pub fn search(&self) -> Option<String> {
@@ -258,6 +280,10 @@ pub fn album_sorts(filter: &BrowseFilter, searching: bool) -> Vec<AlbumSort> {
     koan_runtime::album_sorts_offered(filter.clone(), searching)
 }
 
+pub fn artist_sorts(filter: &BrowseFilter, searching: bool) -> Vec<ArtistSort> {
+    koan_runtime::artist_sorts_offered(filter.clone(), searching)
+}
+
 pub fn track_sorts(filter: &BrowseFilter, searching: bool) -> Vec<TrackBrowseSort> {
     koan_runtime::track_sorts_offered(filter.clone(), searching)
 }
@@ -282,6 +308,17 @@ pub fn album_sort_label(sort: AlbumSort) -> &'static str {
         AlbumSort::LastPlayed => "last played",
         AlbumSort::Downloaded => "most downloaded",
         AlbumSort::BestMatch => "best match",
+    }
+}
+
+pub fn artist_sort_label(sort: ArtistSort) -> &'static str {
+    match sort {
+        ArtistSort::Name => "a–z",
+        ArtistSort::Albums => "most records",
+        ArtistSort::Tracks => "most tracks",
+        ArtistSort::RecentlyAdded => "recently added",
+        ArtistSort::LastPlayed => "last played",
+        ArtistSort::BestMatch => "best match",
     }
 }
 
@@ -358,13 +395,28 @@ mod tests {
             search: String::new(),
             album_sort: AlbumSort::LastPlayed,
             track_sort: TrackBrowseSort::BestMatch,
+            artist_sort: Some(ArtistSort::LastPlayed),
             seed: 0,
         };
+        assert_eq!(browse.effective_artist_sort(), ArtistSort::Name);
         assert_eq!(browse.effective_album_sort(), AlbumSort::RecentlyAdded);
         assert_eq!(browse.effective_track_sort(), TrackBrowseSort::Artist);
         browse.filter.recent = true;
         browse.search = "x".into();
         assert_eq!(browse.effective_album_sort(), AlbumSort::LastPlayed);
         assert_eq!(browse.effective_track_sort(), TrackBrowseSort::BestMatch);
+        assert_eq!(browse.effective_artist_sort(), ArtistSort::LastPlayed);
+    }
+
+    #[test]
+    fn the_artist_sort_follows_the_filter_until_one_is_chosen() {
+        let mut browse = Browse::fresh();
+        assert_eq!(browse.effective_artist_sort(), ArtistSort::Name);
+        browse.search = "x".into();
+        assert_eq!(browse.effective_artist_sort(), ArtistSort::BestMatch);
+        browse.filter.recent = true;
+        assert_eq!(browse.effective_artist_sort(), ArtistSort::LastPlayed);
+        browse.artist_sort = Some(ArtistSort::Tracks);
+        assert_eq!(browse.effective_artist_sort(), ArtistSort::Tracks);
     }
 }

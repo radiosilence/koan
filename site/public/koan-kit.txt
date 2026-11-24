@@ -6087,6 +6087,11 @@ pub struct SectionHeading { /* private fields */ }
 
   A heading saying `title`, an app word drawn lowercase.
 
+- `pub fn id(self, id: impl Into<ElementId>) -> Self`
+
+  The heading's element id, for a list where one title heads several
+  sections; otherwise it is named after its title.
+
 - `pub fn in_row(self, height: Pixels) -> Self`
 
   Drawn in `height`, a row's, for a list whose items are all one height
