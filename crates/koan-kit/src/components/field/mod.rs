@@ -187,8 +187,11 @@ impl RenderOnce for TextField {
                 let state = self.state.clone();
                 field.child(
                     gpui::canvas(
+                        // A clear mark's row, where one draws the field,
+                        // owns where the keyboard is kept.
                         move |bounds, _, cx| {
-                            if state.read(cx).keeps != Some(bounds) {
+                            let state_now = state.read(cx);
+                            if !state_now.cleared.drawn && state_now.keeps != Some(bounds) {
                                 state.update(cx, |state, _| state.keeps = Some(bounds));
                             }
                         },

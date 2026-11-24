@@ -53,7 +53,7 @@ impl FilterField {
 impl RenderOnce for FilterField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let clear = ClearMark::of(&self.input, TypeRole::Control);
+        let clear = ClearMark::of(&self.input, TypeRole::Control, false, cx);
         let (escape, focus) = (self.input.clone(), self.input.clone());
         // Under touch a toolbar's field, focused, opens out to the toolbar's
         // width over the buttons beside it, easing from where it stood, as
@@ -78,21 +78,15 @@ impl RenderOnce for FilterField {
             0.0
         };
         let stood = rest.read(cx).filter(|_| open > 0.0);
-        let standing = (open <= 0.0).then(|| rest.clone());
-        let measure = canvas(
-            move |bounds, _, cx| {
-                if let Some(rest) = &standing
-                    && *rest.read(cx) != Some(bounds)
-                {
+        // Where it stood, heard from the row's own measure while it stands.
+        let standing = (open <= 0.0).then(|| {
+            let rest = rest.clone();
+            Box::new(move |bounds, cx: &mut App| {
+                if *rest.read(cx) != Some(bounds) {
                     rest.update(cx, |rest, _| *rest = Some(bounds));
                 }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full();
+            }) as super::clear_mark::Measured
+        });
         let glyph = KoanIcon::new(Icon::Search)
             .role(TypeRole::Control)
             .tone(Tone::Muted)
@@ -102,6 +96,7 @@ impl RenderOnce for FilterField {
                 Some(glyph),
                 TextField::new(&self.input).label(self.label).bare(),
                 |mark| mark,
+                standing,
                 &look,
                 cx,
             )
@@ -111,7 +106,6 @@ impl RenderOnce for FilterField {
                 let d = d.debug_selector(|| "filter".into());
                 d
             })
-            .child(measure)
             .cursor_text()
             .gap(super::ToolbarMetrics::FIELD_GLYPH_GAP * look.scale.size)
             .map(|d| {

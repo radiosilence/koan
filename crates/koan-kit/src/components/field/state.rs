@@ -112,7 +112,7 @@ pub struct FieldState {
     pub(super) lines: Vec<Line>,
     pub(super) bounds: Option<Bounds<Pixels>>,
     pub(super) line_height: Pixels,
-    pub(crate) scroll: Point<Pixels>,
+    pub(super) scroll: Point<Pixels>,
     /// A drag under way, by what unit, and the selection it started from.
     pub(super) drag: Option<(Unit, Range<usize>)>,
     undo: Vec<Snapshot>,
@@ -130,7 +130,8 @@ pub struct FieldState {
     /// control the field is part of (a filter field's clear mark), as its
     /// owner lays it out.
     pub(crate) keeps: Option<Bounds<Pixels>>,
-    /// What a clear took, fading out where a clear mark draws it.
+    /// A clear mark's state, where one draws the field: what a clear took,
+    /// fading out, and the bounds it keeps the keyboard over.
     pub(crate) cleared: crate::components::clear_mark::Cleared,
     /// The kind of text it takes, which a software keyboard lays out for.
     mode: gpui::TextInputMode,
@@ -304,6 +305,7 @@ impl FieldState {
             return;
         }
         self.text = value;
+        self.cleared.gone();
         self.selected = self.text.len()..self.text.len();
         self.reversed = false;
         self.marked = None;
@@ -322,16 +324,17 @@ impl FieldState {
         self.edit(0..self.text.len(), "", Kind::Other, window, cx);
     }
 
-    /// Empties the field as its clear mark does: `clean`, with what it held
-    /// fading out leftward over `Motion::SETTLE` where a field with a clear
-    /// mark draws it (the filter field, the command bar's query), and the
-    /// placeholder shown once it has gone. Under Reduce Motion it empties at
-    /// once. For an owner's key that clears, as Escape does.
+    /// Empties the field as its clear mark does. Where a clear mark's row
+    /// draws the field (the filter field, the command bar's query), what it
+    /// held fades out leftward over `Motion::SETTLE` and the placeholder
+    /// shows once it has gone, or as soon as the field is edited again;
+    /// elsewhere, and under Reduce Motion, this is `clean`. For an owner's
+    /// key that clears, as Escape does.
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text: SharedString = self.text.clone().into();
+        let text: SharedString = self.drawn().into();
         let scrolled = self.scroll.x;
         self.clean(window, cx);
-        if text.is_empty() || !crate::theme::KoanTheme::motion_allowed(cx) {
+        if text.is_empty() || !self.cleared.drawn || !crate::theme::KoanTheme::motion_allowed(cx) {
             return;
         }
         let end = cx.spawn(async move |this, cx| {
@@ -772,6 +775,7 @@ impl FieldState {
     }
 
     fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cleared.gone();
         self.announce = false;
         self.rehighlight();
         self.blink_from_shown(window, cx);
