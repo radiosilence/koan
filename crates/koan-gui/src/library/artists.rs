@@ -2,12 +2,16 @@
 //! filter and search, as the Mac's artist list draws them: a play mark under
 //! the pointer, the name, which opens the artist, the heart, and how many
 //! records and tracks.
+//!
+//! By name, the artists sit under a heading per initial, as a phone's
+//! contacts do; any other order is one flat list. The order is the browser's
+//! alone and not kept: each visit opens on the grouped list.
 
 use std::collections::HashSet;
 use std::ops::Range;
 
 use koan_kit::app::*;
-use koan_runtime::{Artist, BrowseFilter};
+use koan_runtime::{Artist, ArtistSort, BrowseFilter};
 
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
@@ -15,7 +19,10 @@ use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
 use crate::components::Text;
-use crate::components::{ROW_GROUP, RowKind, RowNumber, TableRow};
+use crate::components::{
+    MenuPanel, MenuRow, ROW_GROUP, RowKind, RowMetrics, RowNumber, SectionHeading, TableRow,
+    ToolbarButton, ToolbarMenu,
+};
 use crate::navigator::{Listing, Shelf};
 use crate::theme::Icon;
 use crate::theme::Tone;
@@ -24,6 +31,53 @@ use crate::theme::Tone;
 struct Query {
     search: Option<String>,
     filter: BrowseFilter,
+    /// `None` for a shelf's "see all", which reads as the shelf does.
+    sort: Option<ArtistSort>,
+}
+
+impl Query {
+    /// Whether the listing draws a heading per initial.
+    fn grouped(&self) -> bool {
+        self.sort == Some(ArtistSort::Name)
+    }
+}
+
+/// One line of the list: an initial's heading, or an artist by index.
+#[derive(Clone)]
+enum Line {
+    Initial(SharedString),
+    Artist(usize),
+}
+
+/// `artists` as lines: under a heading per initial when `grouped`, the
+/// initials as the core's collation reads them.
+fn lay_out(artists: &[Artist], grouped: bool) -> Vec<Line> {
+    if !grouped {
+        return (0..artists.len()).map(Line::Artist).collect();
+    }
+    let mut lines = Vec::with_capacity(artists.len() + 27);
+    let mut last = None;
+    for (ix, artist) in artists.iter().enumerate() {
+        let initial = koan_core::helpers::initial(&artist.name);
+        if last != Some(initial) {
+            last = Some(initial);
+            lines.push(Line::Initial(initial.to_string().into()));
+        }
+        lines.push(Line::Artist(ix));
+    }
+    lines
+}
+
+/// The name a sort goes by in its menu.
+fn sort_label(sort: ArtistSort) -> &'static str {
+    match sort {
+        ArtistSort::Name => "a–z",
+        ArtistSort::Albums => "most records",
+        ArtistSort::Tracks => "most tracks",
+        ArtistSort::RecentlyAdded => "recently added",
+        ArtistSort::LastPlayed => "last played",
+        ArtistSort::BestMatch => "best match",
+    }
 }
 
 /// The browser's columns, in points at 100 %: the heart, the counts.
@@ -50,6 +104,12 @@ pub struct ArtistBrowser {
     page: Page,
     artists: Vec<Artist>,
     order: Vec<Playable>,
+    /// The list's lines, headings among the artists when grouped.
+    lines: Vec<Line>,
+    /// Each artist's line.
+    line_of: Vec<usize>,
+    /// The order chosen here, for this visit only.
+    sort: ArtistSort,
     loaded: Option<(Query, u64)>,
     loading: Option<(Query, u64)>,
     request: u64,
@@ -152,6 +212,9 @@ impl ArtistBrowser {
             page,
             artists,
             order,
+            lines: Vec::new(),
+            line_of: Vec::new(),
+            sort: ArtistSort::Name,
             loaded,
             failed: None,
             loading: None,
@@ -185,7 +248,10 @@ impl ArtistBrowser {
             .as_ref()
             .map(|loaded| chrome::kept(loaded, &query, version))
         {
-            Some(chrome::Kept::Draw) => this.restore_scroll(),
+            Some(chrome::Kept::Draw) => {
+                this.lay_out();
+                this.restore_scroll();
+            }
             Some(kept) => {
                 if kept == chrome::Kept::Forget {
                     this.restore = None;
@@ -213,13 +279,51 @@ impl ArtistBrowser {
             return Query {
                 search: super::scope::search(shelf, &self.lib, cx),
                 filter: super::scope::filter(shelf),
+                sort: None,
             };
         }
         let browse = self.lib.browse.read(cx);
+        let search = browse.search();
+        let sort = Some(self.sort)
+            .filter(|sort| self.sorts(&browse.filter, search.is_some()).contains(sort))
+            .or(Some(ArtistSort::Name));
         Query {
-            search: browse.search(),
+            search,
             filter: browse.filter.clone(),
+            sort,
         }
+    }
+
+    /// The orders that mean something under `filter` and a search.
+    fn sorts(&self, filter: &BrowseFilter, searching: bool) -> Vec<ArtistSort> {
+        koan_runtime::artist_sorts_offered(filter.clone(), searching)
+    }
+
+    /// The lines for the listing loaded.
+    fn lay_out(&mut self) {
+        let grouped = self.loaded.as_ref().is_some_and(|(q, _)| q.grouped());
+        self.lines = lay_out(&self.artists, grouped);
+        self.line_of = vec![0; self.artists.len()];
+        for (line, l) in self.lines.iter().enumerate() {
+            if let Line::Artist(ix) = l {
+                self.line_of[*ix] = line;
+            }
+        }
+    }
+
+    /// Lists in `sort` from now on, from the top.
+    fn sort_by(&mut self, sort: ArtistSort, cx: &mut Context<Self>) {
+        if self.sort == sort {
+            return;
+        }
+        self.sort = sort;
+        self.scroll
+            .0
+            .borrow()
+            .base_handle
+            .set_offset(Point::default());
+        self.reload(cx);
+        cx.notify();
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -236,7 +340,7 @@ impl ArtistBrowser {
         let engine = self.lib.engine.clone();
         self._load = Some(cx.spawn(async move |this, cx| {
             let q = wanted.0.clone();
-            let artists = engine.artists(q.search, q.filter).await;
+            let artists = engine.artist_listing(q.search, q.filter, q.sort).await;
             this.update(cx, |this, cx| {
                 if this.request != request {
                     return;
@@ -247,6 +351,7 @@ impl ArtistBrowser {
                         this.order = artists.iter().map(|a| Playable::Artist(a.id)).collect();
                         this.artists = artists;
                         this.loaded = Some(wanted);
+                        this.lay_out();
                         this.failed = None;
                         this.restore_scroll();
                     }
@@ -331,6 +436,10 @@ impl ArtistBrowser {
             .child(artist.name.clone());
         let play = cx.weak_entity();
         let count = self.artists.len();
+        let (line, lines) = (
+            self.line_of.get(index).copied().unwrap_or(index),
+            self.lines.len(),
+        );
         let scroll = self.scroll.clone();
         let phone = p.look.compact;
         let albums = chrome::count(artist.album_count.max(0) as u64, "album", "albums");
@@ -348,7 +457,7 @@ impl ArtistBrowser {
                 if favourite { "favourite" } else { "" },
             ]))
             .place(index, count)
-            .on_reveal(move |_, _| crate::components::reveal_around(&scroll, index, count))
+            .on_reveal(move |_, _| crate::components::reveal_around(&scroll, line, lines))
         })
         .selected(selected)
         .cursor(self.keyed && self.cursor.at == Some(index))
@@ -404,6 +513,35 @@ impl ArtistBrowser {
         .into_any_element()
     }
 
+    /// Line `i` of the list: an initial's heading or an artist's row.
+    fn line(&mut self, p: &Paint, i: usize, cx: &mut Context<Self>) -> AnyElement {
+        match self.lines.get(i).cloned() {
+            Some(Line::Initial(initial)) => {
+                let kind = if p.look.compact {
+                    RowKind::Text
+                } else {
+                    RowKind::Line
+                };
+                let scroll = self.scroll.clone();
+                let lines = self.lines.len();
+                let heading =
+                    SectionHeading::new(initial.as_ref()).in_row(RowMetrics::height(kind, &p.look));
+                let heading = if p.a11y {
+                    heading
+                        .on_reveal(move |_, _| crate::components::reveal_around(&scroll, i, lines))
+                } else {
+                    heading
+                };
+                div()
+                    .px(RowMetrics::page_margin(&p.look))
+                    .child(heading)
+                    .into_any_element()
+            }
+            Some(Line::Artist(ix)) => self.row(p, ix, cx),
+            None => div().h(rows::height(p)).into_any_element(),
+        }
+    }
+
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
         self.selection.select_all(&self.order);
         cx.notify();
@@ -440,7 +578,46 @@ impl ArtistBrowser {
     pub fn controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         chrome::browser_controls(&self.search, window, cx)
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
+            .child(self.sort_button(cx))
+            .spacer()
+            .child(chrome::pick_toggle(self.selection.is_active(), cx))
             .into_any_element()
+    }
+
+    /// The sort menu: the grouped list by name, or one ordered by a count,
+    /// by arrival or, under their filters, by play and match.
+    fn sort_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current = self
+            .loaded
+            .as_ref()
+            .and_then(|(q, _)| q.sort)
+            .unwrap_or(self.sort);
+        let view = cx.weak_entity();
+        ToolbarMenu::new(
+            "artist-sort",
+            ToolbarButton::new(
+                "artist-sort-trigger",
+                Icon::Sort,
+                format!("sort: {}", sort_label(current)),
+            ),
+            move |dismiss, _, cx| {
+                let Some(this) = view.upgrade() else {
+                    return MenuPanel::new();
+                };
+                let query = this.read(cx).query(cx);
+                let current = query.sort.unwrap_or(ArtistSort::Name);
+                let sorts = this.read(cx).sorts(&query.filter, query.search.is_some());
+                MenuPanel::new().children(sorts.into_iter().enumerate().map(|(i, sort)| {
+                    let (this, dismiss) = (this.clone(), dismiss.clone());
+                    MenuRow::new(("artist-sort", i), sort_label(sort))
+                        .checked(sort == current)
+                        .on_click(move |_, window, cx| {
+                            dismiss(window, cx);
+                            this.update(cx, |this, cx| this.sort_by(sort, cx));
+                        })
+                }))
+            },
+        )
     }
 }
 
@@ -519,10 +696,10 @@ impl Render for ArtistBrowser {
             crate::components::uniform_list(
                 "artists",
                 // Blank rows after the last pass under a phone's foot.
-                self.artists.len() + under_foot.0,
+                self.lines.len() + under_foot.0,
                 cx.processor(|this, range: Range<usize>, window, cx| {
                     let p = Paint::of(window, cx);
-                    range.map(|i| this.row(&p, i, cx)).collect::<Vec<_>>()
+                    range.map(|i| this.line(&p, i, cx)).collect::<Vec<_>>()
                 }),
             )
             .track_scroll(&self.scroll)
@@ -587,6 +764,21 @@ impl Render for ArtistBrowser {
                     )
                 })),
         )
+        .when(self.selection.is_active(), |d| {
+            d.child(chrome::selection_bar(
+                p,
+                &self.lib,
+                &self.selection,
+                cx.entity(),
+                cx,
+            ))
+        })
+    }
+}
+
+impl chrome::Picking for ArtistBrowser {
+    fn selection_mut(&mut self) -> &mut Selection {
+        &mut self.selection
     }
 }
 
@@ -604,10 +796,7 @@ impl super::keys::KeyedList for ArtistBrowser {
     }
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
-        self.selection.only(self.order[from]);
-        if to != from {
-            self.selection.click(self.order[to], true, &self.order);
-        }
+        super::keys::mark_range(&mut self.selection, &self.order, from, to);
     }
 
     fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
@@ -615,8 +804,9 @@ impl super::keys::KeyedList for ArtistBrowser {
     }
 
     fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        let line = self.line_of.get(ix).copied().unwrap_or(ix);
         self.scroll
-            .scroll_to_item(ix, crate::components::ScrollStrategy::Nearest);
+            .scroll_to_item(line, crate::components::ScrollStrategy::Nearest);
     }
 
     /// Return opens the artist, as a double click does.

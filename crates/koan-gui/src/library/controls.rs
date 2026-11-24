@@ -1,5 +1,6 @@
 //! The library page's controls in the window's toolbar: its filter field,
-//! then filters, sort, a new deal and select, as the Mac's toolbar carries
+//! then filters, sort, a new deal and select (a record's or an artist's page
+//! has select alone), as the Mac's toolbar carries
 //! them. The shell draws the slot in the toolbar's trailing items; the page
 //! on screen fills it, and its controls redraw whenever the page does.
 
@@ -36,14 +37,15 @@ impl ControlsSlot {
 
     /// The controls of `page`, redrawn only when what they show moves:
     /// whether it is picking (`picking`), and the browse state their filter
-    /// and sort buttons read. A page notifies for every sleeve that lands
-    /// while it scrolls, which leaves its controls as they were.
+    /// and sort buttons read, when they have any. A page notifies for every
+    /// sleeve that lands while it scrolls, which leaves its controls as they
+    /// were.
     pub fn show_keyed<V: 'static>(
         &mut self,
         page: &Entity<V>,
         controls: fn(&mut V, &mut Window, &mut Context<V>) -> AnyElement,
         picking: fn(&V) -> bool,
-        browse: &Entity<super::browse::Browse>,
+        browse: Option<&Entity<super::browse::Browse>>,
         cx: &mut Context<Self>,
     ) {
         let weak = page.downgrade();
@@ -59,7 +61,7 @@ impl ControlsSlot {
                 cx.notify();
             }
         }));
-        self._browse = Some(cx.observe(browse, |_, _, cx| cx.notify()));
+        self._browse = browse.map(|browse| cx.observe(browse, |_, _, cx| cx.notify()));
         cx.notify();
     }
 

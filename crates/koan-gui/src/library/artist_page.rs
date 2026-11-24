@@ -1125,6 +1125,21 @@ impl super::keys::KeyedList for ArtistPage {
     }
 }
 
+impl ArtistPage {
+    /// Whether records and tracks are being picked: what the toolbar's
+    /// select shows.
+    pub fn picking(&self) -> bool {
+        self.selection.is_active()
+    }
+
+    /// The page's controls, in the window's toolbar: select.
+    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::components::ToolbarGroup::new()
+            .child(chrome::pick_toggle(self.selection.is_active(), cx))
+            .into_any_element()
+    }
+}
+
 impl chrome::Picking for ArtistPage {
     fn selection_mut(&mut self) -> &mut Selection {
         &mut self.selection

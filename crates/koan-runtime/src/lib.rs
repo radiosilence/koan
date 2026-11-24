@@ -465,6 +465,14 @@ pub fn album_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<AlbumSo
         .collect()
 }
 
+/// As `album_sorts_offered`, for the artist browser.
+pub fn artist_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<ArtistSort> {
+    koan_core::browse::ArtistSort::offered(&filter.into(), searching)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
 /// As `album_sorts_offered`, for the track browser.
 pub fn track_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<TrackBrowseSort> {
     koan_core::browse::TrackSort::offered(&filter.into(), searching)
@@ -1667,12 +1675,27 @@ impl KoanEngine {
         search: Option<String>,
         filter: BrowseFilter,
     ) -> Result<Vec<Artist>, KoanError> {
+        self.artist_listing(search, filter, None).await
+    }
+
+    /// As `artists`, ordered by `sort`; with none, Recently Played's order
+    /// under that filter, else the closest match to `search`, else by name.
+    pub async fn artist_listing(
+        self: Arc<Self>,
+        search: Option<String>,
+        filter: BrowseFilter,
+        sort: Option<ArtistSort>,
+    ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
             let filter = filter.into();
+            let sort = sort.map_or_else(
+                || koan_core::browse::ArtistSort::natural(&filter),
+                Into::into,
+            );
             let rows = queries::list_artists(
                 &db.conn,
-                &koan_core::browse::artists(&filter, search.as_deref()),
+                &koan_core::browse::artists(&filter, search.as_deref(), sort),
             )
             .map_err(db_err)?;
             Ok(rows.into_iter().map(Artist::from).collect())

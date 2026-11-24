@@ -524,6 +524,21 @@ pub trait Picking: Sized + 'static {
     fn selection_mut(&mut self) -> &mut Selection;
 }
 
+/// The toolbar's select for a page that picks: starts the mode, or ends it
+/// while `active`.
+pub fn pick_toggle<V: Picking>(active: bool, cx: &mut Context<V>) -> ToolbarButton {
+    let on_click = cx.listener(|this: &mut V, _: &ClickEvent, _, cx| {
+        let selection = this.selection_mut();
+        if selection.is_active() {
+            selection.end();
+        } else {
+            selection.begin(None);
+        }
+        cx.notify();
+    });
+    select_toggle(active, on_click, cx)
+}
+
 /// Along the foot of a page while picking: how many, and the verbs. Each verb
 /// ends the mode.
 pub fn selection_bar<V: Picking>(

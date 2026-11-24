@@ -581,9 +581,40 @@ impl Render for AlbumPage {
         .on_action(cx.listener(Self::dismiss))
         .relative()
         .size_full()
+        .flex()
+        .flex_col()
         .typeset(p, Type::Body, p.ink)
         .child(measure)
-        .child(content)
+        .child(div().relative().flex_1().min_h_0().child(content))
+        .when(self.selection.is_active(), |d| {
+            d.child(chrome::selection_bar(
+                p,
+                &self.lib,
+                &self.selection,
+                cx.entity(),
+                cx,
+            ))
+        })
+    }
+}
+
+impl AlbumPage {
+    /// Whether tracks are being picked: what the toolbar's select shows.
+    pub fn picking(&self) -> bool {
+        self.selection.is_active()
+    }
+
+    /// The page's controls, in the window's toolbar: select.
+    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::components::ToolbarGroup::new()
+            .child(chrome::pick_toggle(self.selection.is_active(), cx))
+            .into_any_element()
+    }
+}
+
+impl chrome::Picking for AlbumPage {
+    fn selection_mut(&mut self) -> &mut Selection {
+        &mut self.selection
     }
 }
 
@@ -608,10 +639,7 @@ impl super::keys::KeyedList for AlbumPage {
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order: Vec<Playable> = self.tracks.iter().map(|t| Playable::Track(t.id)).collect();
-        self.selection.only(order[from]);
-        if to != from {
-            self.selection.click(order[to], true, &order);
-        }
+        super::keys::mark_range(&mut self.selection, &order, from, to);
     }
 
     fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {

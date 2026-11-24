@@ -98,6 +98,35 @@ pub fn year_of(date: &str) -> Option<&str> {
     date.get(..4)
 }
 
+/// The heading a name is listed under in a list grouped by initial: its first
+/// letter as the `LIBRARY` collation reads it (accents dropped), capitalised,
+/// or `#` for a name opening with a digit, a sign or nothing. Walked in that
+/// collation's order, names under one heading are contiguous.
+pub fn initial(name: &str) -> char {
+    use unicode_normalization::UnicodeNormalization;
+    name.nfd()
+        .find(|c| !matches!(*c as u32, 0x0300..=0x036F))
+        .filter(|c| c.is_alphabetic())
+        .and_then(|c| c.to_uppercase().next())
+        .unwrap_or('#')
+}
+
+#[cfg(test)]
+mod initial_tests {
+    use super::initial;
+
+    #[test]
+    fn names_group_under_their_first_letter() {
+        assert_eq!(initial("aphex twin"), 'A');
+        assert_eq!(initial("Émilie Simon"), 'E');
+        assert_eq!(initial("The Cure"), 'T');
+        assert_eq!(initial("2814"), '#');
+        assert_eq!(initial("!!!"), '#');
+        assert_eq!(initial(""), '#');
+        assert_eq!(initial("Øyvind"), 'Ø');
+    }
+}
+
 #[cfg(test)]
 mod year_tests {
     use super::year_of;

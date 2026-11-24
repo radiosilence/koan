@@ -197,7 +197,13 @@ impl LibraryStage {
                 let shown = page.clone();
                 controls = Some(Rc::new(move |slot, cx| {
                     slot.update(cx, |s, cx| {
-                        s.show_keyed(&shown, AlbumGrid::controls, AlbumGrid::picking, &browse, cx)
+                        s.show_keyed(
+                            &shown,
+                            AlbumGrid::controls,
+                            AlbumGrid::picking,
+                            Some(&browse),
+                            cx,
+                        )
                     })
                 }));
                 held(page, cx)
@@ -213,11 +219,25 @@ impl LibraryStage {
                 held(page, cx)
             }
             Page::Album(id) => {
-                let page = cx.new(|cx| super::album_page::AlbumPage::new(lib, id, window, cx));
+                use super::album_page::AlbumPage;
+                let page = cx.new(|cx| AlbumPage::new(lib, id, window, cx));
+                let shown = page.clone();
+                controls = Some(Rc::new(move |slot, cx| {
+                    slot.update(cx, |s, cx| {
+                        s.show_keyed(&shown, AlbumPage::controls, AlbumPage::picking, None, cx)
+                    })
+                }));
                 held(page, cx)
             }
             Page::Artist(id) => {
-                let page = cx.new(|cx| super::artist_page::ArtistPage::new(lib, id, window, cx));
+                use super::artist_page::ArtistPage;
+                let page = cx.new(|cx| ArtistPage::new(lib, id, window, cx));
+                let shown = page.clone();
+                controls = Some(Rc::new(move |slot, cx| {
+                    slot.update(cx, |s, cx| {
+                        s.show_keyed(&shown, ArtistPage::controls, ArtistPage::picking, None, cx)
+                    })
+                }));
                 held(page, cx)
             }
             Page::Tracks => {
@@ -230,7 +250,7 @@ impl LibraryStage {
                             &shown,
                             super::tracks::TrackBrowser::controls,
                             super::tracks::TrackBrowser::picking,
-                            &browse,
+                            Some(&browse),
                             cx,
                         )
                     })

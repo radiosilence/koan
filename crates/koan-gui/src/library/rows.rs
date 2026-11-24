@@ -360,10 +360,13 @@ pub fn lead_width(p: &Paint, count: usize, window: &Window) -> Pixels {
     crate::components::RowMetrics::lead_width(count, &p.look, window)
 }
 
-/// What a click on a row does to a list's selection: picks it alone, ⌘ adds
-/// or removes it, ⇧ extends from the last one clicked, through the page's
-/// order, which only ⇧ needs. Returns whether it was a double click on the
-/// row, which plays, or under touch a tap outside picking.
+/// What a click on a row does to a list's selection. Outside the mode a
+/// plain click marks the row alone and leaves the mode off, so the toolbar's
+/// select and the selection bar stay as they were; ⌘ adds or removes it and
+/// ⇧ extends from the last one clicked, through the page's order, which only
+/// ⇧ needs, each starting the mode. While picking, a plain click ticks.
+/// Returns whether it was a double click on the row outside the mode, which
+/// plays, or under touch a tap outside picking.
 pub fn select(
     selection: &mut Selection,
     item: Playable,
@@ -385,15 +388,19 @@ pub fn select(
         selection.click(item, false, &[]);
         return false;
     }
-    if event.click_count() >= 2 && !m.shift && !m.secondary(cx) {
-        return true;
-    }
     if m.shift {
         selection.click(item, true, &page());
     } else if m.secondary(cx) {
         selection.click(item, false, &[]);
+    } else if selection.is_active() {
+        // The second click of a double is the same tick again.
+        if event.click_count() < 2 {
+            selection.click(item, false, &[]);
+        }
+    } else if event.click_count() >= 2 {
+        return true;
     } else {
-        selection.only(item);
+        selection.mark(item);
     }
     false
 }

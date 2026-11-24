@@ -521,6 +521,8 @@ impl TrackBrowser {
         chrome::browser_controls(&self.search, window, cx)
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .child(chrome::track_sort_button(&self.lib, cx))
+            .spacer()
+            .child(chrome::pick_toggle(self.selection.is_active(), cx))
             .into_any_element()
     }
 }
@@ -708,6 +710,21 @@ impl Render for TrackBrowser {
                         )
                     })),
             )
+            .when(self.selection.is_active(), |d| {
+                d.child(chrome::selection_bar(
+                    p,
+                    &self.lib,
+                    &self.selection,
+                    cx.entity(),
+                    cx,
+                ))
+            })
+    }
+}
+
+impl chrome::Picking for TrackBrowser {
+    fn selection_mut(&mut self) -> &mut Selection {
+        &mut self.selection
     }
 }
 
@@ -732,10 +749,7 @@ impl super::keys::KeyedList for TrackBrowser {
 
     fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
         let order = self.order();
-        self.selection.only(order[from]);
-        if to != from {
-            self.selection.click(order[to], true, &order);
-        }
+        super::keys::mark_range(&mut self.selection, &order, from, to);
     }
 
     fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {

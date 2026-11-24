@@ -112,6 +112,7 @@ pub struct SectionHeading {
     count: Option<SharedString>,
     open: Option<(ElementId, super::Handler<ClickEvent>)>,
     reveal: Option<super::choice::Run>,
+    row: Option<Pixels>,
 }
 
 impl SectionHeading {
@@ -123,7 +124,16 @@ impl SectionHeading {
             count: None,
             open: None,
             reveal: None,
+            row: None,
         }
+    }
+
+    /// Drawn in `height`, a row's, for a list whose items are all one height
+    /// (a uniform list's letter headings): the title sits at the row's foot,
+    /// nearer the rows under it than the one above.
+    pub fn in_row(mut self, height: Pixels) -> Self {
+        self.row = Some(height);
+        self
     }
 
     /// Run when a screen reader moves to the heading in a list that draws
@@ -225,11 +235,15 @@ impl RenderOnce for SectionHeading {
         }
         .aria_level(2)
         .w_full()
-        .h(Self::height(&look))
-        .pt(Self::above(&look))
-        .pb(Self::below(&look))
-        .flex()
-        .items_center()
+        .map(|d| match self.row {
+            Some(height) => d.h(height).pb(look.space(Space::Xs)).flex().items_end(),
+            None => d
+                .h(Self::height(&look))
+                .pt(Self::above(&look))
+                .pb(Self::below(&look))
+                .flex()
+                .items_center(),
+        })
         .gap(look.space(Space::L))
         .child(title)
         .children(self.trailing)
