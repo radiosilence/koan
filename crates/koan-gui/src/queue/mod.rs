@@ -999,6 +999,7 @@ impl QueueView {
             let at = rows::insertion_point(row, at.y > bounds.center().y);
             if this.drop_at != Some(at) {
                 this.drop_at = Some(at);
+                cx.perform_haptic(HapticFeedback::Selection);
                 cx.notify();
             }
         };
@@ -2228,6 +2229,9 @@ impl QueueView {
         };
         if self.drop_at != wanted {
             self.drop_at = wanted;
+            if wanted.is_some() {
+                cx.perform_haptic(HapticFeedback::Selection);
+            }
             cx.notify();
         }
     }

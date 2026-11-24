@@ -1145,6 +1145,9 @@ impl PlaylistPage {
             };
             if this.drop_at != at {
                 this.drop_at = at;
+                if at.is_some() {
+                    cx.perform_haptic(HapticFeedback::Selection);
+                }
                 cx.notify();
             }
         };
@@ -1275,6 +1278,9 @@ impl PlaylistPage {
         };
         if self.drop_at != wanted {
             self.drop_at = wanted;
+            if wanted.is_some() {
+                cx.perform_haptic(HapticFeedback::Selection);
+            }
             cx.notify();
         }
     }
