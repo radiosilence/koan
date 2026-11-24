@@ -752,6 +752,51 @@
       background-color: transparent;
     }
   }
+  .fill {
+    border-color: transparent;
+    background-color: var(--hover);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--hover) 40%, transparent);
+    }
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--hover);
+        @supports (color: color-mix(in lab, red, red)) {
+          background-color: color-mix(in oklab, var(--hover) 70%, transparent);
+        }
+      }
+    }
+    &:active {
+      background-color: var(--hover);
+    }
+  }
+  .fill:is(.primary, .bad) {
+    color: var(--bg);
+    &:hover {
+      @media (hover: hover) {
+        opacity: 90%;
+      }
+    }
+    &:active {
+      opacity: 80%;
+    }
+  }
+  .primary.fill {
+    background-color: var(--brand);
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--brand);
+      }
+    }
+  }
+  .bad.fill {
+    background-color: var(--bad);
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--bad);
+      }
+    }
+  }
   .bad {
     border-color: var(--bad);
     color: var(--bad);
@@ -824,8 +869,12 @@
   .panel {
     border-style: var(--tw-border-style);
     border-width: 1px;
-    border-color: var(--rule);
+    border-color: transparent;
+    background-color: var(--surface);
     padding: calc(var(--spacing) * 5);
+  }
+  .panel :is(.code, .panel) {
+    background-color: var(--bg);
   }
   .panel > :first-child {
     margin-top: 0px;
@@ -835,11 +884,7 @@
   }
   .notice {
     margin-block: calc(var(--spacing) * 4);
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    column-gap: calc(var(--spacing) * 3);
-    row-gap: var(--spacing);
+    display: block;
     border-left-style: var(--tw-border-style);
     border-left-width: 2px;
     border-color: var(--brand);
@@ -857,7 +902,8 @@
     color: var(--warn);
   }
   .notice > :is(button, .button) {
-    margin-left: auto;
+    margin-inline-start: calc(var(--spacing) * 3);
+    vertical-align: baseline;
   }
   .status {
     --tone: var(--muted);
