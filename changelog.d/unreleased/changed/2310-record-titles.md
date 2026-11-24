@@ -1,0 +1,1 @@
+- **Long record titles.** A record's page shows its whole title rather than cutting it at two or three lines.

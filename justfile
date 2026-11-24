@@ -87,7 +87,8 @@ gui-present-frames out="target/gui-present-frames":
 
 # The phone shell walked headlessly at an iPhone's size, under touch: a PNG of
 # each page, Now Playing and a Settings section, dark and light, against the
-# same generated library as `gui-walk`.
+# same generated library as `gui-walk`. Fails if Now Playing swiped away does
+# not uncover the page under it as it goes, or changes the screen when let go.
 gui-phone-walk out="target/phone-walk":
     #!/usr/bin/env bash
     set -euo pipefail

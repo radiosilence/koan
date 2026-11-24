@@ -5,8 +5,9 @@
 //! draws again only when the layout changes, as the layer is mounted or let
 //! go.
 //!
-//! - `Follow`: a layer offset by a finger, settling to a target (Now
-//!   Playing pulled down, a queue row swiped).
+//! - `Follow`: a layer offset by a finger and released to a target at the
+//!   finger's speed (Now Playing pulled down, a queue row swiped).
+//! - `Speed`: how fast a finger moves, read from its steps, for the release.
 //! - `SwipeAction`: a row slid toward the leading edge over an action that
 //!   fills the room it leaves, both moved by one `Follow`.
 //! - `Elastic`: a page's ends giving under a finger's pan or a trackpad's
@@ -15,6 +16,11 @@
 //! - `Push`: a navigation stack's page sliding over the one under it, which
 //!   shows a third of its way behind and dimmed, by one progress track (a
 //!   page pushed, swiped back, or sent back by the bar's button).
+//!
+//! Every release carries on at the speed the finger let go at, landing at
+//! rest or leaving at its pace (`Follow::release`, `Follow::fling`,
+//! `Push::release`, the rubber band's spring), never starting again from
+//! rest.
 //!
 //! Under Reduce Motion a finger is still followed, and a release lands at
 //! once: the settle returns no wait.
@@ -85,6 +91,63 @@ impl Follow {
         length
     }
 
+    /// The offset carried from where it stands to `to` by a release moving
+    /// at `velocity` (points a second, as `Speed` reads it), landing at
+    /// rest: it starts at the finger's speed rather than from rest, and
+    /// slows into place without passing it. How long it takes; nothing under
+    /// Reduce Motion, which puts it at `to` at once.
+    pub fn release(
+        &self,
+        to: Point<Pixels>,
+        velocity: Point<f32>,
+        window: &Window,
+        cx: &App,
+    ) -> Duration {
+        self.carry(to, velocity, Carry::Lands, window, cx)
+    }
+
+    /// `release`, for a layer leaving: it goes as fast as it was thrown and
+    /// ends at its average pace, never slowing as it goes off.
+    pub fn fling(
+        &self,
+        to: Point<Pixels>,
+        velocity: Point<f32>,
+        window: &Window,
+        cx: &App,
+    ) -> Duration {
+        self.carry(to, velocity, Carry::Leaves, window, cx)
+    }
+
+    fn carry(
+        &self,
+        to: Point<Pixels>,
+        velocity: Point<f32>,
+        carry: Carry,
+        window: &Window,
+        cx: &App,
+    ) -> Duration {
+        let scale = window.scale_factor();
+        let from = self.at();
+        let to = point(f32::from(to.x) * scale, f32::from(to.y) * scale);
+        if !moves(cx) {
+            self.0.hold(1, to.x);
+            self.0.hold(2, to.y);
+            return Duration::ZERO;
+        }
+        let far = (to.x - from.x).hypot(to.y - from.y) / scale;
+        if far < 0.5 {
+            self.0.hold(1, to.x);
+            self.0.hold(2, to.y);
+            return Duration::ZERO;
+        }
+        // The speed toward `to`.
+        let toward = ((to.x - from.x) * velocity.x + (to.y - from.y) * velocity.y) / (far * scale);
+        let (length, ease) = carry.curve(far, toward);
+        self.0.to(1, to.x, length, ease);
+        self.0.to(2, to.y, length, ease);
+        length
+    }
+
     /// Where the offset stands now, in device pixels.
     pub fn at(&self) -> Point<f32> {
         let now = Animated::now();
@@ -101,6 +164,108 @@ impl Follow {
     /// The uniforms the layer reads, for an element that draws it.
     pub fn animated(&self) -> &Animated {
         &self.0
+    }
+}
+
+/// How a release carries on from the finger: landing at rest in place, or
+/// leaving at its pace.
+#[derive(Clone, Copy)]
+enum Carry {
+    Lands,
+    Leaves,
+}
+
+impl Carry {
+    /// The least speed a release goes at, in points a second, so that one
+    /// that has all but stopped still goes briskly.
+    fn least(self) -> f32 {
+        match self {
+            Carry::Lands => 900.0,
+            Carry::Leaves => 1400.0,
+        }
+    }
+
+    /// How long a release `far` points from where it goes takes, moving
+    /// `toward` it at so many points a second, and its curve. The curve's x
+    /// controls stand at thirds, so progress runs linear in time and its
+    /// slopes are speeds over the average: it starts at the finger's speed,
+    /// and ends at rest (landing, averaging half the speed, as a steady
+    /// brake would) or at the average (leaving).
+    fn curve(self, far: f32, toward: f32) -> (Duration, Ease) {
+        let pace = match self {
+            Carry::Lands => 2.0,
+            Carry::Leaves => 1.0,
+        };
+        let length = (pace * far / toward.max(self.least())).clamp(0.12, 0.45);
+        let start = (toward.max(0.0) * length / far).min(3.0);
+        let end = match self {
+            Carry::Lands => 1.0,
+            Carry::Leaves => 2.0 / 3.0,
+        };
+        (
+            Duration::from_secs_f32(length),
+            Ease::Bezier(1.0 / 3.0, start / 3.0, 2.0 / 3.0, end),
+        )
+    }
+}
+
+/// How fast a finger moves along one axis, from the steps it reports: what
+/// its release carries into the motion it starts. Smoothed over the last few
+/// steps; a finger that stood still before lifting threw nothing.
+#[derive(Clone, Copy)]
+pub struct Speed {
+    last: std::time::Instant,
+    per_second: f32,
+}
+
+impl Default for Speed {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Speed {
+    /// How long a finger may stand still before lifting and still throw.
+    const STILL: Duration = Duration::from_millis(80);
+
+    /// The least speed, in points a second, at which a release is a flick:
+    /// a swipe let go this fast does what it was going to, however short.
+    pub const FLICK: f32 = 700.0;
+
+    /// A finger landing: no speed yet.
+    pub fn new() -> Self {
+        Self {
+            last: std::time::Instant::now(),
+            per_second: 0.0,
+        }
+    }
+
+    /// A step of `delta` (points, or any unit the speed is read in) now.
+    /// A step that moves nothing, as a lift usually is, changes nothing.
+    pub fn step(&mut self, delta: f32) {
+        let now = std::time::Instant::now();
+        let dt = now.duration_since(self.last).as_secs_f32();
+        if delta == 0.0 || dt < 0.001 {
+            return;
+        }
+        let speed = delta / dt;
+        // A step long after the last starts afresh.
+        self.per_second = if dt > Self::STILL.as_secs_f32() {
+            speed
+        } else {
+            0.6 * speed + 0.4 * self.per_second
+        };
+        self.last = now;
+    }
+
+    /// The speed, in its unit a second; none once the finger has stood
+    /// still for a moment.
+    pub fn get(&self) -> f32 {
+        if self.last.elapsed() > Self::STILL {
+            0.0
+        } else {
+            self.per_second
+        }
     }
 }
 
@@ -201,6 +366,9 @@ struct ElasticState {
     /// second: a fling's, as it reaches the end.
     last: Option<std::time::Instant>,
     speed: f32,
+    /// The step before this one came long enough ago that the finger had
+    /// stood still: a release then throws nothing.
+    still: bool,
     /// What the finger has moved the page by since it last stood at its top.
     travelled: f32,
     /// This gesture has had its give: what is left of its fling only runs
@@ -393,17 +561,18 @@ impl Elastic {
             self.follow.follow(point(Pixels::ZERO, px(HELD)), window);
         }
         drop(state);
-        let length = self.back(0.0, window, cx);
+        let length = self.back(0.0, 0.0, window, cx);
         self.land(length, window.current_view(), cx);
     }
 
-    /// The page easing back to stand `to` points down; how long that takes.
-    fn back(&self, to: f32, window: &Window, cx: &App) -> Duration {
+    /// The page springing back to stand `to` points down, from a release
+    /// moving at `thrown` points a second; how long that takes.
+    fn back(&self, to: f32, thrown: f32, window: &Window, cx: &App) -> Duration {
         if moves(cx) {
             self.follow.animated().throw(
                 2,
                 to * window.scale_factor(),
-                0.0,
+                thrown * window.scale_factor(),
                 RETURN_STIFFNESS,
                 damped(RETURN_STIFFNESS),
             )
@@ -498,6 +667,7 @@ impl Elastic {
             let mut state = self.state.borrow_mut();
             if let Some(last) = state.last.replace(now) {
                 let dt = now.duration_since(last).as_secs_f32();
+                state.still = dt > 0.08;
                 if dt > 0.001 && dy != 0.0 {
                     state.speed = dy / dt;
                 }
@@ -549,6 +719,16 @@ impl Elastic {
                     if state.layered && state.settling.is_none() {
                         state.spent = true;
                         let shown = rubber(state.pulled, dimension);
+                        // The finger's speed as the page moved under it,
+                        // through the rubber band's give where it stands.
+                        let thrown = if state.still {
+                            0.0
+                        } else {
+                            let give = (rubber(state.pulled + 1.0, dimension)
+                                - rubber(state.pulled - 1.0, dimension))
+                                / 2.0;
+                            state.speed * give
+                        };
                         let refresh = state.refresh.clone().filter(|_| {
                             event.touch_phase == TouchPhase::Ended
                                 && (shown >= PULL || state.held.is_some() && shown > 0.0)
@@ -566,7 +746,7 @@ impl Elastic {
                             state.held = Some(Held::Asked(ask));
                         }
                         drop(state);
-                        let length = self.back(to, window, cx);
+                        let length = self.back(to, thrown, window, cx);
                         self.land(length, view, cx);
                         if let Some(refresh) = asked {
                             (refresh.start)(window, cx);
@@ -924,6 +1104,27 @@ impl Push {
         self.settle_over(to, settle_length(cx))
     }
 
+    /// The progress carried from where it stands to `to` by a release moving
+    /// at `velocity` (progress a second), over a page `width` points wide:
+    /// started at the finger's speed and landing at rest. How long it takes.
+    pub fn release(&self, to: f32, velocity: f32, width: Pixels, cx: &App) -> Duration {
+        if !moves(cx) {
+            self.0.hold(0, to);
+            return Duration::ZERO;
+        }
+        let width = f32::from(width).max(1.0);
+        let from = self.at();
+        let far = (to - from).abs() * width;
+        if far < 0.5 {
+            self.0.hold(0, to);
+            return Duration::ZERO;
+        }
+        let toward = velocity * (to - from).signum() * width;
+        let (length, ease) = Carry::Lands.curve(far, toward);
+        self.0.to(0, to, length, ease);
+        length
+    }
+
     fn settle_over(&self, to: f32, length: Duration) -> Duration {
         self.0.to(0, to, length, Ease::QuickOut);
         length
@@ -977,6 +1178,45 @@ mod tests {
     use gpui::{ScrollDelta, ScrollEvent, ScrollSource};
 
     use super::{Animated, Duration, Elastic, HELD, Motion, PULL, Push, Refresh, rubber, unrubber};
+
+    /// A release's curve starts at the finger's speed: its first slope over
+    /// its average pace, which is `far` over its length.
+    fn starts_at(carry: super::Carry, far: f32, toward: f32) -> f32 {
+        let (length, ease) = carry.curve(far, toward);
+        let super::Ease::Bezier(_, y1, ..) = ease else {
+            panic!("a release is a Bézier");
+        };
+        // With x controls at thirds, the start's slope is three times y1.
+        3.0 * y1 * far / length.as_secs_f32()
+    }
+
+    #[test]
+    fn a_release_carries_on_at_the_finger_speed() {
+        for carry in [super::Carry::Lands, super::Carry::Leaves] {
+            for (far, toward) in [(300.0, 1500.0), (600.0, 2400.0), (120.0, 1000.0)] {
+                let started = starts_at(carry, far, toward);
+                assert!(
+                    (started - toward).abs() < 1.0,
+                    "{far} pt at {toward} pt/s starts at {started}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_release_moving_away_starts_from_rest() {
+        assert_eq!(starts_at(super::Carry::Lands, 200.0, -800.0), 0.0);
+    }
+
+    #[test]
+    fn a_finger_stood_still_throws_nothing() {
+        let mut speed = super::Speed::new();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        speed.step(20.0);
+        assert!(speed.get() > 0.0);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(speed.get(), 0.0);
+    }
     use crate::components::Scrollbar;
 
     /// One page of `tall` points over the window, its ends giving, its top
