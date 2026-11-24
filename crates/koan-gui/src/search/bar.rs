@@ -494,7 +494,7 @@ impl Found {
         } else if self.input.read(cx).value().is_empty() {
             cx.emit(Dismissed);
         } else {
-            self.input.update(cx, |input, cx| input.clean(window, cx));
+            self.input.update(cx, |input, cx| input.clear(window, cx));
         }
     }
 

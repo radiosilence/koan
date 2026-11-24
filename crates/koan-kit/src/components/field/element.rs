@@ -107,7 +107,10 @@ impl gpui::Element for FieldElement {
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line_height = window.line_height();
         let empty = state.text.is_empty() && state.marked.is_none();
-        let drawn: String = if empty {
+        // The placeholder waits for cleared text to finish fading over it.
+        let drawn: String = if empty && state.cleared.fading() {
+            String::new()
+        } else if empty {
             state.placeholder.to_string()
         } else {
             state.drawn()

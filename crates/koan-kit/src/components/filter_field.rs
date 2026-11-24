@@ -53,8 +53,8 @@ impl FilterField {
 impl RenderOnce for FilterField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let clear = ClearMark::of(&self.input, TypeRole::Control, window, cx);
-        let (escape, on_escape, focus) = (self.input.clone(), clear.clone(), self.input.clone());
+        let clear = ClearMark::of(&self.input, TypeRole::Control);
+        let (escape, focus) = (self.input.clone(), self.input.clone());
         // Under touch a toolbar's field, focused, opens out to the toolbar's
         // width over the buttons beside it, easing from where it stood, as
         // an iOS search bar does; it eases back once it lets the keyboard go.
@@ -78,15 +78,9 @@ impl RenderOnce for FilterField {
             0.0
         };
         let stood = rest.read(cx).filter(|_| open > 0.0);
-        // The whole control keeps the keyboard under touch: its clear mark
-        // and glyph are the field's, not somewhere else to tap.
-        let keeps = self.input.clone();
         let standing = (open <= 0.0).then(|| rest.clone());
         let measure = canvas(
             move |bounds, _, cx| {
-                if keeps.read(cx).keeps != Some(bounds) {
-                    keeps.update(cx, |state, _| state.keeps = Some(bounds));
-                }
                 if let Some(rest) = &standing
                     && *rest.read(cx) != Some(bounds)
                 {
@@ -99,17 +93,25 @@ impl RenderOnce for FilterField {
         .top_0()
         .left_0()
         .size_full();
-        let field = div()
+        let glyph = KoanIcon::new(Icon::Search)
+            .role(TypeRole::Control)
+            .tone(Tone::Muted)
+            .into_any_element();
+        let field = clear
+            .row(
+                Some(glyph),
+                TextField::new(&self.input).label(self.label).bare(),
+                |mark| mark,
+                &look,
+                cx,
+            )
             .id("filter-field")
             .map(|d| {
                 #[cfg(test)]
                 let d = d.debug_selector(|| "filter".into());
                 d
             })
-            .relative()
             .child(measure)
-            .flex()
-            .items_center()
             .cursor_text()
             .gap(super::ToolbarMetrics::FIELD_GLYPH_GAP * look.scale.size)
             .map(|d| {
@@ -141,20 +143,9 @@ impl RenderOnce for FilterField {
                 if escape.read(cx).value().is_empty() {
                     cx.propagate();
                 } else {
-                    on_escape.clear(window, cx);
+                    escape.update(cx, |input, cx| input.clear(window, cx));
                 }
-            })
-            .child(
-                KoanIcon::new(Icon::Search)
-                    .role(TypeRole::Control)
-                    .tone(Tone::Muted),
-            )
-            .child(clear.text(
-                TextField::new(&self.input).label(self.label).bare(),
-                &look,
-                cx,
-            ))
-            .children(clear.mark(&look, cx));
+            });
         let Some(stood) = stood else {
             return field.into_any_element();
         };
@@ -411,7 +402,7 @@ mod tests {
         cx.simulate_input("x");
         cx.run_until_parked();
         let clear = cx
-            .debug_bounds("filter-clear-mark")
+            .debug_bounds("field-clear")
             .expect("the mark shows with text");
         cx.simulate_mouse_down(clear.center(), MouseButton::Left, Modifiers::default());
         cx.run_until_parked();
@@ -420,7 +411,7 @@ mod tests {
             cx.update(|window, cx| input.read(cx).focus_handle(cx).is_focused(window)),
             "the field keeps the keyboard"
         );
-        assert!(cx.debug_bounds("filter-clear-mark").is_none());
+        assert!(cx.debug_bounds("field-clear").is_none());
     }
 }
 

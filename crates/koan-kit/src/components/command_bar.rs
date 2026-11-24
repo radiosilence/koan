@@ -52,11 +52,16 @@ impl CommandBar {
         }
     }
 
-    /// The query's field: bare, in `title small`, with a clear mark at its
-    /// trailing edge while it holds text, as a filter field has.
+    /// The query's field: bare, in `title small`, named "search" for a
+    /// screen reader, with a clear mark at its trailing edge while it holds
+    /// text, as a filter field has. The owner runs the same clear from a key
+    /// with `FieldState::clear`.
     pub fn field(input: &Entity<InputState>) -> CommandField {
         CommandField {
             input: input.clone(),
+            label: label("search"),
+            role: TypeRole::TitleSmall,
+            disabled: false,
         }
     }
 
@@ -149,28 +154,61 @@ impl RenderOnce for CommandBar {
 #[derive(IntoElement)]
 pub struct CommandField {
     input: Entity<InputState>,
+    label: SharedString,
+    role: TypeRole,
+    disabled: bool,
+}
+
+impl CommandField {
+    /// What a screen reader names it, in the app's words, in place of
+    /// "search": what is searched.
+    pub fn label(mut self, text: &str) -> Self {
+        self.label = label(text);
+        self
+    }
+
+    /// Its text and mark in `role` rather than `title small`. A view
+    /// drawing it cached is sized to that role's line, not
+    /// `CommandBar::field_height`.
+    pub fn role(mut self, role: TypeRole) -> Self {
+        self.role = role;
+        self
+    }
+
+    /// Not editable, and faded: while what it feeds is under way.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
 }
 
 impl RenderOnce for CommandField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let clear = ClearMark::of(&self.input, TypeRole::TitleSmall, window, cx);
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .gap(look.space(Space::M))
-            .child(
-                clear.text(
-                    TextField::new(&self.input)
-                        .label(label("search"))
-                        .bare()
-                        .role(TypeRole::TitleSmall),
-                    &look,
-                    cx,
-                ),
+        let target = look.target();
+        ClearMark::of(&self.input, self.role)
+            .row(
+                None,
+                TextField::new(&self.input)
+                    .label(self.label)
+                    .bare()
+                    .role(self.role)
+                    .disabled(self.disabled),
+                // A finger's target under touch, the glyph at the trailing
+                // edge and centred on the line, standing over the row's
+                // height where it is shorter.
+                |mark| {
+                    mark.min_w(target)
+                        .min_h(target)
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                },
+                &look,
+                cx,
             )
-            .children(clear.mark(&look, cx))
+            .size_full()
+            .gap(look.space(Space::M))
     }
 }
 
@@ -356,7 +394,7 @@ impl RenderOnce for CommandResults {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Modifiers, TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext, point};
 
     use super::*;
     use core::prelude::v1::test;
@@ -407,12 +445,12 @@ mod tests {
         let cx: &mut VisualTestContext = cx;
         let input = bar.read_with(cx, |b, cx| b.query.read(cx).input.clone());
         cx.run_until_parked();
-        assert!(cx.debug_bounds("filter-clear-mark").is_none());
+        assert!(cx.debug_bounds("field-clear").is_none());
         cx.update(|window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
         cx.simulate_input("abba");
         cx.run_until_parked();
         let clear = cx
-            .debug_bounds("filter-clear-mark")
+            .debug_bounds("field-clear")
             .expect("the mark shows with text");
         cx.simulate_mouse_down(clear.center(), MouseButton::Left, Modifiers::default());
         cx.run_until_parked();
@@ -421,6 +459,56 @@ mod tests {
             cx.update(|window, cx| input.read(cx).focus_handle(cx).is_focused(window)),
             "the query keeps the keyboard"
         );
-        assert!(cx.debug_bounds("filter-clear-mark").is_none());
+        assert!(cx.debug_bounds("field-clear").is_none());
+    }
+
+    /// Under touch a tap on the mark empties the query and keeps the
+    /// keyboard: the mark is the field's, not somewhere else to tap.
+    #[gpui::test]
+    fn a_tap_on_the_clear_mark_keeps_the_keyboard(cx: &mut TestAppContext) {
+        use gpui::{TouchEvent, TouchId, TouchPhase};
+
+        cx.update(|cx| {
+            crate::theme::init(cx);
+            crate::theme::KoanTheme::set_touch(true, cx);
+        });
+        let (bar, cx) = cx.add_window_view(|window, cx| {
+            let input = cx.new(|cx| InputState::new(window, cx));
+            let query = cx.new(|cx| {
+                let redraw = cx.observe(&input, |_, _, cx| cx.notify());
+                redraw.detach();
+                Query { input }
+            });
+            Bar { query }
+        });
+        let cx: &mut VisualTestContext = cx;
+        let input = bar.read_with(cx, |b, cx| b.query.read(cx).input.clone());
+        cx.run_until_parked();
+        cx.update(|window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+        cx.simulate_input("abba");
+        cx.run_until_parked();
+        let tap = |id, at, cx: &mut VisualTestContext| {
+            for phase in [TouchPhase::Started, TouchPhase::Ended] {
+                cx.simulate_event(TouchEvent {
+                    id: TouchId(id),
+                    phase,
+                    position: at,
+                    ..Default::default()
+                });
+            }
+            cx.run_until_parked();
+        };
+        // A tap in the text first, so the field is drawn under touch.
+        let clear = cx
+            .debug_bounds("field-clear")
+            .expect("the mark shows with text");
+        tap(1, point(clear.left() - px(40.), clear.center().y), cx);
+        let clear = cx.debug_bounds("field-clear").expect("still there");
+        tap(2, clear.center(), cx);
+        assert_eq!(cx.update(|_, cx| input.read(cx).value().to_string()), "");
+        assert!(
+            cx.update(|window, cx| input.read(cx).focus_handle(cx).is_focused(window)),
+            "the tap on the mark put the keyboard away"
+        );
     }
 }

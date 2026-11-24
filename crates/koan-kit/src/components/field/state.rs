@@ -112,7 +112,7 @@ pub struct FieldState {
     pub(super) lines: Vec<Line>,
     pub(super) bounds: Option<Bounds<Pixels>>,
     pub(super) line_height: Pixels,
-    pub(super) scroll: Point<Pixels>,
+    pub(crate) scroll: Point<Pixels>,
     /// A drag under way, by what unit, and the selection it started from.
     pub(super) drag: Option<(Unit, Range<usize>)>,
     undo: Vec<Snapshot>,
@@ -130,6 +130,8 @@ pub struct FieldState {
     /// control the field is part of (a filter field's clear mark), as its
     /// owner lays it out.
     pub(crate) keeps: Option<Bounds<Pixels>>,
+    /// What a clear took, fading out where a clear mark draws it.
+    pub(crate) cleared: crate::components::clear_mark::Cleared,
     /// The kind of text it takes, which a software keyboard lays out for.
     mode: gpui::TextInputMode,
     content: gpui::TextContentType,
@@ -194,6 +196,7 @@ impl FieldState {
             blink: Task::ready(()),
             drawn_in: None,
             keeps: None,
+            cleared: Default::default(),
             mode: gpui::TextInputMode::Unspecified,
             content: gpui::TextContentType::Unspecified,
             _focus: [focused, blurred, activation, redraw],
@@ -317,6 +320,32 @@ impl FieldState {
     /// filter): says `Change`, and can be undone.
     pub fn clean(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.edit(0..self.text.len(), "", Kind::Other, window, cx);
+    }
+
+    /// Empties the field as its clear mark does: `clean`, with what it held
+    /// fading out leftward over `Motion::SETTLE` where a field with a clear
+    /// mark draws it (the filter field, the command bar's query), and the
+    /// placeholder shown once it has gone. Under Reduce Motion it empties at
+    /// once. For an owner's key that clears, as Escape does.
+    pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text: SharedString = self.text.clone().into();
+        let scrolled = self.scroll.x;
+        self.clean(window, cx);
+        if text.is_empty() || !crate::theme::KoanTheme::motion_allowed(cx) {
+            return;
+        }
+        let end = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(crate::theme::Motion::SETTLE)
+                .await;
+            this.update(cx, |state, cx| {
+                state.cleared.gone();
+                cx.notify();
+            })
+            .ok();
+        });
+        self.cleared.fade(text, scrolled, window, end);
+        cx.notify();
     }
 
     /// The whole text replaced by a screen reader's request: an edit of

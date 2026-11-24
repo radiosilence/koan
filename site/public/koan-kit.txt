@@ -2619,8 +2619,10 @@ pub struct CommandBar { /* private fields */ }
 
 - `pub fn field(input: &Entity<InputState>) -> CommandField`
 
-  The query's field: bare, in `title small`, with a clear mark at its
-  trailing edge while it holds text, as a filter field has.
+  The query's field: bare, in `title small`, named "search" for a
+  screen reader, with a clear mark at its trailing edge while it holds
+  text, as a filter field has. The owner runs the same clear from a key
+  with `FieldState::clear`.
 
 - `pub fn field_height(window: &Window, cx: &App) -> Pixels`
 
@@ -2647,6 +2649,21 @@ text, and the clear mark while there is any. Escape is the owner's.
 #[derive(IntoElement)]
 pub struct CommandField { /* private fields */ }
 ```
+
+- `pub fn label(self, text: &str) -> Self`
+
+  What a screen reader names it, in the app's words, in place of
+  "search": what is searched.
+
+- `pub fn role(self, role: TypeRole) -> Self`
+
+  Its text and mark in `role` rather than `title small`. A view
+  drawing it cached is sized to that role's line, not
+  `CommandBar::field_height`.
+
+- `pub fn disabled(self, disabled: bool) -> Self`
+
+  Not editable, and faded: while what it feeds is under way.
 
 Implements `RenderOnce`.
 
@@ -9592,6 +9609,14 @@ pub struct FieldState { /* private fields */ }
 
   Empties the field as the person's edit (a clear mark, Escape in a
   filter): says `Change`, and can be undone.
+
+- `pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>)`
+
+  Empties the field as its clear mark does: `clean`, with what it held
+  fading out leftward over `Motion::SETTLE` where a field with a clear
+  mark draws it (the filter field, the command bar's query), and the
+  placeholder shown once it has gone. Under Reduce Motion it empties at
+  once. For an owner's key that clears, as Escape does.
 
 - `pub fn focus(&self, window: &mut Window, cx: &mut App)`
 
