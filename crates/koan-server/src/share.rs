@@ -1209,7 +1209,11 @@ mod tests {
         let [_, t2, _] = lib.tracks;
         let id = lib.share(ShareTarget::Tracks(vec![t2]));
         let html = lib.page(&id).await;
-        assert!(html.contains("<h1 class=\"my-1 normal-case\">Hymn &#60;to&#62; &#34;Moisture&#34;</h1>"));
+        assert!(
+            html.contains(
+                "<h1 class=\"my-1 normal-case\">Hymn &#60;to&#62; &#34;Moisture&#34;</h1>"
+            )
+        );
         assert!(
             html.contains("data-start=\"1\""),
             "cued to the second track"
