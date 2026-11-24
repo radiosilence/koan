@@ -478,8 +478,9 @@ pub fn adopt_moved_files(
 }
 
 /// What playing an artist plays: every track on the records they are the album
-/// artist of, by section as their page groups them and then chronologically
-/// (album date, disc, track#). The records
+/// artist of, in release order (album date, then title, disc, track#), EPs and
+/// singles among the albums rather than after them as their page sections
+/// them: a play is the artist's music as it came out. The records
 /// they only feature on are left out — see `AlbumQuery::features_of`. An
 /// artist with no records of their own has the tracks credited to them
 /// instead, so playing them always plays something.
@@ -502,8 +503,7 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
             OR ((t.artist_id = ?1
                  OR t.id IN (SELECT track_id FROM track_credits WHERE artist_id = ?1))
                 AND NOT EXISTS (SELECT 1 FROM album_artist_links WHERE artist_id = ?1))
-         ORDER BY koan_release_section(al.release_types), al.date, al.title COLLATE LIBRARY,
-                  t.disc, t.track_number",
+         ORDER BY al.date, al.title COLLATE LIBRARY, t.disc, t.track_number",
     )?;
     let rows = stmt
         .query_map(params![artist_id], row_to_track_row)?
@@ -1761,6 +1761,34 @@ mod tests {
             2,
             "matched on the artist name"
         );
+    }
+
+    #[test]
+    fn tracks_for_artist_plays_in_release_order_across_sections() {
+        let db = test_db();
+        db.conn
+            .execute_batch(
+                "INSERT INTO artists (id, name) VALUES (1, 'Burial');
+                 INSERT INTO albums (id, title, artist_id, date, release_types) VALUES
+                   (1, 'Untrue', 1, '2007-11-05', 'album'),
+                   (2, 'South London Boroughs', 1, '2005-05-09', 'ep'),
+                   (3, 'Kindred', 1, '2012-02-13', 'ep'),
+                   (4, 'burial', 1, '2006-05-15', 'album');
+                 INSERT INTO tracks (id, title, artist_id, album_id, disc, track_number, source, path) VALUES
+                   (1, 'Archangel', 1, 1, 1, 2, 'local', '/m/1.flac'),
+                   (2, 'Untitled', 1, 1, 1, 1, 'local', '/m/2.flac'),
+                   (3, 'Broken Home', 1, 2, 1, 1, 'local', '/m/3.flac'),
+                   (4, 'Kindred', 1, 3, 1, 1, 'local', '/m/4.flac'),
+                   (5, 'Distant Lights', 1, 4, 1, 1, 'local', '/m/5.flac'),
+                   (6, 'Spaceape', 1, 4, 2, 1, 'local', '/m/6.flac');",
+            )
+            .unwrap();
+        let ids: Vec<i64> = tracks_for_artist(&db.conn, 1)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, [3, 5, 6, 2, 1, 4], "by date, EPs among the albums");
     }
 
     /// A track belongs to an artist by its own credit or its album's, and a

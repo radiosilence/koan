@@ -391,9 +391,7 @@ pub fn select(
     }
     if m.shift {
         selection.click(item, true, &page());
-    } else if m.secondary(cx) {
-        selection.click(item, false, &[]);
-    } else if selection.is_active() {
+    } else if m.secondary(cx) || selection.is_active() {
         selection.click(item, false, &[]);
     } else if event.click_count() >= 2 {
         return true;

@@ -3179,7 +3179,8 @@ pub struct ServerExtension {
 /// What a command acts on, named rather than resolved: the engine reads an
 /// album's, an artist's or a playlist's tracks on the command lane, in turn
 /// with every other command, so a client never waits on that read before its
-/// command takes its place.
+/// command takes its place. An artist's tracks come in release order, by
+/// date across every kind of record (`queries::tracks_for_artist`).
 #[derive(Debug, Clone)]
 pub enum TrackSet {
     Tracks { ids: Vec<i64> },
