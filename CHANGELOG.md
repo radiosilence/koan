@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.74.1
+
+### Changed
+
+- **askama_datastar 0.1.2.** Fragment answers sent as `Html` vary on `Datastar-Request`, so a browser's cache keeps them apart from the page at the same address.
+
+### Fixed
+
+- **koan.rocks hero image.** The shadows under the desktop window and the phone fade out instead of ending at the image's edge.
+
+### Internal
+
+- **GPUI keeps its layout between frames.** Only the parts of a page whose style or children changed are laid out again, which makes each frame cheaper on large pages.
+
 ## 0.74.0
 
 ### Changed
