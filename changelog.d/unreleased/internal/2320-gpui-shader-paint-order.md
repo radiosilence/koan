@@ -1,0 +1,1 @@
+- **Shaders keep their paint order.** GPUI draws shaders that share a draw order, as everything painted inside one layer does, in the order they were painted rather than grouped by program.
