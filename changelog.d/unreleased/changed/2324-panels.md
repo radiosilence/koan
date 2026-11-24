@@ -1,0 +1,1 @@
+- **Lighter panels.** The web UI's panels are the kit's lighter ground rather than hairline boxes.
