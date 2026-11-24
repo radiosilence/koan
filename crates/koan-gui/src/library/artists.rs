@@ -608,7 +608,6 @@ impl Render for ArtistBrowser {
         } else {
             Pixels::ZERO
         };
-        let scrolled = self.scroll.0.borrow().base_handle.offset().y;
         let entity = cx.entity_id();
         // A phone's bar names the page: its list leads with the filter field
         // alone.
@@ -698,7 +697,8 @@ impl Render for ArtistBrowser {
                 .children(away_header.map(|header| {
                     crate::components::scrolls_away(
                         header,
-                        scrolled + above,
+                        &self.scroll,
+                        above,
                         self.header_height.clone(),
                         entity,
                     )

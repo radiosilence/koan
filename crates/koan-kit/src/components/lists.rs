@@ -113,14 +113,19 @@ pub fn rows_under_foot(row: Pixels, window: &gpui::Window, cx: &App) -> (usize, 
 }
 
 /// A page's header over a virtual list that scrolls it away with the rows:
-/// drawn at the list's scroll `offset` over the room the list leaves above
-/// its first row, which is `height` once measured (`owner` is told).
+/// drawn `above` the list's scroll, as the list lays it out, over the room the list leaves above its
+/// first row, which is `height` once measured (`owner` is told).
 pub fn scrolls_away(
     header: impl IntoElement,
-    offset: Pixels,
+    scroll: &UniformListScrollHandle,
+    above: Pixels,
     height: Rc<Cell<Option<Pixels>>>,
     owner: EntityId,
 ) -> impl IntoElement {
+    // A scroll past the top leaves the handle's offset above zero until the
+    // list clamps it as it lays out, after this is drawn: the rows never
+    // stand below their top, so neither does the header.
+    let offset = scroll.0.borrow().base_handle.offset().y.min(Pixels::ZERO) + above;
     let probe = canvas(
         move |bounds, _, cx| {
             if height.get() != Some(bounds.size.height) {

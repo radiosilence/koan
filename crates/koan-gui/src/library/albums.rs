@@ -932,7 +932,6 @@ impl Render for AlbumGrid {
         } else {
             Pixels::ZERO
         };
-        let scrolled = self.scroll.0.borrow().base_handle.offset().y;
         // A phone's bar names the page: its list leads with the filter field
         // alone.
         let away_header = away.then(|| {
@@ -1018,7 +1017,8 @@ impl Render for AlbumGrid {
                 .children(away_header.map(|header| {
                     crate::components::scrolls_away(
                         header,
-                        scrolled + above,
+                        &self.scroll,
+                        above,
                         self.header_height.clone(),
                         entity,
                     )
