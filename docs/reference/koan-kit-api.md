@@ -3142,8 +3142,9 @@ frame is drawn while the finger moves or the motion settles; the owner
 draws again only when the layout changes, as the layer is mounted or let
 go.
 
-- `Follow`: a layer offset by a finger, settling to a target (Now
-  Playing pulled down, a queue row swiped).
+- `Follow`: a layer offset by a finger and released to a target at the
+  finger's speed (Now Playing pulled down, a queue row swiped).
+- `Speed`: how fast a finger moves, read from its steps, for the release.
 - `SwipeAction`: a row slid toward the leading edge over an action that
   fills the room it leaves, both moved by one `Follow`.
 - `Elastic`: a page's ends giving under a finger's pan or a trackpad's
@@ -3152,6 +3153,11 @@ go.
 - `Push`: a navigation stack's page sliding over the one under it, which
   shows a third of its way behind and dimmed, by one progress track (a
   page pushed, swiped back, or sent back by the bar's button).
+
+Every release carries on at the speed the finger let go at, landing at
+rest or leaving at its pace (`Follow::release`, `Follow::fling`,
+`Push::release`, the rubber band's spring), never starting again from
+rest.
 
 Under Reduce Motion a finger is still followed, and a release lands at
 once: the settle returns no wait.
@@ -3188,6 +3194,19 @@ pub struct Follow(_);
   The offset easing from where it stands to `to`, on the quick-out over
   `Motion::SETTLE`; how long that takes.
 
+- `pub fn release(&self, to: Point<Pixels>, velocity: Point<f32>, window: &Window, cx: &App) -> Duration`
+
+  The offset carried from where it stands to `to` by a release moving
+  at `velocity` (points a second, as `Speed` reads it), landing at
+  rest: it starts at the finger's speed rather than from rest, and
+  slows into place without passing it. How long it takes; nothing under
+  Reduce Motion, which puts it at `to` at once.
+
+- `pub fn fling(&self, to: Point<Pixels>, velocity: Point<f32>, window: &Window, cx: &App) -> Duration`
+
+  `release`, for a layer leaving: it goes as fast as it was thrown and
+  ends at its average pace, never slowing as it goes off.
+
 - `pub fn at(&self) -> Point<f32>`
 
   Where the offset stands now, in device pixels.
@@ -3201,6 +3220,33 @@ pub struct Follow(_);
 - `pub fn animated(&self) -> &Animated`
 
   The uniforms the layer reads, for an element that draws it.
+
+Implements `Default`.
+
+#### `Speed`
+
+*struct* · How fast a finger moves along one axis, from the steps it reports: what
+its release carries into the motion it starts. Smoothed over the last few
+steps; a finger that stood still before lifting threw nothing.
+
+```rust
+#[derive(Clone, Copy)]
+pub struct Speed { /* private fields */ }
+```
+
+- `pub fn new() -> Self`
+
+  A finger landing: no speed yet.
+
+- `pub fn step(&mut self, delta: f32)`
+
+  A step of `delta` (points, or any unit the speed is read in) now.
+  A step that moves nothing, as a lift usually is, changes nothing.
+
+- `pub fn get(&self) -> f32`
+
+  The speed, in its unit a second; none once the finger has stood
+  still for a moment.
 
 Implements `Default`.
 
@@ -3545,6 +3591,12 @@ pub struct Push(_);
 
   The progress easing from where it stands to `to`; how long that
   takes.
+
+- `pub fn release(&self, to: f32, velocity: f32, width: Pixels, cx: &App) -> Duration`
+
+  The progress carried from where it stands to `to` by a release moving
+  at `velocity` (progress a second), over a page `width` points wide:
+  started at the finger's speed and landing at rest. How long it takes.
 
 - `pub fn enter(&self, cx: &App) -> Duration`
 
