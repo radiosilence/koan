@@ -2420,9 +2420,10 @@ pub struct CommandBar { /* private fields */ }
   `field` is the query's field as `CommandBar::field` draws it, or a
   view drawing it.
 
-- `pub fn field(input: &Entity<InputState>) -> TextField`
+- `pub fn field(input: &Entity<InputState>) -> CommandField`
 
-  The query's field: bare, in `title small`.
+  The query's field: bare, in `title small`, with a clear mark at its
+  trailing edge while it holds text, as a filter field has.
 
 - `pub fn field_height(window: &Window, cx: &App) -> Pixels`
 
@@ -2437,6 +2438,18 @@ pub struct CommandBar { /* private fields */ }
 - `pub fn on_dismiss(self, handler: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self`
 
   A click on the dimmed window around the bar.
+
+Implements `RenderOnce`.
+
+#### `CommandField`
+
+*struct* · The command bar's query field, as `CommandBar::field` makes it: the
+text, and the clear mark while there is any. Escape is the owner's.
+
+```rust
+#[derive(IntoElement)]
+pub struct CommandField { /* private fields */ }
+```
 
 Implements `RenderOnce`.
 
