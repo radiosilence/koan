@@ -296,7 +296,7 @@ pub(super) fn shelf_browser(shelf: Shelf, kind: Kind) -> String {
 /// end of a row of the sheet.
 pub(super) const LABEL: &str = "inline-flex items-center gap-1.5 max-wide:justify-between";
 /// The toolbar's selects and year fields, smaller than a form's.
-pub(super) const FIELD: &str = "px-2 py-[5px] text-meta max-wide:text-input";
+pub(super) const FIELD: &str = "pl-2 py-[5px] text-meta max-wide:text-input";
 
 /// A select's options: value, text, and whether it is the one chosen.
 type Options = Vec<(String, String, bool)>;

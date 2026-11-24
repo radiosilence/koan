@@ -58,11 +58,13 @@ use crate::share::{asset, blocking, not_found};
 
 /// `'unsafe-eval'` because Datastar compiles its attribute expressions.
 /// Everything else is this server's own, and nothing is inline but the import
-/// map naming the player, allowed by its hash.
+/// map naming the player, allowed by its hash. `data:` images are the theme's
+/// checkbox tick and select chevron, which a stylesheet can only give as data
+/// URLs.
 static PAGE_CSP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
         "default-src 'none'; script-src 'self' 'unsafe-eval' {}; style-src 'self'; font-src 'self'; \
-         img-src 'self'; media-src 'self' blob:; connect-src 'self'; base-uri 'self'; form-action 'self'; \
+         img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; base-uri 'self'; form-action 'self'; \
          frame-ancestors 'none'",
         ASSETS.imports.csp
     )

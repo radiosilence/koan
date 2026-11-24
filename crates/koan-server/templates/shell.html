@@ -16,7 +16,7 @@
 <script type="module" src="{{ crate::ui::ASSETS.ui_js }}"></script>
 </head><body{% if proxied %} data-proxied{% endif %}>
 <nav class="fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r border-rule bg-bg px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto max-wide:flex-row max-wide:gap-0 max-wide:border-t max-wide:border-r-0 max-wide:p-0 max-wide:pb-[env(safe-area-inset-bottom)]" aria-label="Library">
-<a class="mb-3 px-3 py-2 text-[22px] font-extralight text-brand hover:text-ink hover:no-underline max-wide:hidden" href="./">kōan</a>
+<a class="mb-3 px-3 py-2 text-title-sm font-extralight text-brand hover:text-ink hover:no-underline max-wide:hidden" href="./">kōan</a>
 <a class="{{ nav }}" href="albums" data-nav="albums">Albums</a>
 <a class="{{ nav }}" href="artists" data-nav="artists">Artists</a>
 <a class="{{ nav }} max-wide:hidden" href="tracks" data-nav="tracks">Tracks</a>
@@ -54,5 +54,5 @@
 {#- The menu every track row opens, filled for the row by the UI's script. Beside the pointer on a wide screen, a sheet above the bar on a phone. #}
 <div id="track-menu" popover="manual" role="menu" class="fixed inset-auto m-0 hidden min-w-52 flex-col open:flex border border-rule bg-bg p-1 text-ink max-wide:inset-x-3 max-wide:w-auto max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]" aria-label="Track"></div>
 {#- A track's properties, filled from `/track/{id}/properties` by the UI's script. #}
-<dialog id="track-properties" class="m-auto max-h-[85dvh] w-[calc(100%-24px)] max-w-panel overflow-y-auto border border-rule bg-bg px-5 pt-4 pb-5 text-ink backdrop:bg-bg/70" aria-label="Properties"><div id="track-properties-body"></div>
+<dialog id="track-properties" class="sheet overflow-y-auto px-5 pt-4 [--sheet-padding-bottom:--spacing(5)]" aria-label="Properties"><div id="track-properties-body"></div>
 <form method="dialog" class="mt-6 flex justify-end"><button>Close</button></form></dialog></body></html>

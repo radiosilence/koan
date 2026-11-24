@@ -41,7 +41,7 @@ pub(super) struct Failed<'a> {
 pub(super) const KICKER: &str = "m-0 text-fine text-muted lowercase";
 pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";
 pub(super) const EMPTY: &str = "text-muted";
-pub(super) const ERROR: &str = "text-bad";
+pub(super) const ERROR: &str = "notice bad";
 const ACTIONS: &str = "flex flex-wrap items-center gap-2";
 /// Top-aligned, so the cover's top meets the kicker's first line.
 const HERO: &str =
@@ -53,12 +53,11 @@ max-wide:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] max-wide:gap-x-3 max-wi
 /// A copyable link: the share, the new key, an invite, the MCP address.
 pub(super) const COPY_ROW: &str = "mt-3 flex max-w-form gap-2";
 pub(super) const COPY_INPUT: &str = "flex-1 text-control";
-pub(super) const COPY_ERROR: &str = "mt-3 max-w-form text-control text-bad";
+pub(super) const COPY_ERROR: &str = "notice bad max-w-form";
 /// The sign-in and consent pages, which stand outside the shell.
 pub(super) const SIGNIN_BODY: &str = "pb-0";
 pub(super) const SIGNIN_MAIN: &str = "mx-auto max-w-[360px] px-4 py-16";
 pub(super) const SIGNIN_TITLE: &str = "text-brand";
-pub(super) const SIGNIN_LABEL: &str = "grid gap-1.5 text-meta text-muted";
 
 #[derive(Template)]
 #[template(path = "player/buttons.html")]

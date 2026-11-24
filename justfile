@@ -144,11 +144,14 @@ release version *args:
 
 # Compile the web UI and share page stylesheets. The output is committed, since
 # the server embeds it; CI fails a build where it is stale. The theme they
-# import is an npm package, installed first (scripts/styles-deps.sh).
+# import is an npm package, installed first (scripts/styles-deps.sh). kit-check
+# then fails on markup outside the kit: classes that compile to nothing, such
+# as rounded corners or Tailwind's type sizes, and inline styles.
 css:
     scripts/styles-deps.sh
     tailwindcss --input crates/koan-server/styles/ui.css --output crates/koan-server/assets/ui.css
     tailwindcss --input crates/koan-server/styles/share.css --output crates/koan-server/assets/share.css
+    node node_modules/@radiosilence/theme/kit-check.mjs crates/koan-server/templates crates/koan-server/src crates/koan-server/scripts
 
 # Typecheck the web UI and share page scripts (crates/koan-server/scripts/*.ts).
 # Cargo strips their types when it builds koan-server (build.rs).

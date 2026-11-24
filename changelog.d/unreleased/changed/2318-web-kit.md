@@ -1,0 +1,1 @@
+- **The web UI, share page and koan.rocks are drawn with the kōan web kit.** `@radiosilence/theme` 0.2.4 carries the controls the web UI defined for itself, so every radiosilence web page draws them alike; koan's stylesheets keep only what is koan's own, and `kit-check` fails CI on markup outside the look.

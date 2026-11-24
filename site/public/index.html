@@ -36,10 +36,10 @@
   <a class="absolute -top-12 left-4 z-10 bg-surface px-3 py-2 focus:top-4" href="#main">Skip to content</a>
 
   <header class="mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-x-4 gap-y-3 px-5 py-5">
-    <a class="flex items-center gap-3 text-ink no-underline" href="/"><img class="rounded-md" src="/icon-32.png"
+    <a class="flex items-center gap-3 text-ink no-underline" href="/"><img src="/icon-32.png"
         width="32" height="32" alt="">kōan</a>
     <nav
-      class="flex flex-wrap gap-x-2.5 gap-y-1 text-sm whitespace-nowrap sm:gap-x-5 [&>a]:text-muted [&>a]:no-underline [&>a:hover]:text-ink"
+      class="flex flex-wrap gap-x-2.5 gap-y-1 text-control whitespace-nowrap sm:gap-x-5 [&>a]:text-muted [&>a]:no-underline [&>a:hover]:text-ink"
       aria-label="Site">
       <a href="#player">Player</a>
       <a href="#server">Server</a>
@@ -62,8 +62,9 @@
     </figure>
 
     <section class="mx-auto max-w-2xl px-5 pt-8 pb-4">
-      <h1 class="mb-6 text-6xl font-extralight sm:text-7xl">kōan</h1>
-      <p class="text-xl/snug">Your player, your server, your remote and your EQ, on every device you listen on.</p>
+      <!-- kit: raw, the wordmark is a logo set larger than the type scale goes. -->
+      <h1 class="mb-6 text-[60px] font-extralight sm:text-[72px]">kōan</h1>
+      <p class="text-title-sm/snug">Your player, your server, your remote and your EQ, on every device you listen on.</p>
       <p>One Rust engine runs on macOS, Linux, iPhone, Apple TV, Android, a terminal and a server. It plays folders on
         your computer, a kōan server, or any OpenSubsonic server such as Navidrome.</p>
       <ul>
@@ -79,7 +80,7 @@
         <li><strong>The desktop app can serve its library,</strong> and a QR code signs your phone in.</li>
       </ul>
       <p class="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
-        <a class="rounded-full bg-brand px-5 py-2.5 font-semibold text-bg no-underline hover:text-bg hover:opacity-90"
+        <a class="border border-brand px-5 py-3 text-brand no-underline hover:bg-hover/30"
           href="https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg">Download for Mac</a>
         <a href="https://testflight.apple.com/join/96w2gjFz">iPhone and Apple TV</a>
         <a href="#install">Linux, Android, terminal, server</a>
@@ -136,11 +137,11 @@
 
     <div class="mx-auto my-6 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
       <figure>
-        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/gui-albums.webp" width="2000"
+        <img class="h-auto w-full border border-rule" src="/screens/gui-albums.webp" width="2000"
           height="1086" loading="lazy" decoding="async" alt="The album grid in the desktop app">
       </figure>
       <figure>
-        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/gui-queue.webp" width="2000"
+        <img class="h-auto w-full border border-rule" src="/screens/gui-queue.webp" width="2000"
           height="1086" loading="lazy" decoding="async" alt="The queue in the desktop app, grouped by record">
       </figure>
     </div>
@@ -148,10 +149,10 @@
     <div class="carousel my-8" role="region" aria-roledescription="carousel" aria-label="Screenshots of kōan on iPhone">
       <button type="button" class="carousel-btn left-1" data-dir="-1" aria-label="Previous screenshots">‹</button>
       <div class="carousel-track" tabindex="0">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/gui-phone-now-playing.webp" width="660" height="1435" loading="lazy" decoding="async" alt="Now Playing on iPhone">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/gui-phone-album.webp" width="660" height="1435" loading="lazy" decoding="async" alt="A record's page on iPhone">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/gui-phone-queue.webp" width="660" height="1435" loading="lazy" decoding="async" alt="The queue on iPhone">
-        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/gui-phone-library.webp" width="660" height="1435" loading="lazy" decoding="async" alt="The Library tab on iPhone">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none border border-rule bg-surface" src="/screens/gui-phone-now-playing.webp" width="660" height="1435" loading="lazy" decoding="async" alt="Now Playing on iPhone">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none border border-rule bg-surface" src="/screens/gui-phone-album.webp" width="660" height="1435" loading="lazy" decoding="async" alt="A record's page on iPhone">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none border border-rule bg-surface" src="/screens/gui-phone-queue.webp" width="660" height="1435" loading="lazy" decoding="async" alt="The queue on iPhone">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none border border-rule bg-surface" src="/screens/gui-phone-library.webp" width="660" height="1435" loading="lazy" decoding="async" alt="The Library tab on iPhone">
       </div>
       <button type="button" class="carousel-btn right-1" data-dir="1" aria-label="Next screenshots">›</button>
     </div>
@@ -187,11 +188,11 @@
 
     <div class="mx-auto my-6 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
       <figure>
-        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/web-albums.webp" width="1600"
+        <img class="h-auto w-full border border-rule" src="/screens/web-albums.webp" width="1600"
           height="1000" loading="lazy" decoding="async" alt="A kōan server's web UI: the album grid">
       </figure>
       <figure>
-        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/gui-share.webp" width="1800"
+        <img class="h-auto w-full border border-rule" src="/screens/gui-share.webp" width="1800"
           height="960" loading="lazy" decoding="async" alt="Settings in the desktop app: this computer sharing its library">
       </figure>
     </div>
@@ -209,11 +210,11 @@
 
     <div class="mx-auto my-6 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
       <figure>
-        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/tv-now-playing.webp" width="2400"
+        <img class="h-auto w-full border border-rule" src="/screens/tv-now-playing.webp" width="2400"
           height="1350" loading="lazy" decoding="async" alt="Now Playing on Apple TV: the sleeve, the track and what comes next">
       </figure>
       <figure>
-        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/tui-now-playing.webp" width="2000"
+        <img class="h-auto w-full border border-rule" src="/screens/tui-now-playing.webp" width="2000"
           height="1600" loading="lazy" decoding="async" alt="The terminal UI's Now playing page: the cover, signal path, meters, spectrum and lyrics">
       </figure>
     </div>
@@ -230,11 +231,11 @@
 
     <div class="mx-auto my-6 flex max-w-5xl items-start gap-6 px-5">
       <figure class="min-w-0 flex-[3]">
-        <img class="h-auto w-full rounded-xl border border-rule" src="/screens/gui-eq.webp" width="2000"
+        <img class="h-auto w-full border border-rule" src="/screens/gui-eq.webp" width="2000"
           height="1086" loading="lazy" decoding="async" alt="The EQ page in the desktop app: a device's chain and the response graph">
       </figure>
       <figure class="min-w-0 flex-1">
-        <img class="h-auto w-full rounded-2xl border border-rule" src="/screens/gui-phone-eq.webp" width="750"
+        <img class="h-auto w-full border border-rule" src="/screens/gui-phone-eq.webp" width="750"
           height="1624" loading="lazy" decoding="async" alt="The EQ screen on iPhone">
       </figure>
     </div>
@@ -263,7 +264,7 @@
     </section>
   </main>
 
-  <footer class="mx-auto max-w-2xl border-t border-rule px-5 pt-8 pb-12 text-sm text-muted [&>p]:my-1">
+  <footer class="mx-auto max-w-2xl border-t border-rule px-5 pt-8 pb-12 text-control text-muted [&>p]:my-1">
     <p>kōan is open source under the GNU AGPL. <a href="https://github.com/radiosilence/koan">Source</a> · <a
         href="https://github.com/radiosilence/koan/releases">Releases</a> · <a href="/docs/changelog/">Changelog</a></p>
     <p>Written with AI-assisted coding, by <a href="https://github.com/radiosilence">@radiosilence</a>.</p>

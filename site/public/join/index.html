@@ -18,27 +18,27 @@
 </head>
 <body>
   <header class="mx-auto flex max-w-2xl items-center px-5 py-5">
-    <a class="flex items-center gap-3 text-ink no-underline" href="/"><img class="rounded-md" src="/icon-32.png" width="32" height="32" alt="">kōan</a>
+    <a class="flex items-center gap-3 text-ink no-underline" href="/"><img src="/icon-32.png" width="32" height="32" alt="">kōan</a>
   </header>
 
   <main id="main" class="mx-auto max-w-2xl px-5 pt-8 pb-12">
     <div id="invite" hidden>
-      <h1 class="mb-4 text-4xl font-extralight">You're invited</h1>
+      <h1 class="mb-4 text-display font-extralight">You're invited</h1>
       <p>An account on <strong id="server-name"></strong> is waiting for you in kōan.</p>
 
       <h2 class="mt-10">1. Get the app</h2>
       <p class="flex flex-wrap gap-3">
-        <a class="rounded-full bg-brand px-4 py-2 font-semibold text-bg no-underline hover:text-bg hover:opacity-90" href="https://apps.apple.com/app/id6817137172">App Store · iPhone and iPad</a>
-        <a class="rounded-full border border-rule px-4 py-2 text-ink no-underline hover:border-muted hover:text-ink" href="https://github.com/radiosilence/koan/releases/latest">Mac download</a>
+        <a class="border border-muted px-3 py-1.5 text-meta text-ink no-underline hover:bg-hover/30" href="https://apps.apple.com/app/id6817137172">App Store · iPhone and iPad</a>
+        <a class="border border-muted px-3 py-1.5 text-meta text-ink no-underline hover:bg-hover/30" href="https://github.com/radiosilence/koan/releases/latest">Mac download</a>
       </p>
 
       <h2 class="mt-10">2. Open the invite</h2>
       <p>With kōan installed, this signs it in and loads the library.</p>
       <p class="flex flex-wrap gap-3">
-        <a id="open" class="rounded-full bg-brand px-4 py-2 font-semibold text-bg no-underline hover:text-bg hover:opacity-90" href="#">Open in kōan</a>
-        <button id="copy-link" class="cursor-pointer rounded-full border border-rule px-4 py-2 text-ink hover:border-muted" type="button">Copy invite</button>
+        <a id="open" class="border border-brand px-5 py-3 text-brand no-underline hover:bg-hover/30" href="#">Open in kōan</a>
+        <button id="copy-link" class="cursor-pointer border border-muted px-3 py-1.5 text-meta text-ink no-underline hover:bg-hover/30" type="button">Copy invite</button>
       </p>
-      <p class="text-sm text-muted">If the button does nothing, copy the invite and paste it into the Server URL field in kōan's Settings.</p>
+      <p class="text-control text-muted">If the button does nothing, copy the invite and paste it into the Server URL field in kōan's Settings.</p>
 
       <h2 class="mt-10">Using another app?</h2>
       <p>Any Subsonic app can sign in with the server and username below and the password from your invite email. Apps that take an API key can use one made on the server's own page, under API keys.</p>
@@ -46,11 +46,11 @@
         <dt class="text-muted">Server URL</dt><dd id="server" class="m-0 break-all select-all"></dd>
         <dt class="text-muted">Username</dt><dd id="username" class="m-0 break-all select-all"></dd>
       </dl>
-      <p class="mt-8 text-sm text-muted">These details never left your browser: they are in the part of the link after the #, which is not sent to koan.rocks.</p>
+      <p class="mt-8 text-control text-muted">These details never left your browser: they are in the part of the link after the #, which is not sent to koan.rocks.</p>
     </div>
 
     <div id="broken" hidden>
-      <h1 class="mb-4 text-4xl font-extralight">This invite is incomplete</h1>
+      <h1 class="mb-4 text-display font-extralight">This invite is incomplete</h1>
       <p>The link is missing part of the account. Ask whoever sent it for the whole link.</p>
     </div>
   </main>

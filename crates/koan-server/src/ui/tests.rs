@@ -555,6 +555,7 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
     assert!(full.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
     assert!(full.body.contains("Hymn &#60;to&#62; Moisture"));
     assert!(!full.body.contains("<Moss>") && !full.body.contains("<to>"));
+    // kit: raw, the assertion that no page carries a style attribute names one.
     assert!(!full.body.contains("<script>") && !full.body.contains(" style="));
     let csp = full.headers[header::CONTENT_SECURITY_POLICY]
         .to_str()
