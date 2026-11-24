@@ -1,0 +1,1 @@
+- **The mini player keeps its width for the names.** Its controls sit in slots of one fixed width, and while another device is controlled it shows the devices glyph lit in the accent rather than the device's name, so the title and artist are no longer cut short. Now Playing and the desktop still name the device.
