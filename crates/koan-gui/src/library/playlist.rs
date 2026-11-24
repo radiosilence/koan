@@ -417,7 +417,7 @@ impl PlaylistPage {
                 crate::notice::show(why, crate::theme::Tone::Muted, cx);
                 return;
             }
-            Lands::Row => {}
+            Lands::Row => crate::components::landed(cx),
         }
         // Places are named by entry, never by index: offline, entries with
         // no file here are not listed, and the engine moves the rows shown

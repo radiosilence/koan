@@ -102,6 +102,7 @@ impl NavRow {
             base.on_drop(move |dropped: &T, window, cx| {
                 if takes(dropped) {
                     answers.start(super::Answer::Sweep, accent, cx);
+                    super::landed(cx);
                     handler(dropped, window, cx)
                 }
             })

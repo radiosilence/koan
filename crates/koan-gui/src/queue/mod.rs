@@ -750,6 +750,7 @@ impl QueueView {
         else {
             return;
         };
+        crate::components::landed(cx);
         self.moved = moving.clone();
         command(cx, "move in queue", move |e| {
             e.move_in_queue(moving, target, after)
@@ -762,6 +763,7 @@ impl QueueView {
         use koan_runtime::Placement;
         self.drop_at = None;
         cx.notify();
+        crate::components::landed(cx);
         let queue = self.queue.read(cx);
         let id = |ix: usize| queue.base.get(ix).map(|item| item.queue_item_id.clone());
         let sets = dragged.sets.to_vec();
