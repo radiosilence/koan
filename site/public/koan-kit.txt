@@ -6087,6 +6087,12 @@ pub struct SectionHeading { /* private fields */ }
 
   A heading saying `title`, an app word drawn lowercase.
 
+- `pub fn in_row(self, height: Pixels) -> Self`
+
+  Drawn in `height`, a row's, for a list whose items are all one height
+  (a uniform list's letter headings): the title sits at the row's foot,
+  nearer the rows under it than the one above.
+
 - `pub fn on_reveal(self, reveal: impl Fn(&mut Window, &mut App) + 'static) -> Self`
 
   Run when a screen reader moves to the heading in a list that draws
