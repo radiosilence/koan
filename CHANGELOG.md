@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.75.0
+
+### Added
+
+- **Haptics for pulling, dragging and dropping.** On iPhone and iPad, a pull is felt as it passes the point where letting go refreshes, a drag ticks as it enters a drop target or its place in a list moves, and a drop taps as it lands.
+- **Select on every library page, and a sort for the artist browser.** The kōan GUI app's record page, artist page, artist browser and track browser carry Select in the toolbar and the selection bar while picking, so a pick can be made on iPad and iPhone too, where a tap on an artist page's track now plays it as other lists do; a plain click on a list row marks it without starting a pick, and while picking a click only ticks. The artist browser lists artists under a heading per initial and offers most records, most tracks, recently added, last played and best match as flat orders, a search and the Recently played filter taking best match and last played until another is chosen; the choice lasts until the app quits. Playing an artist, from any app or page, queues their records by date, EPs and singles among the albums, rather than section by section.
+
+### Changed
+
+- **Long record titles.** A record's page shows its whole title rather than cutting it at two or three lines.
+- **The mini player keeps its width for the names.** Its controls sit in slots of one fixed width, and while another device is controlled it shows the devices glyph lit in the accent rather than the device's name, so the title and artist are no longer cut short. Now Playing and the desktop still name the device.
+- **The web UI, share page and koan.rocks are drawn with the kōan web kit.** `@radiosilence/theme` 0.2.4 carries the controls the web UI defined for itself, so every radiosilence web page draws them alike; koan's stylesheets keep only what is koan's own, and `kit-check` fails CI on markup outside the look.
+
+### Fixed
+
+- **Motion follows the finger.** On iPhone and iPad, whatever a finger lets go of carries on at the speed it was moving: Now Playing swiped away or back, a queue row swiped off, a page swiped back, a list's rubber band. A quick flick closes Now Playing or removes a row however short the swipe.
+- **Now Playing swiped away.** On iPhone its background now leaves with it, uncovering the page underneath as it goes, rather than staying over the screen until Now Playing had gone and the page appeared at once.
+- **The scrollbar shows again in the kōan GUI app.** Since 0.74.0 it was drawn beneath the window's wash, because a shader painted over another shader could share its draw order and be sorted under it.
+- **The search box shows a clear mark.** While the query holds text, a mark at its trailing edge empties it and keeps the keyboard there, as the filter fields have.
+- **The search box clears as its mark does.** Escape fades the query out as the clear mark does, and under touch a tap on the mark keeps the keyboard; the cleared text fades from where it stood and the prompt returns once it has gone.
+
+### Internal
+
+- **Shaders keep their paint order.** GPUI draws shaders that share a draw order, as everything painted inside one layer does, in the order they were painted rather than grouped by program.
+
 ## 0.74.1
 
 ### Changed
