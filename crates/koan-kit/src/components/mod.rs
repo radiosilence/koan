@@ -30,6 +30,7 @@ mod button;
 mod chain;
 pub mod chart;
 pub mod choice;
+mod clear_mark;
 mod collection;
 mod command_bar;
 mod control_group;
@@ -127,7 +128,7 @@ pub use bars_feed::{
 pub use button::{Button, ButtonKind};
 pub use chain::{ChainEnd, ChainJoin, ChainLink, ChainSlot, ChainStage};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
-pub use command_bar::{CommandBar, CommandResults, CommandSection};
+pub use command_bar::{CommandBar, CommandField, CommandResults, CommandSection};
 pub use control_group::ControlGroup;
 pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};

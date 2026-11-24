@@ -1,0 +1,1 @@
+- **The search box shows a clear mark.** While the query holds text, a mark at its trailing edge empties it and keeps the keyboard there, as the filter fields have.

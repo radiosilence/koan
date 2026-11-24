@@ -16,6 +16,7 @@ use crate::components::field::FieldState as InputState;
 use gpui::prelude::*;
 use gpui::*;
 
+use super::clear_mark::ClearMark;
 use super::{Rise, ScrollArea, SuggestionHeading, SuggestionRow, TextField, sheet};
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
@@ -51,12 +52,12 @@ impl CommandBar {
         }
     }
 
-    /// The query's field: bare, in `title small`.
-    pub fn field(input: &Entity<InputState>) -> TextField {
-        TextField::new(input)
-            .label(label("search"))
-            .bare()
-            .role(TypeRole::TitleSmall)
+    /// The query's field: bare, in `title small`, with a clear mark at its
+    /// trailing edge while it holds text, as a filter field has.
+    pub fn field(input: &Entity<InputState>) -> CommandField {
+        CommandField {
+            input: input.clone(),
+        }
     }
 
     /// How tall the field is: what a view drawing it, cached, is sized to.
@@ -140,6 +141,36 @@ impl RenderOnce for CommandBar {
                 )
                 .children(self.results),
             ))
+    }
+}
+
+/// The command bar's query field, as `CommandBar::field` makes it: the
+/// text, and the clear mark while there is any. Escape is the owner's.
+#[derive(IntoElement)]
+pub struct CommandField {
+    input: Entity<InputState>,
+}
+
+impl RenderOnce for CommandField {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let clear = ClearMark::of(&self.input, TypeRole::TitleSmall, window, cx);
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .gap(look.space(Space::M))
+            .child(
+                clear.text(
+                    TextField::new(&self.input)
+                        .label(label("search"))
+                        .bare()
+                        .role(TypeRole::TitleSmall),
+                    &look,
+                    cx,
+                ),
+            )
+            .children(clear.mark(&look, cx))
     }
 }
 
@@ -320,5 +351,76 @@ impl RenderOnce for CommandResults {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(body)
             .child(foot)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
+
+    use super::*;
+    use core::prelude::v1::test;
+
+    /// The query's field in a cached view of its own, as the app keeps it.
+    struct Query {
+        input: Entity<InputState>,
+    }
+
+    impl Render for Query {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(CommandBar::field(&self.input))
+        }
+    }
+
+    struct Bar {
+        query: Entity<Query>,
+    }
+
+    impl Render for Bar {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let line = CommandBar::field_height(window, cx);
+            CommandBar::new(
+                "bar",
+                self.query
+                    .clone()
+                    .cached(StyleRefinement::default().w_full().h(line)),
+            )
+        }
+    }
+
+    /// Typing shows the clear mark; a press on it empties the query and
+    /// leaves the keyboard in it, and the mark goes.
+    #[gpui::test]
+    fn the_query_shows_a_clear_mark_that_empties_it(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::theme::init(cx);
+        });
+        let (bar, cx) = cx.add_window_view(|window, cx| {
+            let input = cx.new(|cx| InputState::new(window, cx));
+            let query = cx.new(|cx| {
+                let redraw = cx.observe(&input, |_, _, cx| cx.notify());
+                redraw.detach();
+                Query { input }
+            });
+            Bar { query }
+        });
+        let cx: &mut VisualTestContext = cx;
+        let input = bar.read_with(cx, |b, cx| b.query.read(cx).input.clone());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("filter-clear-mark").is_none());
+        cx.update(|window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+        cx.simulate_input("abba");
+        cx.run_until_parked();
+        let clear = cx
+            .debug_bounds("filter-clear-mark")
+            .expect("the mark shows with text");
+        cx.simulate_mouse_down(clear.center(), MouseButton::Left, Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(cx.update(|_, cx| input.read(cx).value().to_string()), "");
+        assert!(
+            cx.update(|window, cx| input.read(cx).focus_handle(cx).is_focused(window)),
+            "the query keeps the keyboard"
+        );
+        assert!(cx.debug_bounds("filter-clear-mark").is_none());
     }
 }
