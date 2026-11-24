@@ -54,5 +54,5 @@
 {#- The menu every track row opens, filled for the row by the UI's script. Beside the pointer on a wide screen, a sheet above the bar on a phone. #}
 <div id="track-menu" popover="manual" role="menu" class="fixed inset-auto m-0 hidden min-w-52 flex-col open:flex border border-rule bg-bg p-1 text-ink max-wide:inset-x-3 max-wide:w-auto max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]" aria-label="Track"></div>
 {#- A track's properties, filled from `/track/{id}/properties` by the UI's script. #}
-<dialog id="track-properties" class="sheet overflow-y-auto px-5 pt-4 pb-5" aria-label="Properties"><div id="track-properties-body"></div>
+<dialog id="track-properties" class="sheet overflow-y-auto px-5 pt-4 [--sheet-padding-bottom:--spacing(5)]" aria-label="Properties"><div id="track-properties-body"></div>
 <form method="dialog" class="mt-6 flex justify-end"><button>Close</button></form></dialog></body></html>

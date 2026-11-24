@@ -1089,6 +1089,16 @@
     }
   }
 }
+@layer base {
+  h1 {
+    font-size: var(--text-display);
+    line-height: var(--tw-leading, var(--text-display--line-height));
+    @media (width < 561px) {
+      font-size: var(--text-title);
+      line-height: var(--tw-leading, var(--text-title--line-height));
+    }
+  }
+}
 @property --tw-ordinal {
   syntax: "*";
   inherits: false;

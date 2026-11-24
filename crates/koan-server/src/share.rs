@@ -31,11 +31,10 @@ use crate::ui::Logged;
 
 /// The page's own scripts and stylesheet, from this server and nowhere else,
 /// and the import map naming the player; `connect-src` is for the player
-/// fetching the tracks it decodes. `data:` images are the theme's controls
-/// drawn as data URLs.
+/// fetching the tracks it decodes.
 static PAGE_CSP: LazyLock<HeaderValue> = LazyLock::new(|| {
     let csp = format!(
-        "default-src 'none'; script-src 'self' {}; style-src 'self'; font-src 'self'; img-src 'self' data:; \
+        "default-src 'none'; script-src 'self' {}; style-src 'self'; font-src 'self'; img-src 'self'; \
          media-src 'self' blob:; connect-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
         SHARE_IMPORTS.csp
     );

@@ -15,3 +15,10 @@
   /* Narrower than this, the cover stacks above the title. */
   --breakpoint-wide: 561px;
 }
+
+/* The title steps down where the cover stacks, at this page's breakpoint rather than the kit's. */
+@layer base {
+  h1 {
+    @apply text-display max-wide:text-title;
+  }
+}

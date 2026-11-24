@@ -19,7 +19,7 @@
 {%- if local %}
 <p>Requested from {{ from }}, on your network.</p>
 {%- else %}
-<p class="{{ crate::ui::pages::ERROR }}"><strong>Requested from {{ from }}, from the internet.</strong> A device in the room with you is usually on your network.</p>
+<p class="notice warn"><strong>Requested from {{ from }}, from the internet.</strong> A device in the room with you is usually on your network.</p>
 {%- endif %}
 <p>It will be signed in as <strong>{{ user }}</strong>, and can do anything your account can until you revoke its key.</p>
 <p><small>Approve only a device you are setting up yourself, just now. Anyone can give a device any name.</small></p>

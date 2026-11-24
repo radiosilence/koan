@@ -32,6 +32,11 @@
     }
   }
 
+  /* The page title steps down where the shell does, at its own breakpoint rather than the kit's. */
+  h1 {
+    @apply text-display max-wide:text-title;
+  }
+
   /* Room under the page for the transport bar and, on a phone, the tab bar. */
   body {
     padding-bottom: calc(var(--bar-h) + var(--tabs-h) + env(safe-area-inset-bottom));
@@ -41,7 +46,7 @@
 @layer components {
   /* The track menu; ui.js fills it. */
   #track-menu button {
-    @apply border-0 px-3 py-2 text-left text-control text-ink hover:bg-surface;
+    @apply justify-start border-0 px-3 py-2 text-left text-control text-ink hover:bg-surface;
   }
 
   #track-menu p {
