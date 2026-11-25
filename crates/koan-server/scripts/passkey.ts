@@ -84,7 +84,7 @@ async function signIn(form: HTMLFormElement, conditional = false) {
 // On the sign-in page, the browser's saved passkeys are offered at once,
 // beside the saved passwords, where the browser can.
 const login = document.querySelector<HTMLFormElement>("form[data-passkey-login]");
-if (login && window.PublicKeyCredential?.isConditionalMediationAvailable) {
+if (login && typeof PublicKeyCredential !== "undefined" && "isConditionalMediationAvailable" in PublicKeyCredential) {
   PublicKeyCredential.isConditionalMediationAvailable().then((available) => {
     if (available) {
       signIn(login, true).catch((e) => {
@@ -120,7 +120,7 @@ async function register(form: HTMLFormElement) {
       challenge: fromB64(options.challenge),
       user: { ...options.user!, id: fromB64(options.user!.id) },
       excludeCredentials: descriptors(options.excludeCredentials),
-    } as PublicKeyCredentialCreationOptions,
+    } as unknown as PublicKeyCredentialCreationOptions,
   })) as PublicKeyCredential | null;
   if (!credential) throw new Error("No key answered.");
   const response = credential.response as AuthenticatorAttestationResponse;
