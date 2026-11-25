@@ -13,7 +13,7 @@
 {%- if let Some(codes) = codes %}
 <div class="panel mt-3 mb-4 max-w-panel"><h3 class="mt-0">Recovery codes</h3>
 <p class="{{ sub }}">Keep these somewhere safe, apart from your phone and keys: a password manager, or on paper. Each one signs you in once in place of a code, if you lose your app and keys. They are not shown again.</p>
-<ul class="my-3 grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-control select-all" aria-label="Recovery codes">{% for c in codes %}<li>{{ c }}</li>{% endfor %}</ul></div>
+<ul class="codes my-3" aria-label="Recovery codes">{% for c in codes %}<li>{{ c }}</li>{% endfor %}</ul></div>
 {%- endif %}
 
 <h3>Authenticator app</h3>
@@ -22,9 +22,9 @@
 <button class="quiet bad" data-confirm="{{ confirm_totp_removal() }}" data-on:click="confirm(el.dataset.confirm) && @post('account/two-step/totp/remove')">Remove</button></li></ul>
 {%- else if let Some(setup) = setup %}
 <div class="panel mt-2 mb-4 flex max-w-4xl flex-wrap items-center gap-x-8 gap-y-4">
-{%- if let Some(qr) = setup.qr %}<div class="bg-white p-3 [&_svg]:block [&_svg]:size-56 [&_svg]:max-w-full" role="img" aria-label="Authenticator app setup as a QR code">{{ qr }}</div>{% endif %}
+{%- if let Some(qr) = setup.qr %}<div class="qr" role="img" aria-label="Authenticator app setup as a QR code">{{ qr }}</div>{% endif %}
 <div class="min-w-0 flex-1 basis-64"><p class="mt-0 text-body text-ink">Scan this with your authenticator app, or type the key into it.</p>
-<p class="font-mono text-control wrap-anywhere select-all">{{ setup.secret }}</p>
+<span class="code select-all">{{ setup.secret }}</span>
 <form class="flex max-w-form gap-2" data-on:submit__prevent="@post('account/two-step/totp/confirm')">
 <input class="flex-1" name="totpcode" data-bind:totpcode placeholder="Code from the app" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required aria-label="Code from the app"><button class="primary">Turn on</button></form>
 <p class="{{ sub }}">The app shows a new six-digit code every 30 seconds. Type the one it shows now.</p></div></div>

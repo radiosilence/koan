@@ -14,6 +14,8 @@
     --default-transition-duration: 150ms;
     --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
     --default-mono-font-family: var(--font-mono);
+    --color-black: #000;
+    --color-white: #fff;
     --text-fine: 12px;
     --text-fine--line-height: 1.35;
     --text-meta: 13px;
@@ -1045,6 +1047,37 @@
     word-break: break-all;
     color: var(--ink);
   }
+  .qr {
+    display: inline-block;
+    background-color: var(--color-white);
+    padding: calc(var(--spacing) * 3);
+    --tw-leading: 1;
+    line-height: 1;
+    color: var(--color-black);
+  }
+  .qr > svg {
+    display: block;
+    aspect-ratio: 1 / 1;
+    height: auto;
+    width: calc(var(--spacing) * 56);
+    max-width: 100%;
+  }
+  .codes {
+    margin: 0px;
+    display: grid;
+    list-style-type: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: calc(var(--spacing) * 6);
+    row-gap: var(--spacing);
+    padding: 0px;
+    font-size: var(--text-control);
+    line-height: var(--tw-leading, var(--text-control--line-height));
+    color: var(--ink);
+    --tw-numeric-spacing: tabular-nums;
+    font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+    -webkit-user-select: all;
+    user-select: all;
+  }
   .rows {
     margin: 0px;
     display: grid;
@@ -1200,6 +1233,10 @@
   inherits: false;
   initial-value: solid;
 }
+@property --tw-leading {
+  syntax: "*";
+  inherits: false;
+}
 @property --tw-duration {
   syntax: "*";
   inherits: false;
@@ -1242,6 +1279,7 @@
       --tw-font-weight: initial;
       --tw-outline-style: solid;
       --tw-border-style: solid;
+      --tw-leading: initial;
       --tw-duration: initial;
     }
   }

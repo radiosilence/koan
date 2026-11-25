@@ -1,0 +1,1 @@
+- **QR codes and recovery codes are drawn by the web kit.** The Account page's sign-in and authenticator QRs and the Users page's invite QR are dark on white in either scheme and the same size, the invite's no longer at the SVG's own size on the page's ground; recovery codes sit in two columns that select whole.
