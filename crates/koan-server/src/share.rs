@@ -79,7 +79,16 @@ pub(crate) struct ImportMap {
 
 impl ImportMap {
     pub(crate) fn player(url: &str) -> Self {
-        let json = serde_json::json!({ "imports": { "koan/player": url } }).to_string();
+        Self::of(&[("koan/player", url)])
+    }
+
+    /// A map of each specifier to its versioned URL.
+    pub(crate) fn of(entries: &[(&str, &str)]) -> Self {
+        let imports: serde_json::Map<String, serde_json::Value> = entries
+            .iter()
+            .map(|(name, url)| ((*name).to_owned(), (*url).into()))
+            .collect();
+        let json = serde_json::json!({ "imports": imports }).to_string();
         Self {
             csp: csp_hash(&json),
             json,

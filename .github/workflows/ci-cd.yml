@@ -358,19 +358,28 @@ jobs:
         run: git diff --exit-code crates/koan-server/assets
 
   # The web UI's scripts are TypeScript. Cargo strips their types as it
-  # builds koan-server; this typechecks them.
+  # builds koan-server; this typechecks them, and checks that the Zod bundle
+  # they import (assets/zod.js, committed) matches what `just zod` makes.
   js:
     name: Scripts
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.web == 'true'
     timeout-minutes: 10
+    # The npm packages install from GitHub Packages, beside the theme.
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
-          install_args: just github:microsoft/typescript-go
-      - run: just js
+          install_args: just github:microsoft/typescript-go aube node bun
+      - run: just js zod
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: The Zod bundle matches its source
+        run: git diff --exit-code crates/koan-server/assets/zod.js
 
   # Clippy and the tests on one runner, with one target directory and one
   # cache: they share build scripts and proc-macros, which separate jobs each

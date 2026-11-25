@@ -60,7 +60,7 @@ use crate::share::{asset, blocking, not_found};
 
 /// `'unsafe-eval'` because Datastar compiles its attribute expressions.
 /// Everything else is this server's own, and nothing is inline but the import
-/// map naming the player, allowed by its hash. `data:` images are the theme's
+/// map naming the player and Zod, allowed by its hash. `data:` images are the theme's
 /// checkbox tick and select chevron, which a stylesheet can only give as data
 /// URLs.
 static PAGE_CSP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
@@ -82,6 +82,9 @@ const PARTIAL: &str = "x-koan-partial";
 const UI_CSS: &str = include_str!("../../assets/ui.css");
 const UI_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/ui.js"));
 const PASSKEY_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/passkey.js"));
+/// Zod, which the scripts parse JSON with, bundled into one module by
+/// `just zod` (vendor/zod.ts) and committed, so `cargo build` needs no Node.
+const ZOD_JS: &str = include_str!("../../assets/zod.js");
 const NO_COVER_SVG: &str = include_str!("../../assets/no-cover.svg");
 
 /// The page's stylesheet and scripts, each URL carrying a hash of its asset.
@@ -98,12 +101,13 @@ pub(super) struct AssetUrls {
 pub(super) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::new(|| {
     use crate::share::versioned;
     let player_js = versioned("./ui/assets/player.js", crate::share::ENGINE_JS);
+    let zod_js = versioned("./ui/assets/zod.js", ZOD_JS);
     AssetUrls {
         css: versioned("./ui/assets/ui.css", UI_CSS),
         css_hash: crate::share::content_hash(UI_CSS),
         ui_js: versioned("./ui/assets/ui.js", UI_JS),
         passkey_js: versioned("./ui/assets/passkey.js", PASSKEY_JS),
-        imports: crate::share::ImportMap::player(&player_js),
+        imports: crate::share::ImportMap::of(&[("koan/player", &player_js), ("zod/mini", &zod_js)]),
         player_js,
         datastar_js: askama_datastar::script::url("./ui/assets/datastar.js"),
     }
@@ -403,6 +407,7 @@ async fn ui_asset(Path(name): Path<String>, query: RawQuery) -> Response {
         "ui.css" => asset(UI_CSS, "text/css; charset=utf-8", query),
         "ui.js" => asset(UI_JS, JS, query),
         "passkey.js" => asset(PASSKEY_JS, JS, query),
+        "zod.js" => asset(ZOD_JS, JS, query),
         "player.js" => asset(crate::share::ENGINE_JS, JS, query),
         "datastar.js" => askama_datastar::script::serve(query).await,
         other => crate::share::binary_asset(other).unwrap_or_else(not_found),

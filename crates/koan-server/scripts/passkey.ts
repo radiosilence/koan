@@ -5,6 +5,8 @@
 // the same way. Listeners sit on the document, so forms patched in later work
 // too.
 
+import * as z from "zod/mini";
+
 const fromB64 = (text: string) => {
   const b64 = text.replace(/-/g, "+").replace(/_/g, "/");
   return Uint8Array.from(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)), (c) => c.charCodeAt(0));
@@ -16,26 +18,36 @@ const toB64 = (buf: ArrayBuffer) =>
     .replace(/=+$/, "");
 
 // The options as the server writes them: `creation_options`,
-// `request_options` and `passkey_options` in koan_auth::webauthn.
-type Descriptor = { type: "public-key"; id: string };
-type RequestJson = {
-  rpId: string;
-  challenge: string;
-  timeout: number;
-  allowCredentials: Descriptor[];
-  userVerification: UserVerificationRequirement;
-};
-type CreationJson = {
-  rp: PublicKeyCredentialRpEntity;
-  user: { id: string; name: string; displayName: string };
-  challenge: string;
-  pubKeyCredParams: PublicKeyCredentialParameters[];
-  timeout: number;
-  excludeCredentials: Descriptor[];
-  authenticatorSelection: AuthenticatorSelectionCriteria;
-  attestation: AttestationConveyancePreference;
-};
-type Challenge<O> = { ticket: string; options: O };
+// `request_options` and `passkey_options` in koan_auth::webauthn. Parsed, not
+// trusted: what the browser is handed is what these say.
+const Descriptor = z.object({ type: z.literal("public-key"), id: z.string() });
+const UserVerification = z.enum(["required", "preferred", "discouraged"]);
+const RequestJson = z.object({
+  rpId: z.string(),
+  challenge: z.string(),
+  timeout: z.number(),
+  allowCredentials: z.array(Descriptor),
+  userVerification: UserVerification,
+});
+const CreationJson = z.object({
+  rp: z.object({ id: z.string(), name: z.string() }),
+  user: z.object({ id: z.string(), name: z.string(), displayName: z.string() }),
+  challenge: z.string(),
+  pubKeyCredParams: z.array(z.object({ type: z.literal("public-key"), alg: z.number() })),
+  timeout: z.number(),
+  excludeCredentials: z.array(Descriptor),
+  authenticatorSelection: z.object({
+    residentKey: z.enum(["required", "preferred", "discouraged"]),
+    userVerification: UserVerification,
+  }),
+  attestation: z.enum(["none", "indirect", "direct", "enterprise"]),
+});
+const RequestChallenge = z.object({ ticket: z.string(), options: RequestJson });
+const CreationChallenge = z.object({ ticket: z.string(), options: CreationJson });
+const Refusal = z.object({ message: z.string() });
+type Descriptor = z.infer<typeof Descriptor>;
+type RequestJson = z.infer<typeof RequestJson>;
+type CreationJson = z.infer<typeof CreationJson>;
 
 const descriptors = (list: Descriptor[]) =>
   list.map((d): PublicKeyCredentialDescriptor => ({ type: d.type, id: fromB64(d.id) }));
@@ -95,15 +107,10 @@ async function send(url: string, body: unknown) {
     body: JSON.stringify(body),
   });
   if (res.ok) return res;
-  const said: unknown = res.headers.get("content-type")?.startsWith("application/json")
-    ? (await res.json()).message
+  const said = res.headers.get("content-type")?.startsWith("application/json")
+    ? Refusal.safeParse(await res.json()).data?.message
     : await res.text();
-  throw new Error(typeof said === "string" && said ? said : "That did not work.");
-}
-
-// The server's JSON, taken as the type its route writes.
-async function postJson<T>(url: string, body: unknown): Promise<T> {
-  return (await send(url, body)).json();
+  throw new Error(said || "That did not work.");
 }
 
 // The prompt the page opened on its own, put away when a button asks
@@ -118,11 +125,11 @@ async function signIn(form: HTMLFormElement, conditional = false) {
   const asks = form.dataset["challenge"];
   let options: RequestJson;
   if (asks) {
-    const asked = await postJson<Challenge<RequestJson>>(asks, {});
+    const asked = RequestChallenge.parse(await (await send(asks, {})).json());
     input(form, "ticket").value = asked.ticket;
     options = asked.options;
   } else {
-    options = JSON.parse(form.dataset["options"] ?? "{}");
+    options = RequestJson.parse(JSON.parse(form.dataset["options"] ?? "{}"));
   }
   offered?.abort();
   offered = conditional ? new AbortController() : null;
@@ -162,7 +169,7 @@ async function register(form: HTMLFormElement) {
   const begin = form.dataset["begin"];
   if (!begin) throw new Error("The form names nowhere to begin.");
   const name = input(form, "securitykey").value.trim();
-  const { ticket, options } = await postJson<Challenge<CreationJson>>(begin, { name });
+  const { ticket, options } = CreationChallenge.parse(await (await send(begin, { name })).json());
   const credential = await navigator.credentials.create({ publicKey: creationOptions(options) });
   if (!(credential instanceof PublicKeyCredential)) throw new Error("No key answered.");
   const response = credential.response;
