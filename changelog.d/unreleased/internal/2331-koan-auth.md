@@ -1,0 +1,1 @@
+- **Accounts and signing in are a crate of their own.** `koan-auth`, licensed MIT, holds the account rules, sessions, keys, tokens, sign-in limits, the OAuth server's protocol and the pairing registry, so other services can use them; kōan works as before.
