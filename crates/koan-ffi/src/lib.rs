@@ -3405,10 +3405,10 @@ mod types {
     #[uniffi::remote(Enum)]
     pub enum ReleaseSection {
         Albums,
-        EpsAndSingles,
-        Live,
+        SinglesAndEps,
+        Mixes,
+        SpokenWord,
         Compilations,
-        Other,
     }
 
     /// Of a record's tracks, how many can play here.

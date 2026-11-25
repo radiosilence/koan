@@ -1266,11 +1266,14 @@ mod tests {
         let albums = [
             album(1, ReleaseSection::Albums),
             album(2, ReleaseSection::Albums),
-            album(3, ReleaseSection::Live),
+            album(3, ReleaseSection::Compilations),
         ];
         assert_eq!(
             sections(&albums),
-            vec![(ReleaseSection::Albums, 0, 2), (ReleaseSection::Live, 2, 1)]
+            vec![
+                (ReleaseSection::Albums, 0, 2),
+                (ReleaseSection::Compilations, 2, 1)
+            ]
         );
         assert!(sections(&[]).is_empty());
     }
@@ -1286,7 +1289,7 @@ mod tests {
                         if i < 4 {
                             ReleaseSection::Albums
                         } else {
-                            ReleaseSection::Live
+                            ReleaseSection::Compilations
                         },
                     )
                 })

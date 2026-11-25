@@ -193,20 +193,20 @@ pub struct Album {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReleaseSection {
     Albums,
-    EpsAndSingles,
-    Live,
+    SinglesAndEps,
+    Mixes,
+    SpokenWord,
     Compilations,
-    Other,
 }
 
 impl From<helpers::ReleaseSection> for ReleaseSection {
     fn from(s: helpers::ReleaseSection) -> Self {
         match s {
             helpers::ReleaseSection::Albums => Self::Albums,
-            helpers::ReleaseSection::EpsAndSingles => Self::EpsAndSingles,
-            helpers::ReleaseSection::Live => Self::Live,
+            helpers::ReleaseSection::SinglesAndEps => Self::SinglesAndEps,
+            helpers::ReleaseSection::Mixes => Self::Mixes,
+            helpers::ReleaseSection::SpokenWord => Self::SpokenWord,
             helpers::ReleaseSection::Compilations => Self::Compilations,
-            helpers::ReleaseSection::Other => Self::Other,
         }
     }
 }
@@ -215,10 +215,10 @@ impl From<ReleaseSection> for helpers::ReleaseSection {
     fn from(s: ReleaseSection) -> Self {
         match s {
             ReleaseSection::Albums => Self::Albums,
-            ReleaseSection::EpsAndSingles => Self::EpsAndSingles,
-            ReleaseSection::Live => Self::Live,
+            ReleaseSection::SinglesAndEps => Self::SinglesAndEps,
+            ReleaseSection::Mixes => Self::Mixes,
+            ReleaseSection::SpokenWord => Self::SpokenWord,
             ReleaseSection::Compilations => Self::Compilations,
-            ReleaseSection::Other => Self::Other,
         }
     }
 }
