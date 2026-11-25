@@ -180,20 +180,23 @@ pub(super) fn login(s: &UiState, next: &str, error: Option<&str>) -> Html {
     .html()
 }
 
-/// The setup page: the first admin's name and password, chosen here.
+/// The setup page: the setup code from the server's log, and the first
+/// admin's name and password, chosen here.
 #[derive(Template)]
 #[template(path = "pages/setup.html")]
 struct Setup<'a> {
     base: String,
     title: &'a str,
+    code: &'a str,
     username: &'a str,
     error: Option<&'a str>,
 }
 
-pub(super) fn setup(s: &UiState, username: &str, error: Option<&str>) -> Html {
+pub(super) fn setup(s: &UiState, username: &str, code: &str, error: Option<&str>) -> Html {
     Setup {
         base: s.base(),
         title: "Set up",
+        code,
         username,
         error,
     }

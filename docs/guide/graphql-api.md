@@ -1,6 +1,6 @@
 # GraphQL API
 
-The GraphQL API runs standalone in headless mode, or alongside the TUI when asked for with `--api` or `[graphql] enabled = true` (port 4000, localhost only). The TUI does not serve it unasked, because a server with no accounts makes whoever opens `/setup` first its admin.
+The GraphQL API runs standalone in headless mode, or alongside the TUI when asked for with `--api` or `[graphql] enabled = true` (port 4000, localhost only). The TUI does not serve it unasked, so a terminal session opens no port nobody asked for.
 
 ## Quick start
 

@@ -101,7 +101,7 @@ fn setup_full(
             pool,
             state.clone(),
             auth_enabled,
-            true,
+            auth_enabled.then(super::SetupGate::default),
             Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             server_url.map(str::to_owned),
             Vec::new(),
@@ -2784,8 +2784,9 @@ async fn a_username_reaches_the_delete_confirmation_as_data() {
     assert!(!expression.contains("alert"), "{expression}");
 }
 
-/// The UI over a server with no accounts, its setup page on or off.
-fn unset(setup_wizard: bool) -> (tempfile::TempDir, axum::Router) {
+/// The UI over a server with no accounts, its setup page on or off, and the
+/// setup code the server logged when on.
+fn unset(setup_wizard: bool) -> (tempfile::TempDir, axum::Router, Option<String>) {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("koan.db");
     Database::open(&db_path).unwrap();
@@ -2801,34 +2802,41 @@ fn unset(setup_wizard: bool) -> (tempfile::TempDir, axum::Router) {
         login_limiter: Arc::new(RateLimiter::default()),
         users: Arc::new(crate::auth::password::PasswordVerifier::new(pool.clone())),
     };
+    let setup = setup_wizard.then(super::SetupGate::default);
+    let code = setup
+        .as_ref()
+        .and_then(super::SetupGate::code)
+        .map(|c| c.as_str().to_owned());
     let app = super::router(
         pool,
         state,
         true,
-        setup_wizard,
+        setup,
         Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
         None,
         Vec::new(),
         None,
         Default::default(),
     );
-    (dir, app)
+    (dir, app, code)
 }
 
 #[tokio::test]
 async fn an_empty_server_sends_sign_in_to_setup_which_makes_the_admin_once() {
-    let (_dir, app) = unset(true);
+    let (_dir, app, code) = unset(true);
+    let code = code.unwrap();
     let r = send(&app, get("/login").body(Body::empty()).unwrap()).await;
     assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/setup"));
     let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(r.body.contains("action=\"setup\""));
+    assert!(r.body.contains("name=\"code\""));
 
     let mismatch = send(
         &app,
         form(
             "/setup",
-            "username=ada&password=longenough&confirm=different",
+            &format!("code={code}&username=ada&password=longenough&confirm=different"),
         ),
     )
     .await;
@@ -2836,7 +2844,10 @@ async fn an_empty_server_sends_sign_in_to_setup_which_makes_the_admin_once() {
     assert!(mismatch.body.contains("do not match"));
     let short = send(
         &app,
-        form("/setup", "username=ada&password=short&confirm=short"),
+        form(
+            "/setup",
+            &format!("code={code}&username=ada&password=short&confirm=short"),
+        ),
     )
     .await;
     assert_eq!(short.status, StatusCode::BAD_REQUEST);
@@ -2846,17 +2857,34 @@ async fn an_empty_server_sends_sign_in_to_setup_which_makes_the_admin_once() {
         .header(header::HOST, HOST)
         .header(header::ORIGIN, "https://evil.test")
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .body(Body::from(
-            "username=eve&password=longenough&confirm=longenough",
-        ))
+        .body(Body::from(format!(
+            "code={code}&username=eve&password=longenough&confirm=longenough"
+        )))
         .unwrap();
     assert_eq!(send(&app, cross).await.status, StatusCode::FORBIDDEN);
 
+    // Reaching the page first is not enough: without the code from the log,
+    // nobody is made admin.
+    for guess in [
+        "username=eve&password=longenough&confirm=longenough",
+        "code=&username=eve&password=longenough&confirm=longenough",
+        "code=aaaa-bbbb-cccc-dddd&username=eve&password=longenough&confirm=longenough",
+    ] {
+        let r = send(&app, form("/setup", guess)).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{guess}");
+        assert!(r.body.contains("not the setup code"), "{guess}");
+        assert!(r.cookies().is_empty(), "{guess}");
+    }
+    let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+
+    // However it is typed back.
+    let typed = code.to_uppercase().replace('-', "+");
     let made = send(
         &app,
         form(
             "/setup",
-            "username=ada&password=longenough&confirm=longenough",
+            &format!("code={typed}&username=ada&password=longenough&confirm=longenough"),
         ),
     )
     .await;
@@ -2879,7 +2907,7 @@ async fn an_empty_server_sends_sign_in_to_setup_which_makes_the_admin_once() {
         &app,
         form(
             "/setup",
-            "username=eve&password=longenough&confirm=longenough",
+            &format!("code={code}&username=eve&password=longenough&confirm=longenough"),
         ),
     )
     .await;
@@ -2894,7 +2922,8 @@ async fn an_empty_server_sends_sign_in_to_setup_which_makes_the_admin_once() {
 
 #[tokio::test]
 async fn setup_turned_off_leaves_an_empty_server_to_the_cli() {
-    let (_dir, app) = unset(false);
+    let (_dir, app, code) = unset(false);
+    assert_eq!(code, None);
     let r = send(&app, get("/login").body(Body::empty()).unwrap()).await;
     assert_eq!(r.status, StatusCode::OK);
     let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;

@@ -20,7 +20,7 @@ koan --api                              # TUI + GraphQL/Subsonic API on 127.0.0.
 
 ### Server flags
 
-These are root-level flags (not under `play`). The TUI serves the API only when asked: `--api`, any of `--port`, `--bind`, `--subsonic` or `--playground`, or `[graphql] enabled = true`. A server with no accounts lets whoever opens `/setup` first become its admin, so one started without being asked for would hand that to any local process. `--no-api` overrides the config.
+These are root-level flags (not under `play`). The TUI serves the API only when asked: `--api`, any of `--port`, `--bind`, `--subsonic` or `--playground`, or `[graphql] enabled = true`. A terminal session opens no port nobody asked for. `--no-api` overrides the config.
 
 ```bash
 koan --headless                   # serve on 127.0.0.1:4000, no TUI (needs server.url)

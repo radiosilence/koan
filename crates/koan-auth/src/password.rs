@@ -90,10 +90,11 @@ pub enum Refused {
     Busy,
 }
 
-/// A check in progress: its outcome once known, and a signal for those waiting.
+/// A check in progress: its outcome once known (`Busy` for one that never
+/// finished), and a signal for those waiting.
 #[derive(Default)]
 struct Check {
-    outcome: Mutex<Option<bool>>,
+    outcome: Mutex<Option<Result<bool, Refused>>>,
     done: Condvar,
 }
 
@@ -230,16 +231,38 @@ impl Verifier {
             let deadline = Instant::now() + WAIT_FOR_CHECK;
             let mut outcome = check.outcome.lock();
             while outcome.is_none() && !check.done.wait_until(&mut outcome, deadline).timed_out() {}
-            return outcome.ok_or(Refused::Busy);
+            return outcome.unwrap_or(Err(Refused::Busy));
         }
+        let _slot = Slot {
+            checking: &self.checking,
+            key,
+            check: check.clone(),
+        };
         let ok = verify_password(password, hash).is_ok();
         if ok {
             self.verified.lock().put(key, Instant::now());
         }
-        *check.outcome.lock() = Some(ok);
-        check.done.notify_all();
-        self.checking.lock().remove(&key);
+        *check.outcome.lock() = Some(Ok(ok));
         Ok(ok)
+    }
+}
+
+/// A running check's place among those allowed at once, given back however
+/// the check ends. A check that panicked and kept its place would hold it for
+/// good, and enough of them would refuse every password as busy.
+struct Slot<'a> {
+    checking: &'a Mutex<HashMap<[u8; 32], Arc<Check>>>,
+    key: [u8; 32],
+    check: Arc<Check>,
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.checking.lock().remove(&self.key);
+        // Those waiting on a check that never finished are told it was busy,
+        // rather than left to wait out their deadline.
+        self.check.outcome.lock().get_or_insert(Err(Refused::Busy));
+        self.check.done.notify_all();
     }
 }
 

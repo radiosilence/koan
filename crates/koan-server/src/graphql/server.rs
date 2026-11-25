@@ -462,6 +462,7 @@ impl ApiServer {
             Some(covers.clone()),
         );
 
+        let setup = (setup_wizard && auth_enabled).then(crate::ui::SetupGate::default);
         if auth_enabled {
             log::info!(
                 "Auth enabled (Ed25519 JWT, access TTL {}s, refresh TTL {}s)",
@@ -473,11 +474,9 @@ impl ApiServer {
                 .ok()
                 .and_then(|db| koan_core::db::queries::auth::has_users(&db.conn).ok())
                 == Some(false);
-            if no_accounts && setup_wizard {
-                log::warn!(
-                    "No accounts yet: whoever opens /setup first becomes the admin. \
-                     Set graphql.setup_wizard = false to make it with `koan auth setup` instead."
-                );
+            // Made now, so the code is in the log before anyone opens /setup.
+            if no_accounts && let Some(gate) = &setup {
+                gate.code();
             }
         } else {
             log::info!("Auth disabled — all requests treated as admin");
@@ -555,7 +554,7 @@ impl ApiServer {
                         pool.clone(),
                         auth_route_state.clone(),
                         auth_enabled,
-                        setup_wizard,
+                        setup,
                         covers.clone(),
                         cfg.server_url(),
                         cfg.mcp.redirect_hosts.clone(),

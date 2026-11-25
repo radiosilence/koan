@@ -6,6 +6,7 @@
 
 use rusqlite::Connection;
 
+use crate::changes::account_changed;
 use crate::users::{self, UserRow};
 use crate::{ANONYMOUS, Role};
 
@@ -139,25 +140,40 @@ pub fn set_password(
 }
 
 /// Change an account's role, refusing to demote the last admin.
+///
+/// The admins are counted and the role written in one transaction, so two
+/// admins demoting or deleting each other at once cannot both pass the count
+/// and leave the server with none.
 pub fn set_role(conn: &Connection, username: &str, role: Role) -> Result<(), AccountError> {
-    let user = account(conn, username)?;
-    if user.role == Role::Admin
-        && role != Role::Admin
-        && users::admin_count(conn).map_err(other)? <= 1
-    {
-        return Err(AccountError::LastAdmin);
-    }
-    users::update_role(conn, username, role).map_err(other)?;
+    let id = crate::sql::atomically(conn, || {
+        let user = account(conn, username)?;
+        if user.role == Role::Admin
+            && role != Role::Admin
+            && users::admin_count(conn).map_err(other)? <= 1
+        {
+            return Err(AccountError::LastAdmin);
+        }
+        users::update_role(conn, username, role).map_err(other)?;
+        Ok(user.id)
+    })?;
+    // Again now it has committed: see `crate::changes`.
+    account_changed(id);
     Ok(())
 }
 
-/// Delete an account, refusing to delete the last admin.
+/// Delete an account, refusing to delete the last admin. Counted and deleted
+/// in one transaction, as [`set_role`] is.
 pub fn delete_account(conn: &Connection, username: &str) -> Result<(), AccountError> {
-    let user = account(conn, username)?;
-    if user.role == Role::Admin && users::admin_count(conn).map_err(other)? <= 1 {
-        return Err(AccountError::LastAdmin);
-    }
-    users::delete_user(conn, user.id).map_err(other)?;
+    let id = crate::sql::atomically(conn, || {
+        let user = account(conn, username)?;
+        if user.role == Role::Admin && users::admin_count(conn).map_err(other)? <= 1 {
+            return Err(AccountError::LastAdmin);
+        }
+        users::delete_user(conn, user.id).map_err(other)?;
+        Ok(user.id)
+    })?;
+    // Again now it has committed: see `crate::changes`.
+    account_changed(id);
     Ok(())
 }
 
@@ -236,6 +252,47 @@ mod tests {
         create_account(&conn, "second", Role::Admin).unwrap();
         set_role(&conn, "owner", Role::User).unwrap();
         delete_account(&conn, "owner").unwrap();
+    }
+
+    #[test]
+    fn two_admins_removing_each_other_at_once_leave_one() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("test.db");
+        let conn = crate::schema::test_file_db(&path);
+        create_account(&conn, "ann", Role::Admin).unwrap();
+        create_account(&conn, "bob", Role::Admin).unwrap();
+        let start = std::sync::Barrier::new(2);
+        let removed = std::thread::scope(|scope| {
+            let racers: Vec<_> = ["ann", "bob"]
+                .into_iter()
+                .map(|who| {
+                    let (path, start) = (&path, &start);
+                    scope.spawn(move || {
+                        let racer = Connection::open(path).unwrap();
+                        racer
+                            .busy_timeout(std::time::Duration::from_secs(10))
+                            .unwrap();
+                        start.wait();
+                        if who == "ann" {
+                            delete_account(&racer, who)
+                        } else {
+                            set_role(&racer, who, Role::User)
+                        }
+                    })
+                })
+                .collect();
+            racers
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .filter(|r| match r {
+                    Ok(()) => true,
+                    Err(AccountError::LastAdmin) => false,
+                    Err(e) => panic!("{e}"),
+                })
+                .count()
+        });
+        assert_eq!(removed, 1);
+        assert_eq!(users::admin_count(&conn).unwrap(), 1);
     }
 
     #[test]

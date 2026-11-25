@@ -34,6 +34,7 @@ use askama_datastar::events;
 
 pub use oauth::RESOURCE_METADATA;
 pub use session::ProxyAuth;
+pub use setup::SetupGate;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -113,8 +114,9 @@ pub struct UiState {
     options: Arc<std::sync::Mutex<Option<(u64, pages::Options)>>>,
     auth: AuthRouteState,
     auth_enabled: bool,
-    /// `graphql.setup_wizard`: whether `/setup` may make the first admin.
-    setup_wizard: bool,
+    /// What `/setup` asks for, when `graphql.setup_wizard` lets it make the
+    /// first admin.
+    setup: Option<SetupGate>,
     /// `server.url`, the address invites point clients at.
     server_url: Option<String>,
     /// OAuth codes awaiting their token request.
@@ -139,7 +141,7 @@ pub(crate) fn router(
     pool: Arc<Pool>,
     auth: AuthRouteState,
     auth_enabled: bool,
-    setup_wizard: bool,
+    setup: Option<SetupGate>,
     covers: Arc<Covers>,
     server_url: Option<String>,
     redirect_hosts: Vec<String>,
@@ -152,7 +154,7 @@ pub(crate) fn router(
         options: Arc::default(),
         auth,
         auth_enabled,
-        setup_wizard,
+        setup,
         server_url,
         codes: oauth::Codes::default(),
         redirect_hosts: Arc::new(redirect_hosts),
