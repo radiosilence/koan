@@ -1,0 +1,1 @@
+- **The authentication guide covers the setup page and a locked-out admin.** It names `/setup` and the code in the server's log, and how to reset an admin's password from a shell under Docker, Compose or Kubernetes.
