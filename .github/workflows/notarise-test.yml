@@ -13,6 +13,9 @@ jobs:
   notarise:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -27,7 +30,10 @@ jobs:
           set -euo pipefail
           mkdir released
           gh release download v0.76.1 --repo "$GITHUB_REPOSITORY" --dir released \
-            --pattern Koan.dmg --pattern koan-macos-arm64.tar.gz
+            --pattern koan-macos-arm64.tar.gz
+          # The signed DMG before stapling, as gui-release left it for v0.76.1.
+          gh run download 45679730412 --repo "$GITHUB_REPOSITORY" --name gui-koan-macos-arm64 --dir released
+          mv released/koan-gui-macos-arm64.dmg released/Koan.dmg
           ls -l released
       - name: notary-list format
         run: |
@@ -39,7 +45,9 @@ jobs:
           head -3 <<<"$list"
           rm -f "$key"
       - name: DMG signature before
-        run: rcodesign print-signature-info released/Koan.dmg | grep -n -i -E 'slot|ticket'
+        run: |
+          info=$(rcodesign print-signature-info released/Koan.dmg)
+          grep -n -i -E 'slot|ticket' <<<"$info"
       - name: Notarise and staple the DMG
         run: |
           set -euo pipefail
@@ -55,6 +63,12 @@ jobs:
             exit 1
           fi
           echo "DMG=$dmg" >> "$GITHUB_ENV"
+          mkdir stapled
+          cp "$dmg" stapled/Koan.dmg
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stapled-test
+          path: stapled/Koan.dmg
       - name: Pick up the accepted submission
         run: scripts/notarise.sh "$DMG" 600
       - name: Notarise the binary
