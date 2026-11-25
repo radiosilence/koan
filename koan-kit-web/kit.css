@@ -563,6 +563,12 @@
     @apply m-0;
   }
 
+  /* Confirm's question keeps its case: it so often names a record or a person that the app writes its own words in it
+   * lowercase in the source, as it does a label's. */
+  #kit-confirm-question {
+    @apply normal-case;
+  }
+
   dialog.sheet > section {
     @apply px-5 pb-4 text-control;
   }

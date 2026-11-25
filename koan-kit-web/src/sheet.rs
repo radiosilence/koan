@@ -90,8 +90,8 @@ component!(Sheet);
 /// every [`Button::confirm`](crate::Button::confirm) and [`Button::preview`](crate::Button::preview) on it asks here.
 ///
 /// Opening it empties whatever it last held and disables its yes until this button's question is in place: at once
-/// for a question, and for a preview once [`Confirm::preview`] has answered for this opening, since each opening
-/// cancels the last one's preview request. Its yes is busy while the request runs, and the sheet stays open until the
+/// for a question, and for a preview once [`Confirm::preview`] has answered for this opening, since every opening,
+/// a question's too, aborts the last one's preview request. Its yes is busy while the request runs, and the sheet stays open until the
 /// action's handler closes it with [`Confirm::close`], so a failure is seen where it happened.
 #[must_use = "a sheet draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
@@ -171,8 +171,8 @@ mod tests {
             "opening for a preview must clear readiness until the preview lands"
         );
         assert!(
-            sheet.contains("requestCancellation: 'cleanup'"),
-            "an opening must cancel the last one's preview, or a late answer could land under another question"
+            sheet.contains("el._kitpreview?.abort(), el.replaceChildren()"),
+            "every opening must abort the last one's preview, or a late answer could land under another question"
         );
         let [_, ready] = Confirm::preview(Html::trusted("<p>two files</p>"));
         assert!(

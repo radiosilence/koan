@@ -137,10 +137,10 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Button::bordered("remove album")
                     .bad()
                     .post("/stub/slow")
-                    .confirm("Remove this album from the library?", "remove")),
+                    .confirm("remove Held on the Tips of Fingers from the library?", "remove")),
                 entry!(kit::Button::primary("rename files")
                     .post("/stub/slow")
-                    .preview("/stub/preview", "Rename three files?", "rename")),
+                    .preview("/stub/preview", "rename three files?", "rename")),
             ],
         },
         Section {

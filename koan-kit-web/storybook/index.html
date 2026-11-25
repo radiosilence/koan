@@ -9,6 +9,7 @@
 <title>kōan web kit</title>
 <link rel="preload" href="geist-mono.woff2?v=4a0c51217eb6bd13" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="out.css">
+<link rel="icon" href="data:,">
 </head>
 <body class="mx-auto max-w-3xl px-5 py-8">
 <a class="skip" href="#main">skip to the kit</a>
@@ -122,14 +123,14 @@
 <p class="text-meta text-muted">A question, or the server&#39;s preview of a change, in the page&#39;s one Confirm. Yes waits for its own preview.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
   <figure class="m-0 grid gap-2">
-    <div><button type="button" class="bad" data-url="/stub/slow" data-ask="Remove this album from the library?" data-yes="remove" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.bad = el.classList.contains('bad'); $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">remove album</button></div>
-    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;remove album&#34;).bad().post(&#34;/stub/slow&#34;).confirm(&#34;Remove this album from the library?&#34;,
+    <div><button type="button" class="bad" data-url="/stub/slow" data-ask="remove Held on the Tips of Fingers from the library?" data-yes="remove" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.bad = el.classList.contains('bad'); $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">remove album</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;remove album&#34;).bad().post(&#34;/stub/slow&#34;).confirm(&#34;remove Held on the Tips of Fingers from the library?&#34;,
 &#34;remove&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" class="primary" data-url="/stub/slow" data-ask="Rename three files?" data-yes="rename" data-preview="/stub/preview" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.bad = el.classList.contains('bad'); $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">rename files</button></div>
+    <div><button type="button" class="primary" data-url="/stub/slow" data-ask="rename three files?" data-yes="rename" data-preview="/stub/preview" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.bad = el.classList.contains('bad'); $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">rename files</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;rename files&#34;).post(&#34;/stub/slow&#34;).preview(&#34;/stub/preview&#34;,
-&#34;Rename three files?&#34;, &#34;rename&#34;)</pre></figcaption>
+&#34;rename three files?&#34;, &#34;rename&#34;)</pre></figcaption>
   </figure>
 </div>
 <h2 id="sheets">sheets</h2>
@@ -340,7 +341,7 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::bad(&#34;The server refused the token: 401.&#34;).action(kit::Button::bordered(&#34;retry&#34;).post(&#34;/stub/slow&#34;))</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><div class="notice warn" role="status"><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 3.5L21 19.5L3 19.5ZM12 9L12 14M11.75 16.75L12.25 16.75"/></svg> Unreachable since 14:02.</div></div>
+    <div><div class="notice warn" role="status"><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 3.5L21 19.5L3 19.5ZM12 9L12 14M11.75 16.75L12.25 16.75"/></svg>Unreachable since 14:02.</div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::warn(&#34;Unreachable since 14:02.&#34;).icon(kit::icon::WARNING)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
@@ -380,7 +381,7 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
     <div><span class="combo">
   <input readonly value="https://mcp.example.com/mcp/github" aria-label="mcp url" data-on:focus="el.select()">
   <button type="button" data-copied="copied" data-label="copy"
-    data-on:click="navigator.clipboard.writeText(el.previousElementSibling.value).then(() => el.dataset.copied &amp;&amp; (el.textContent = el.dataset.copied, setTimeout(() => el.textContent = el.dataset.label, 2000)))">copy</button>
+    data-on:click="navigator.clipboard.writeText(el.previousElementSibling.value).then(() => el.dataset.copied &amp;&amp; (el.textContent = el.dataset.copied, setTimeout(() => el.textContent = el.dataset.label, 2000))).catch(() => el.previousElementSibling.select())">copy</button>
 </span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::CopyField::new(&#34;mcp url&#34;, &#34;https://mcp.example.com/mcp/github&#34;,
 &#34;copy&#34;).copied(&#34;copied&#34;)</pre></figcaption>
@@ -524,8 +525,8 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
   <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; el.closest('dialog').close()">
     <h2 id="kit-confirm-question" data-text="$_kitconfirm.ask"></h2>
   </header>
-  <section id="kit-confirm-preview" data-attr:aria-busy="!$_kitconfirm.ready"
-    data-effect="$_kitconfirm.n &amp;&amp; (el.replaceChildren(), $_kitconfirm.preview &amp;&amp; @get($_kitconfirm.preview, {requestCancellation: 'cleanup'}))"></section>
+  <section id="kit-confirm-preview" data-attr:aria-busy="$_kitconfirm.ready ? 'false' : 'true'"
+    data-effect="$_kitconfirm.n &amp;&amp; (el._kitpreview?.abort(), el.replaceChildren(), $_kitconfirm.preview &amp;&amp; @get($_kitconfirm.preview, {requestCancellation: el._kitpreview = new AbortController()}))"></section>
   <footer class="actions">
     <button type="button" class="quiet" commandfor="kit-confirm" command="close" autofocus>cancel</button>
     <button type="button" data-class:primary="!$_kitconfirm.bad" data-class:bad="$_kitconfirm.bad" data-class:fill="$_kitconfirm.bad"

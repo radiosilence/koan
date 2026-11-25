@@ -21,7 +21,7 @@
 //!
 //! ```html
 //! {{ kit::Field::email("email", "email").required().hint("For sign-in only.").error(error) }}
-//! {{ kit::Button::quiet("remove").bad().post(url).confirm("Remove this album?", "remove") }}
+//! {{ kit::Button::quiet("remove").bad().post(url).confirm("remove this album?", "remove") }}
 //! ```
 //!
 //! Every prop takes what a view holds, by value or by reference: askama hands a template's variables over by

@@ -1,5 +1,5 @@
 {#- Prose with a rule on its leading edge in the tone; an action follows the words on the same line. -#}
 <div class="notice{% if let Some(tone) = tone %} {{ tone }}{% endif %}{{ attrs.classes() }}" role="{{ self.role() }}"{{ attrs }}>
-{%- if let Some(glyph) = icon %}{{ glyph.svg(15.6) }} {% endif %}{{ content }}
+{%- if let Some(glyph) = icon %}{{ glyph.svg(15.6) }}{% endif %}{{ content }}
 {%- if let Some(action) = action %} {{ action }}{% endif -%}
 </div>

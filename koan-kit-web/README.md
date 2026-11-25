@@ -89,7 +89,7 @@ A component is a value: built with its props, then rendered wherever askama rend
 ```html
 {{ kit::Field::email("email", "email").required().hint("For sign-in only.").error(error) }}
 {{ kit::Status::ok("connected") }}
-{{ kit::Button::quiet("remove").bad().post(url).confirm("Remove this album?", "remove") }}
+{{ kit::Button::quiet("remove").bad().post(url).confirm("remove this album?", "remove") }}
 {{ kit::icon::HEART.svg(15) }}
 ```
 
