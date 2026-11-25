@@ -18,7 +18,7 @@ run = [
   "../scripts/styles-deps.sh",
   "tailwindcss --input src/style.css --output public/style.css --minify",
   # src/og.html and src/hero.html are drawn into images, not served, so they are not checked.
-  "node ../node_modules/@radiosilence/theme/kit-check.mjs public src/docs.html",
+  "node ../node_modules/@radiosilence/koan-kit-web/kit-check.mjs public src/docs.html",
 ]
 
 # The web kit's storybook, from koan-kit-web/ as it is in this commit rather than as published, served at ui.koan.rocks (a
