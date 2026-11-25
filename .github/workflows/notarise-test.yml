@@ -1,0 +1,63 @@
+name: Notarise test (temporary)
+
+# Exercises scripts/notarise.sh and the notary action against Apple with a
+# released DMG and CLI tarball. Removed before the pull request merges.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/notarise-test.yml
+      - .github/actions/notary/**
+      - scripts/notarise.sh
+
+jobs:
+  notarise:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/notary
+        with:
+          api-key-p8: ${{ secrets.APPLE_API_KEY_P8 }}
+          api-key-id: ${{ secrets.APPLE_API_KEY_ID }}
+          api-issuer-id: ${{ secrets.APPLE_API_ISSUER_ID }}
+      - name: Released assets
+        run: |
+          set -euo pipefail
+          mkdir released
+          gh release download v0.76.1 --repo "$GITHUB_REPOSITORY" --dir released \
+            --pattern Koan.dmg --pattern koan-macos-arm64.tar.gz
+          ls -l released
+      - name: notary-list format
+        run: |
+          set -euo pipefail
+          key=$(mktemp)
+          rcodesign encode-app-store-connect-api-key --output-path "$key" \
+            "$APPLE_API_ISSUER_ID" "$APPLE_API_KEY_ID" "$APPLE_API_KEY_PATH"
+          rcodesign notary-list --api-key-file "$key" | head -3
+          rm -f "$key"
+      - name: DMG signature before
+        run: rcodesign print-signature-info released/Koan.dmg | grep -n -i -E 'slot|ticket'
+      - name: Notarise and staple the DMG
+        run: |
+          set -euo pipefail
+          hash=$(sha256sum released/Koan.dmg | cut -c1-12)
+          dmg="$RUNNER_TEMP/koan-gui-test-$hash.dmg"
+          cp released/Koan.dmg "$dmg"
+          scripts/notarise.sh "$dmg" 3600
+          rcodesign staple "$dmg"
+          rcodesign print-signature-info "$dmg" | grep -n -i -E 'slot|ticket'
+          echo "DMG=$dmg" >> "$GITHUB_ENV"
+      - name: Pick up the accepted submission
+        run: scripts/notarise.sh "$DMG" 600
+      - name: Notarise the binary
+        run: |
+          set -euo pipefail
+          mkdir payload
+          tar xzf released/koan-macos-arm64.tar.gz -C payload
+          hash=$(cat payload/* | sha256sum | cut -c1-12)
+          zip="$RUNNER_TEMP/koan-test-macos-$hash.zip"
+          zip -q -j -X "$zip" payload/*
+          unzip -l "$zip"
+          scripts/notarise.sh "$zip" 3600
