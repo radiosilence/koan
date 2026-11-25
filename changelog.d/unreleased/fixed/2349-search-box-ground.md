@@ -1,0 +1,1 @@
+- **The search box keeps its ground on macOS.** Its fill no longer goes missing over pages showing text or sleeves under a frosted bar, which left the page visible through the box.
