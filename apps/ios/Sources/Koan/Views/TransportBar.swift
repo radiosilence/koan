@@ -419,22 +419,20 @@ private struct FetchedMark: View {
     }
 }
 
-private struct FetchedMarkLayers: PlatformViewRepresentable {
+private struct FetchedMarkLayers: UIViewRepresentable {
     /// The track whose transfer to draw; `nil` for a track on disk.
     let transfer: Int64?
     let meter: TransferMeter
 
-    typealias PlatformViewType = FetchedMarkView
+    func makeUIView(context: Context) -> FetchedMarkView { FetchedMarkView() }
 
-    func makeView(context: Context) -> FetchedMarkView { FetchedMarkView() }
-
-    func updateView(_ view: FetchedMarkView, context: Context) {
+    func updateUIView(_ view: FetchedMarkView, context: Context) {
         view.meter = meter
         if transfer == nil { view.fraction = nil }
         meter.follow(view, transfer: transfer)
     }
 
-    static func dismantleView(_ view: FetchedMarkView, coordinator: ()) {
+    static func dismantleUIView(_ view: FetchedMarkView, coordinator: ()) {
         view.meter?.follow(view, transfer: nil)
     }
 }
@@ -467,7 +465,7 @@ final class FetchedMarkView: LayerView, TransferGauge {
         whole.opacity = 0.4
         for layer in [whole, arrived] {
             layer.actions = ["bounds": NSNull(), "position": NSNull(), "backgroundColor": NSNull()]
-            hostLayer.addSublayer(layer)
+            self.layer.addSublayer(layer)
         }
         appearanceChanged()
     }

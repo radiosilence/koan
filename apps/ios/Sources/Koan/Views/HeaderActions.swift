@@ -24,7 +24,6 @@ struct HeaderActions: View {
                     } label: {
                         KoanIcon(Icon.more)
                             .font(.role(.body, system: .body))
-                            .touchTarget()
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()

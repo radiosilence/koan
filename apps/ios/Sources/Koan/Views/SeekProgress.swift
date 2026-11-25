@@ -11,7 +11,7 @@ import SwiftUI
 ///
 /// Nothing here is a clock either. `remaining` is how much of the track is
 /// left, so the animation ends as the track does.
-struct SeekProgress: PlatformViewRepresentable {
+struct SeekProgress: UIViewRepresentable {
     /// Where the head is now, 0...1.
     let fraction: Double
     /// Seconds until the animation should reach the end. Zero for a bar that
@@ -27,16 +27,14 @@ struct SeekProgress: PlatformViewRepresentable {
     /// Gay mode: the played extent is the palette, in either look.
     @Environment(\.koanRainbow) private var rainbow
 
-    typealias PlatformViewType = ProgressView
-
-    func makeView(context: Context) -> ProgressView {
+    func makeUIView(context: Context) -> ProgressView {
         let view = ProgressView(thickness: thickness)
         view.showsHead = showsHead
         return view
     }
 
-    func updateView(_ view: ProgressView, context: Context) {
-        view.tint = KoanTheme.metric(PlatformColor(tint), system: nil)
+    func updateUIView(_ view: ProgressView, context: Context) {
+        view.tint = KoanTheme.metric(UIColor(tint), system: nil)
         view.rainbow = rainbow
         view.apply(fraction: fraction, remaining: remaining)
     }
@@ -52,7 +50,7 @@ struct SeekProgress: PlatformViewRepresentable {
         }
         private let thickness: CGFloat
         private var fraction = 0.0
-        var tint: PlatformColor? {
+        var tint: UIColor? {
             didSet { if tint != oldValue { paint() } }
         }
         var rainbow = false {
@@ -75,7 +73,7 @@ struct SeekProgress: PlatformViewRepresentable {
             head.cornerRadius = KoanTheme.radius(thickness)
             for sublayer in [played, head] {
                 sublayer.actions = ["bounds": NSNull(), "position": NSNull()]
-                hostLayer.addSublayer(sublayer)
+                layer.addSublayer(sublayer)
             }
             paint()
         }
@@ -101,7 +99,7 @@ struct SeekProgress: PlatformViewRepresentable {
 
         private func paint() {
             let colours = rainbow
-                ? KoanAccent.holo.stops.map { PlatformColor($0.color) }
+                ? KoanAccent.holo.stops.map { UIColor($0.color) }
                 : [tint ?? .label, tint ?? .label]
             played.colors = colours.map { resolved($0) }
             head.backgroundColor = resolved(.koanLabel)

@@ -13,7 +13,6 @@ struct ArtistBrowser: View {
         }
         // Once narrowed, how many: the count a shelf's heading gave. The Mac's
         // header says it already.
-        .pageSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleArtists.count), "artist") : "")
     }
 
     private var list: some View {
@@ -25,7 +24,7 @@ struct ArtistBrowser: View {
                 }
                 .onAppear { library.artistsShown.insert(artist.id) }
                 .onDisappear { library.artistsShown.remove(artist.id) }
-                .washedRow()
+                .listRowBackground(Color.clear)
         }
         // Rebuilt on each visit rather than kept mounted behind other pages
         // (see `StageView`). A `List` takes no scroll position, but it does go
@@ -51,15 +50,6 @@ struct ArtistBrowser: View {
         }
         .clearsSelection($selection)
         .washedGround()
-        .selectionMenu(for: Int64.self) { ids in
-            // A set has no first; with several picked, no one artist is meant.
-            if ids.count == 1, let id = ids.first,
-               let artist = library.visibleArtists.first(where: { $0.id == id }) {
-                PlayableMenu(playable: .artist(id: artist.id, name: artist.name))
-            }
-        } primaryAction: { ids in
-            if ids.count == 1, let id = ids.first { nav.open(artist: id) }
-        }
         .overlay {
             if library.visibleArtists.isEmpty {
                 EmptyState(icon: Icon.artist, title: library.isNarrowed ? "Nothing matches" : "No artists yet")
@@ -129,7 +119,6 @@ private struct ArtistRow: View {
             ArtistHeart(artistId: artist.id, showing: hovered, size: .caption)
                 .frame(width: 16)
         }
-        .pointerHover { hovered = $0 }
         .frame(minHeight: RowMetrics.line)
         .rowBehaviour(playable: playable)
     }
@@ -378,7 +367,6 @@ private struct ArtistBio: View {
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .lineSpacing(3)
                 .lineLimit(folded ? 4 : nil)
-                .selectableText()
                 .frame(maxWidth: 680, alignment: .leading)
             if folded {
                 Button("more") { withAnimation(.easeOut(duration: 0.2)) { expanded = true } }

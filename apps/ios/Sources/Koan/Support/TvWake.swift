@@ -142,7 +142,7 @@ private struct TvWakeSheet: View {
                     .koanButton(.prominent)
                     .disabled(code.filter(\.isNumber).count < 4)
             }
-            .rowButtons()
+            .buttonStyle(TelevisionButton())
         case .pairing:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)

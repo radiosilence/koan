@@ -23,10 +23,10 @@ struct DownloadsView: View {
                 List {
                     ForEach(mirror.transfers, id: \.trackId) { transfer in
                         DownloadRow(transfer: transfer)
-                            .washedRow()
+                            .listRowBackground(Color.clear)
                     }
                 }
-                .insetList()
+                .listStyle(.plain)
                 .washedGround()
             }
         }
@@ -108,7 +108,6 @@ private struct DownloadRow: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
-        .pointerHover { hovering = $0 }
         .contextMenu { DownloadMenu(transfer: transfer) }
     }
 
@@ -163,7 +162,7 @@ private struct DownloadRow: View {
                 // No hover on a phone: a link that waits for one never shows.
                 if hovering || width == .compact {
                     Button("Show in Library") { showInLibrary() }
-                        .linkButton()
+                        .buttonStyle(.borderless)
                         .font(.role(.fine, system: .caption))
                         .lineLimit(1)
                         .fixedSize()
@@ -229,23 +228,21 @@ private struct DownloadRow: View {
 }
 
 /// A download's bar: the whole length quiet, what has arrived lit.
-private struct TransferBar: PlatformViewRepresentable {
+private struct TransferBar: UIViewRepresentable {
     /// The transfer to follow while it runs; `nil` holds `fraction`.
     let transfer: Int64?
     let fraction: Double
     let meter: TransferMeter
 
-    typealias PlatformViewType = TransferBarView
+    func makeUIView(context: Context) -> TransferBarView { TransferBarView() }
 
-    func makeView(context: Context) -> TransferBarView { TransferBarView() }
-
-    func updateView(_ view: TransferBarView, context: Context) {
+    func updateUIView(_ view: TransferBarView, context: Context) {
         view.meter = meter
         view.fraction = fraction
         meter.follow(view, transfer: transfer)
     }
 
-    static func dismantleView(_ view: TransferBarView, coordinator: ()) {
+    static func dismantleUIView(_ view: TransferBarView, coordinator: ()) {
         view.meter?.follow(view, transfer: nil)
     }
 }
@@ -266,7 +263,7 @@ final class TransferBarView: LayerView, TransferGauge {
         super.init(frame: frame)
         for layer in [track, filled] {
             layer.actions = ["bounds": NSNull(), "position": NSNull(), "backgroundColor": NSNull()]
-            hostLayer.addSublayer(layer)
+            self.layer.addSublayer(layer)
         }
         appearanceChanged()
     }

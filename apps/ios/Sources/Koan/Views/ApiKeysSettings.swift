@@ -75,7 +75,7 @@ struct ApiKeysSettings: View {
                     .koanButton(.bordered)
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
-                .rowButtons()
+                .buttonStyle(TelevisionButton())
             } else if model?.error == nil {
                 ProgressView()
             }
@@ -159,7 +159,6 @@ struct NewSecretSheet: View {
             KoanForm {
                 Section {
                     LabeledContent(kind, value: secret)
-                        .selectableText()
                 } header: {
                     KoanSectionHeader("\(kind) for \(name)")
                 } footer: {

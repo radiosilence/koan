@@ -108,7 +108,6 @@ struct AlbumGridCell: View {
                 }
             }
         }
-        .pointerHover { hovering = $0 }
         .animation(.smooth(duration: 0.18), value: hovering)
         // While selecting, the whole tile is one target that ticks it — the art
         // does not play and the links do not go anywhere.

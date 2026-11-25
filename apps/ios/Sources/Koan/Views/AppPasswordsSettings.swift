@@ -80,7 +80,7 @@ struct AppPasswordsSettings: View {
                     .koanButton(.bordered)
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
-                .rowButtons()
+                .buttonStyle(TelevisionButton())
             } else if model?.error == nil {
                 ProgressView()
             }

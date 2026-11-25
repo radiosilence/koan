@@ -26,10 +26,10 @@ import SwiftUI
 /// and ten points of GPU, continuously, for the wash on its own. Baked, the
 /// drift reads as idle on both. So the filter is not free, and what it charges
 /// for is the animation rather than its own presence.
-struct DriftingWash: PlatformViewRepresentable {
+struct DriftingWash: UIViewRepresentable {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
-    let image: PlatformImage?
+    let image: UIImage?
     /// Whether nothing is an answer. A sleeve still being fetched is not a
     /// record without one, and clearing the wash for it wipes the room grey and
     /// then fades the new colour in over two seconds. While it is pending the
@@ -41,11 +41,9 @@ struct DriftingWash: PlatformViewRepresentable {
     /// `nil` draws the sleeve as it is.
     var tone: WashTone?
 
-    typealias PlatformViewType = WashView
+    func makeUIView(context: Context) -> WashView { WashView(frame: .zero) }
 
-    func makeView(context: Context) -> WashView { WashView(frame: .zero) }
-
-    func updateView(_ view: WashView, context: Context) {
+    func updateUIView(_ view: WashView, context: Context) {
         if !(pending && image == nil) { view.show(image, tone: tone) }
         view.drift(drifts)
     }
@@ -81,17 +79,17 @@ final class WashView: LayerView {
 
     let current = CALayer()
     let previous = CALayer()
-    private var shown: PlatformImage?
+    private var shown: UIImage?
     private var shownTone: WashTone?
     private var drifting = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        hostLayer.masksToBounds = true
+        layer.masksToBounds = true
         for texture in [previous, current] {
             texture.contentsGravity = .resizeAspectFill
             texture.masksToBounds = false
-            hostLayer.addSublayer(texture)
+            layer.addSublayer(texture)
         }
         previous.opacity = 0
     }
@@ -127,7 +125,7 @@ final class WashView: LayerView {
 
     /// Bake a new cover off the main thread, then dissolve to it — see
     /// `install(_:)`.
-    func show(_ image: PlatformImage?, tone: WashTone? = nil) {
+    func show(_ image: UIImage?, tone: WashTone? = nil) {
         guard image !== shown || tone != shownTone else { return }
         shown = image
         shownTone = tone
@@ -196,8 +194,8 @@ final class WashView: LayerView {
     ///
     /// 28 rather than less because a sleeve with hard, high-contrast shapes
     /// otherwise keeps them as visible edges across the window.
-    private nonisolated static func bake(_ image: PlatformImage) -> CGImage? {
-        guard let source = image.bitmap else { return nil }
+    private nonisolated static func bake(_ image: UIImage) -> CGImage? {
+        guard let source = image.cgImage else { return nil }
         let extent = CGRect(x: 0, y: 0, width: source.width, height: source.height)
         let radius = 28 * Double(source.width) / Double(side)
         let output = CIImage(cgImage: source)

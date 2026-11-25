@@ -26,7 +26,6 @@ struct FilterField: View {
 
     var body: some View {
         TextField(placeholder, text: $text)
-            .borderedField()
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
     }

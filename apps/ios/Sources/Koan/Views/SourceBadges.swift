@@ -51,20 +51,18 @@ struct SourceBadges: View {
 }
 
 /// The ring a transfer draws, fed by `TransferMeter` as layer geometry.
-private struct TransferRing: PlatformViewRepresentable {
+private struct TransferRing: UIViewRepresentable {
     let transfer: Int64
     let meter: TransferMeter
 
-    typealias PlatformViewType = TransferRingView
+    func makeUIView(context: Context) -> TransferRingView { TransferRingView() }
 
-    func makeView(context: Context) -> TransferRingView { TransferRingView() }
-
-    func updateView(_ view: TransferRingView, context: Context) {
+    func updateUIView(_ view: TransferRingView, context: Context) {
         view.meter = meter
         meter.follow(view, transfer: transfer)
     }
 
-    static func dismantleView(_ view: TransferRingView, coordinator: ()) {
+    static func dismantleUIView(_ view: TransferRingView, coordinator: ()) {
         view.meter?.follow(view, transfer: nil)
     }
 }
@@ -82,7 +80,7 @@ final class TransferRingView: LayerView, TransferGauge {
         ring.lineCap = .round
         ring.strokeEnd = 0.7
         ring.actions = ["strokeEnd": NSNull(), "path": NSNull(), "bounds": NSNull(), "position": NSNull()]
-        hostLayer.addSublayer(ring)
+        layer.addSublayer(ring)
         appearanceChanged()
         spin()
         say("Downloading")

@@ -203,8 +203,8 @@ struct RecordRoom: ViewModifier {
                     withAnimation(KoanTheme.Motion.settle) { rainbowStep += 1 }
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in active = false }
-            .onReceive(NotificationCenter.default.publisher(for: .appBecomesActive)) { _ in active = true }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in active = false }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in active = true }
             .background { RainbowForTrack() }
             .overlay { MirrorBall(active: inFront).ignoresSafeArea() }
             .overlay { RainbowBurst().ignoresSafeArea() }

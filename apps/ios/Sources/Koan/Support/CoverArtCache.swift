@@ -41,8 +41,8 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// target.
     private static let memoryBudget = 256 * 1024 * 1024
 
-    private let memory: NSCache<NSString, PlatformImage> = {
-        let cache = NSCache<NSString, PlatformImage>()
+    private let memory: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
         cache.totalCostLimit = CoverArtCache.memoryBudget
         return cache
     }()
@@ -61,7 +61,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// One byte fetch per record, shared by every size that wants it.
     private let loads = Flights<Fetched>()
     /// One decode per record and size, shared by everyone on screen asking.
-    private let decodes = Flights<PlatformImage?>()
+    private let decodes = Flights<UIImage?>()
 
     /// Everyone waiting on a record, at any size, and how much it matters to
     /// each. The image lane reads the most urgent of them each time it picks,
@@ -121,7 +121,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// Views call this first so a cover that has been seen appears in the same
     /// frame rather than after an await, and a scrolled-back grid does not
     /// flash grey.
-    func cached(_ source: AlbumArtwork.Source, size: AlbumArtwork.Size) -> PlatformImage? {
+    func cached(_ source: AlbumArtwork.Source, size: AlbumArtwork.Size) -> UIImage? {
         guard !locked({ absent.contains(Self.key(source)) }) else { return nil }
         return memory.object(forKey: Self.key(source, size) as NSString)
     }
@@ -161,7 +161,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         size: AlbumArtwork.Size,
         priority: ImageWork.Priority = .visible,
         aimed: Bool = false
-    ) async -> PlatformImage? {
+    ) async -> UIImage? {
         if let ready = cached(source, size: size) { return ready }
         let record = Self.key(source)
         let waiter = wait(on: record, priority, aimed: aimed)
@@ -179,7 +179,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         size: AlbumArtwork.Size,
         key: String,
         record: String
-    ) async -> PlatformImage? {
+    ) async -> UIImage? {
         await decodes.join(key) { [weak self] in
             guard let self else { return nil }
             let epoch = self.locked { self.generation(of: record) }
@@ -411,7 +411,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         _ data: Data,
         to size: AlbumArtwork.Size,
         in space: CGColorSpace?
-    ) -> PlatformImage? {
+    ) -> UIImage? {
         guard let cgSource = CGImageSourceCreateWithData(data as CFData, nil) else {
             return nil
         }
@@ -422,7 +422,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             guard let full = CGImageSourceCreateImageAtIndex(
                 cgSource, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
             ) else { return nil }
-            return .decoded(full, pixelSize: CGSize(width: full.width, height: full.height))
+            return UIImage(cgImage: full)
         }
 
         guard let scaled = CGImageSourceCreateThumbnailAtIndex(
@@ -435,7 +435,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             ] as CFDictionary
         ) else { return nil }
         let native = space.flatMap { redrawn(scaled, in: $0) } ?? scaled
-        return .decoded(native, pixelSize: CGSize(width: native.width, height: native.height))
+        return UIImage(cgImage: native)
     }
 
     /// The bitmap in the format Core Animation draws without converting:
@@ -462,7 +462,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     /// What holding this costs, so the budget is in bytes rather than in
     /// entries — a grid tile is sixteen row thumbnails and should count as it.
-    private nonisolated static func cost(_ image: PlatformImage) -> Int {
+    private nonisolated static func cost(_ image: UIImage) -> Int {
         // Read out of the representation rather than through `bitmap`, which on
         // AppKit is allowed to rasterise to answer.
         guard let bitmap = image.cgImage else { return 0 }

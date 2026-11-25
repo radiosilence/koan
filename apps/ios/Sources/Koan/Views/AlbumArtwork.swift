@@ -73,7 +73,7 @@ struct AlbumArtwork: View {
 
     /// What this view's `.task` loaded. `body` falls back to the cache, so a
     /// cover already held draws without waiting for it.
-    @State private var image: PlatformImage?
+    @State private var image: UIImage?
     @State private var isLoading = false
 
     /// A square Color drives the layout and the image sits in an overlay, so a
@@ -119,7 +119,7 @@ struct AlbumArtwork: View {
             }
             .overlay {
                 if let ready {
-                    Image(platform: ready)
+                    Image(uiImage: ready)
                         .resizable()
                         // The bitmap is already sized for where it is drawn, so
                         // there is little left to interpolate and `.high` was

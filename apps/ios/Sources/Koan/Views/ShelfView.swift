@@ -64,16 +64,11 @@ struct ShelfView: View {
                         if !albums.isEmpty { albumSection }
                         if !tracks.isEmpty { trackSection }
                     }
-                    .washedRow()
+                    .listRowBackground(Color.clear)
                 }
-                .insetList()
+                .listStyle(.plain)
                 .washedGround()
                 .clearsSelection($selection)
-                .selectionMenu(for: Int64.self) { ids in
-                    menu(for: ids)
-                } primaryAction: { ids in
-                    play(ids)
-                }
                 .onKeyPress(.return) {
                     play(selection)
                     return .handled

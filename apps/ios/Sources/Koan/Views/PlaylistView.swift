@@ -80,9 +80,8 @@ struct PlaylistView: View {
                             // Each button its own tap target: a row of automatic-style
                             // buttons is one target that fires them all.
                             .buttonStyle(.borderless)
-                            .rowSeparator(.hidden)
                             .selectionDisabled()
-                            .washedRow()
+                            .listRowBackground(Color.clear)
                             .onAppear { headerShown = true }
                             .onDisappear { headerShown = false }
                     }
@@ -91,13 +90,8 @@ struct PlaylistView: View {
                     }
                     .onMove(perform: mover)
                 }
-                .insetList()
+                .listStyle(.plain)
                 .washedGround()
-                .selectionMenu(for: String.self) { ids in
-                    menu(forRows: ids)
-                } primaryAction: { ids in
-                    play(rowIds: ids)
-                }
                 .onKeyPress(.return) {
                     play(rowIds: selection)
                     return .handled
@@ -107,12 +101,6 @@ struct PlaylistView: View {
                     selection = Set(rows.map(\.id))
                 }
             }
-        }
-        // On the whole page, not the List: an empty playlist is exactly when
-        // you want to drop something on it, and it has no rows to land on.
-        .dropTarget(for: PlayableTransfer.self) { dropped, _ in
-            playlists.add(dropped: dropped, to: playlistId)
-            return true
         }
         // Only for a library change — the rows arrived before the page did.
         .reloading(on: playlistId) {
@@ -241,7 +229,6 @@ struct PlaylistView: View {
                 }
             } label: {
                 KoanIcon(Icon.moreCircled)
-                    .touchTarget()
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)

@@ -55,14 +55,9 @@ struct TrackBrowser: View {
                 .accessibilityIdentifier("track-\(track.id)")
             }
         }
-        .insetList()
+        .listStyle(.plain)
         .washedGround()
         .clearsSelection($selection)
-        .selectionMenu(for: Int64.self) { ids in
-            menu(for: ids)
-        } primaryAction: { ids in
-            play(ids)
-        }
     }
 
     /// Plays from the first of `ids`, the rest of the listing behind it.

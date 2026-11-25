@@ -54,7 +54,7 @@ struct HistoryView: View {
                             ForEach(day.entries, id: \.id) { entry in
                                 HistoryRow(entry: entry)
                                     .primaryTap { play([entry.id]) } menu: { menu(for: [entry.id]) }
-                                    .washedRow()
+                                    .listRowBackground(Color.clear)
                                     .tag(entry.id)
                             }
                         } header: {
@@ -62,14 +62,9 @@ struct HistoryView: View {
                         }
                     }
                 }
-                .insetList()
+                .listStyle(.plain)
                 .washedGround()
                 .clearsSelection($selection)
-                .selectionMenu(for: Int64.self) { ids in
-                    menu(for: ids)
-                } primaryAction: { ids in
-                    play(ids)
-                }
                 .onKeyPress(.return) {
                     play(selection)
                     return .handled
@@ -211,7 +206,6 @@ private struct HistoryRow: View {
         // Television type is taller than the sleeve; the row grows to it.
         .frame(minHeight: RowMetrics.art)
         .contentShape(Rectangle())
-        .pointerHover { hovering = $0 }
     }
 }
 

@@ -1424,12 +1424,10 @@ struct KoanIconToggle: View {
                     .overlay(alignment: .bottom) {
                         if isOn { Rectangle().fill(KoanTheme.marker(rainbow: rainbow)).frame(height: KoanTheme.hairline) }
                     }
-                    .touchTarget()
                     .contentShape(Rectangle())
             } else {
                 Image(systemName: icon) // theme: raw
                     .foregroundStyle(isOn ? lit : AnyShapeStyle(.secondary)) // theme: raw
-                    .touchTarget()
                     .contentShape(Rectangle())
             }
         }

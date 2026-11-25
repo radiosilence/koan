@@ -1,5 +1,6 @@
 import Foundation
 import KoanFFI
+import UIKit
 
 /// What the app does to the player, and the little it knows that the engine
 /// does not.
@@ -68,7 +69,7 @@ final class PlayerModel {
         // there. Settings still being saved are waited for, or a change made
         // just before quitting would be lost.
         terminating = NotificationCenter.default.addObserver(
-            forName: .appTerminates, object: nil, queue: .main
+            forName: UIApplication.willTerminateNotification, object: nil, queue: .main
         ) { [engine] _ in
             engine.releaseOutput()
             engine.flushSettings()
