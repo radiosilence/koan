@@ -405,6 +405,23 @@
     @apply block border border-rule bg-surface px-3 py-2 text-meta break-all text-ink;
   }
 
+  /* A QR code to scan off the screen: an inline <svg> on white with its quiet zone, dark on light whatever the scheme,
+     since scanners look for that contrast. The modules stay crisp at one size. */
+  .qr {
+    @apply inline-block p-3 leading-none;
+    background-color: #fff;
+  }
+
+  .qr > svg {
+    @apply block size-56 max-w-full;
+  }
+
+  /* One-time codes to keep, such as recovery codes: a list in two columns, figures aligned, selected whole with one
+     click so the set copies together. */
+  .codes {
+    @apply m-0 grid list-none grid-cols-2 gap-x-6 gap-y-1 p-0 text-control text-ink tabular-nums select-all;
+  }
+
   /* A list of rows. No rules between them: rows are told apart by rhythm and alignment. */
   .rows {
     @apply m-0 grid list-none p-0;

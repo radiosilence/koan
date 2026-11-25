@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0
+
+- **`qr` and `codes`,** from kōan's two-step sign-in: a QR code to scan off the screen, dark on white with its quiet zone in either scheme, and a set of one-time codes to keep, such as recovery codes, selected whole so they copy together. Each was drawn by hand wherever a page needed one.
+
 ## 0.3.0
 
 - **Renamed `@radiosilence/koan-kit-web`,** the web counterpart of koan-kit, and moved into the koan repository beside its specification. Nothing in it changed from `@radiosilence/theme` 0.2.9: replace the package name in `package.json`, the stylesheet's `@import` and the `kit-check` path. ui.koan.rocks shows every control.
