@@ -52,7 +52,7 @@ Tailwind's own palette, radii, shadows, blurs and type sizes are removed: `round
 | `meter` | `<progress class="meter">`: a hairline, the done part in the accent or a status tone; indeterminate, a sweep |
 | `skeleton` | Content on its way |
 | `code` | A value to read or copy |
-| `qr` | A QR code to scan: an inline `<svg>` on white with its quiet zone, dark on light in either scheme |
+| `qr` | A QR code to scan: an inline `<svg>` carrying its own quiet zone, as generators draw it, dark on white in either scheme |
 | `codes` | `<ul class="codes">`: one-time codes to keep, such as recovery codes, in two columns, selected whole |
 | `rows` | A list of rows, without rules between them |
 | `dense` | `<table class="dense">`: technical data, `num` columns right-aligned |

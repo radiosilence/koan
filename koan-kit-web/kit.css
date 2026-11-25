@@ -405,15 +405,16 @@
     @apply block border border-rule bg-surface px-3 py-2 text-meta break-all text-ink;
   }
 
-  /* A QR code to scan off the screen: an inline <svg> on white with its quiet zone, dark on light whatever the scheme,
-     since scanners look for that contrast. The modules stay crisp at one size. */
+  /* A QR code to scan off the screen: an inline <svg>, dark on white whatever the scheme, since scanners look for that
+     contrast. The black is the text colour too, so modules drawn in `currentColor` stay dark in the dark scheme. The
+     quiet zone, four modules of white the spec asks for, is the SVG's own, as QR generators draw it by default (the
+     `qrcode` crate does); the padding is room beyond it, so the code does not touch a dark page. Square as it narrows. */
   .qr {
-    @apply inline-block p-3 leading-none;
-    background-color: #fff;
+    @apply inline-block bg-white p-3 leading-none text-black;
   }
 
   .qr > svg {
-    @apply block size-56 max-w-full;
+    @apply block aspect-square h-auto w-56 max-w-full;
   }
 
   /* One-time codes to keep, such as recovery codes: a list in two columns, figures aligned, selected whole with one

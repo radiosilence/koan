@@ -1,0 +1,1 @@
+- **The web kit draws QR codes and one-time codes.** `qr` and `codes` join koan-kit-web 0.4.0, from the Account page's sign-in QR, authenticator app setup and recovery codes, each drawn by hand until now; the web UI takes them up once it moves to that version.
