@@ -333,11 +333,24 @@ Ed25519 keypair is auto-generated on first `koan auth setup` and stored at:
 
 ## Recovery / lockout
 
-**Reset a password:**
+### A forgotten admin password
+
+Another admin can reset it from the web UI's Users page. When there is no other admin, reset it from a shell on the server, run against the config directory the server uses. The server can stay running; the new password works at the next sign-in.
+
+| Where the server runs | Run |
+|---|---|
+| Directly on a machine | `koan auth reset-password admin` |
+| `docker run` | `docker exec -it koan koan auth reset-password admin` |
+| Docker Compose | `docker compose exec koan koan auth reset-password admin` |
+| Kubernetes | `kubectl -n koan exec -it deploy/koan -- koan auth reset-password admin` |
+
+It asks for the new password, or offers to generate one and prints it once. Without a terminal, pass it in the environment:
+
 ```bash
-koan auth reset-password admin
-# Prompts for new password. Revokes that user's sessions, API keys and app passwords.
+kubectl -n koan exec deploy/koan -- env KOAN_PASSWORD='…' koan auth reset-password admin
 ```
+
+`koan auth list-users`, run the same way, shows the usernames and roles when the admin's name is forgotten too. A reset signs the account out everywhere: it ends its sessions and revokes its API keys and app passwords, so its apps and scripts need signing in again.
 
 **Regenerate keypair:**
 ```bash
