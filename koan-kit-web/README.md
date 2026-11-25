@@ -1,4 +1,4 @@
-# @radiosilence/theme
+# @radiosilence/koan-kit-web
 
 The kōan theme for Tailwind v4: the tokens, the Geist Mono typeface, and the kit of controls radiosilence's server-rendered web UIs (askama and Datastar) are drawn with. It is to the web what `koan-kit` is to GPUI: the look lives here, so an app cannot drift from it. The specification, with the reason for each rule, is [docs/design/koan-theme.md](../docs/design/koan-theme.md). Every control in every state is drawn at [ui.koan.rocks](https://ui.koan.rocks), from `storybook/`.
 
@@ -7,7 +7,7 @@ The kōan theme for Tailwind v4: the tokens, the Geist Mono typeface, and the ki
 ```css
 @import "tailwindcss" source(none);
 @source "../templates";
-@import "@radiosilence/theme";
+@import "@radiosilence/koan-kit-web";
 
 /* The app's accent, in both schemes, each at least 4.5:1 on --surface. */
 :root {
@@ -21,7 +21,7 @@ The kōan theme for Tailwind v4: the tokens, the Geist Mono typeface, and the ki
 }
 ```
 
-Serve `geist-mono.woff2` from this package beside the compiled stylesheet. The checkbox's tick and the select's chevron are `data:` URLs, so the app's Content Security Policy allows `img-src 'self' data:`; without it a ticked box is a plain fill and a select has no chevron. A static site with markup of its own imports `@radiosilence/theme/tokens.css` for the tokens without the controls.
+Serve `geist-mono.woff2` from this package beside the compiled stylesheet. The checkbox's tick and the select's chevron are `data:` URLs, so the app's Content Security Policy allows `img-src 'self' data:`; without it a ticked box is a plain fill and a select has no chevron. A static site with markup of its own imports `@radiosilence/koan-kit-web/tokens.css` for the tokens without the controls.
 
 The package is published to GitHub Packages, so installing it needs a token with `read:packages`.
 
@@ -83,7 +83,7 @@ kit-check templates src
 Reports classes outside the look in templates and in code that writes markup (`class`, JSX's `className` and `classList` calls, across lines): rounded corners, shadows, rings, blur, gradients, Tailwind's palette and type sizes, arbitrary colours, and `style=` attributes, which the CSP blocks. Most of these already compile to nothing; kit-check says where they are, and fails CI. A deliberate exception carries `kit: raw` and its reason on the line or the line above. An app runs it from its CSS task or CI:
 
 ```sh
-node node_modules/@radiosilence/theme/kit-check.mjs templates src
+node node_modules/@radiosilence/koan-kit-web/kit-check.mjs templates src
 ```
 
 ## Adding to the kit
@@ -92,6 +92,6 @@ A look an app needs and the kit lacks is added here, not in the app, once a seco
 
 ## Release
 
-A push to main that changes `version` in `package.json` publishes it to GitHub Packages, from `.github/workflows/theme.yml`. Its notes are its section of `CHANGELOG.md`; it is not tagged, since koan's own `v*` tags would collide. The kit is released on its own, not with koan, and koan's CI and CD skip a change to `theme/` alone.
+A push to main that changes `version` in `package.json` publishes it to GitHub Packages, from `.github/workflows/koan-kit-web.yml`. Its notes are its section of `CHANGELOG.md`; it is not tagged, since koan's own `v*` tags would collide. The kit is released on its own, not with koan, and koan's CI and CD skip a change to `koan-kit-web/` alone.
 
-Until 0.2.9 it lived in radiosilence/theme, which keeps its history.
+Until 0.2.9 it was `@radiosilence/theme`, in radiosilence/theme, which keeps its history.

@@ -16,7 +16,7 @@ on:
   pull_request:
     paths:
       - "site/**"
-      - "theme/**"
+      - "koan-kit-web/**"
       - "docs/**"
       - "CHANGELOG.md"
       - "changelog.d/**"

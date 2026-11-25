@@ -1,6 +1,6 @@
 {
-  "name": "@radiosilence/theme",
-  "version": "0.2.9",
+  "name": "@radiosilence/koan-kit-web",
+  "version": "0.3.0",
   "description": "The kōan theme for Tailwind v4: tokens, typeface and the kit of controls radiosilence's web UIs are drawn with",
   "license": "MIT",
   "author": "James Cleveland <jc@blit.cc>",
@@ -26,7 +26,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/radiosilence/koan.git",
-    "directory": "theme"
+    "directory": "koan-kit-web"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"

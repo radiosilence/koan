@@ -3,9 +3,9 @@
  * and before its own rules:
  *
  *   @import "tailwindcss" source(none);
- *   @import "@radiosilence/theme";
+ *   @import "@radiosilence/koan-kit-web";
  *
- * A static site with markup of its own imports "@radiosilence/theme/tokens.css" instead.
+ * A static site with markup of its own imports "@radiosilence/koan-kit-web/tokens.css" instead.
  */
 @import "./tokens.css";
 @import "./kit.css";

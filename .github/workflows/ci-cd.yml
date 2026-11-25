@@ -167,10 +167,10 @@ jobs:
             # they count.
             inputs=$(python3 .github/scripts/native_inputs.py "$base" HEAD) || inputs=$'apple=true\nandroid=true'
 
-            # The web kit and koan.rocks have workflows of their own (theme.yml, site.yml), so a change to nothing else
+            # The web kit and koan.rocks have workflows of their own (koan-kit-web.yml, site.yml), so a change to nothing else
             # runs none of this one, the always-on checks and main's audit included; `Checks` still reports.
-            if ! printf '%s\n' "$files" | grep -qvE '^(theme|site)/'; then
-              echo "only theme/ and site/ changed -- skipping everything"
+            if ! printf '%s\n' "$files" | grep -qvE '^(koan-kit-web|site)/'; then
+              echo "only koan-kit-web/ and site/ changed -- skipping everything"
               ci=false deps=false
             fi
             eval "$(printf '%s\n' "$inputs" | sed 's/^/inputs_/')"

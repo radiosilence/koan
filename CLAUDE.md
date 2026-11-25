@@ -83,7 +83,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - Work in PRs; never push to main. PRs are squashed; merge main into a branch rather than rebasing.
 - Never push tags or run `cargo publish`. CI tags and publishes when a release PR merges.
 - Commits are signed.
-- `Checks` is the only status the ruleset requires. CI jobs run per domain the change touches and may skip; add a new CI job to `checks`' needs, never to the ruleset. A change to `theme/` and `site/` alone skips every job in `ci-cd.yml`; their own workflows (`theme.yml`, `site.yml`) check them.
+- `Checks` is the only status the ruleset requires. CI jobs run per domain the change touches and may skip; add a new CI job to `checks`' needs, never to the ruleset. A change to `koan-kit-web/` and `site/` alone skips every job in `ci-cd.yml`; their own workflows (`koan-kit-web.yml`, `site.yml`) check them.
 
 ## Changelog
 
@@ -95,7 +95,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 
 ## Docs and site
 
-`theme/` is the kōan web kit, `@radiosilence/theme`, which koan's web UI, koan.rocks and radiosilence's other server-rendered pages are drawn with. It has its own version and `CHANGELOG.md` and is not released with koan: a push to main that changes its version publishes it (`theme.yml`), and koan takes the new version like any other app, through the root `package.json`. Its storybook is served at ui.koan.rocks from the koan.rocks image. `docs/design/koan-theme.md` is its specification; change the two together.
+`koan-kit-web/` is the kōan web kit, `@radiosilence/koan-kit-web` (koan-kit is its GPUI counterpart), which koan's web UI, koan.rocks and radiosilence's other server-rendered pages are drawn with. It has its own version and `CHANGELOG.md` and is not released with koan: a push to main that changes its version publishes it (`koan-kit-web.yml`), and koan takes the new version like any other app, through the root `package.json`. Its storybook is served at ui.koan.rocks from the koan.rocks image. `docs/design/koan-theme.md` is its specification; change the two together.
 
 `docs/` is the user guide and reference, and koan.rocks is built from it (`site/src/docs.sh`, deployed by `site.yml`). A change in behaviour, a setting, a CLI flag or a supported platform updates the matching page in the same PR, as does a changelog fragment. Before a release, check that the guide still describes what the code does, since screenshots and settings drift fastest.
 

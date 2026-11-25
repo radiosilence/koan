@@ -1,18 +1,18 @@
-name: Theme
+name: koan-kit-web
 
-# The kōan web kit, `@radiosilence/theme`: checked when `theme/` changes, and published to GitHub Packages when a push
+# The kōan web kit, `@radiosilence/koan-kit-web`: checked when `koan-kit-web/` changes, and published to GitHub Packages when a push
 # to main changes its version. It is released on its own rather than with koan, and `ci-cd.yml` skips a change to
-# `theme/` alone, so this is the kit's whole CI. Its storybook is built and served by `site.yml`, at ui.koan.rocks.
+# `koan-kit-web/` alone, so this is the kit's whole CI. Its storybook is built and served by `site.yml`, at ui.koan.rocks.
 on:
   push:
     branches: [main]
     paths:
-      - "theme/**"
-      - ".github/workflows/theme.yml"
+      - "koan-kit-web/**"
+      - ".github/workflows/koan-kit-web.yml"
   pull_request:
     paths:
-      - "theme/**"
-      - ".github/workflows/theme.yml"
+      - "koan-kit-web/**"
+      - ".github/workflows/koan-kit-web.yml"
   workflow_dispatch:
 
 permissions:
@@ -20,11 +20,11 @@ permissions:
 
 defaults:
   run:
-    working-directory: theme
+    working-directory: koan-kit-web
 
 jobs:
   check:
-    name: Theme
+    name: koan-kit-web
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -37,8 +37,8 @@ jobs:
         run: |
           mkdir -p /tmp/probe && cd /tmp/probe
           npm init -y >/dev/null
-          npm install --no-save tailwindcss@4 @tailwindcss/cli@4 "$GITHUB_WORKSPACE/theme"
-          printf '@import "tailwindcss" source(none);\n@import "@radiosilence/theme";\n@source inline("bg-brand text-warn font-sans text-body rounded-lg shadow-xl text-sm bg-red-500");\n' > in.css
+          npm install --no-save tailwindcss@4 @tailwindcss/cli@4 "$GITHUB_WORKSPACE/koan-kit-web"
+          printf '@import "tailwindcss" source(none);\n@import "@radiosilence/koan-kit-web";\n@source inline("bg-brand text-warn font-sans text-body rounded-lg shadow-xl text-sm bg-red-500");\n' > in.css
           npx tailwindcss -i in.css -o out.css
           grep -q 'var(--brand)' out.css
           grep -q 'Geist Mono' out.css
@@ -49,11 +49,12 @@ jobs:
       - name: Compile the storybook and check it against the kit
         run: |
           cp geist-mono.woff2 storybook/
-          npx --yes @tailwindcss/cli@4.3.3 -i storybook/in.css -o storybook/out.css
+          npm install --no-save --no-package-lock tailwindcss@4.3.3 @tailwindcss/cli@4.3.3
+          npx tailwindcss -i storybook/in.css -o storybook/out.css
           node kit-check.mjs storybook
 
   publish:
-    name: Publish the theme
+    name: Publish koan-kit-web
     needs: check
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -68,13 +69,13 @@ jobs:
           node-version: 24
           registry-url: https://npm.pkg.github.com
       # A push publishes only when it changes the version; a published version is never overwritten. Not tagged: the
-      # kit's versions would collide with koan's `v*` tags, and its notes are its section of theme/CHANGELOG.md.
+      # kit's versions would collide with koan's `v*` tags, and its notes are its section of koan-kit-web/CHANGELOG.md.
       - name: Publish a new version
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version=$(node -p 'require("./package.json").version')
-          if npm view "@radiosilence/theme@$version" version >/dev/null 2>&1; then
+          if npm view "@radiosilence/koan-kit-web@$version" version >/dev/null 2>&1; then
             echo "$version is already published"
             exit 0
           fi
