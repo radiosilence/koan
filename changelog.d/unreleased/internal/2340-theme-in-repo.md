@@ -1,0 +1,1 @@
+- **The web kit lives in this repository.** `@radiosilence/theme` moves from its own repository to `theme/`, beside its specification, and is published on its own from `theme.yml`; ui.koan.rocks shows every control. A change to `theme/` or `site/` alone skips `ci-cd.yml`.
