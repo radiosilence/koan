@@ -4,10 +4,10 @@ kōan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default
 
 ## The first account
 
-A new server has no accounts. Until one exists, its web UI shows a setup page in place of sign-in:
+A new server has no accounts. Until one exists, its web UI sends sign-in to a setup page at `/setup`:
 
 1. Start the server and find the line in its log that begins `No accounts yet`. It holds the setup code, and is written at start-up and again, at most once a minute, while the page is in use.
-2. Open the server in a browser, enter the code, and choose the admin's username and password.
+2. Open `/setup` on the server (`http://localhost:4000/setup`, or any page, which redirects there), enter the code, and choose the admin's username and password.
 3. You are signed in as that admin, and the page closes for good.
 
 The code means the admin is whoever can read the server's log, not whoever reaches the page first: a database can be empty because a volume did not mount or a backup was not restored, not only on a new install. Further accounts come from that admin, by [invite](#invites) or from the Users page.
