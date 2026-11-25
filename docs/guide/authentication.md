@@ -2,10 +2,22 @@
 
 kōan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default.
 
+## The first account
+
+A new server has no accounts. Until one exists, its web UI shows a setup page in place of sign-in:
+
+1. Start the server and find the line in its log that begins `No accounts yet`. It holds the setup code, and is written at start-up and again, at most once a minute, while the page is in use.
+2. Open the server in a browser, enter the code, and choose the admin's username and password.
+3. You are signed in as that admin, and the page closes for good.
+
+The code means the admin is whoever can read the server's log, not whoever reaches the page first: a database can be empty because a volume did not mount or a backup was not restored, not only on a new install. Further accounts come from that admin, by [invite](#invites) or from the Users page.
+
+To make the admin from a shell instead, run `koan auth setup` against the server's config directory; `[graphql] setup_wizard = false` turns the page off. [The first account](headless-server.md#the-first-account) in the headless server guide covers Docker and Kubernetes.
+
 ## Quick start
 
 ```bash
-koan auth setup               # signing keys and the first admin account
+koan auth setup               # signing keys and the first admin account, or use the setup page
 KOAN_SERVER__URL=http://localhost:4000 koan --headless --port 4000
 
 # Sign in: returns an access token, a refresh token and its lifetime
