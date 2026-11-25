@@ -1,21 +1,13 @@
-import CoreGraphics
 import Foundation
 import KoanFFI
 import Observation
 import SwiftUI
 
-/// The bits of presentation a keystroke has to reach.
-///
-/// Sheets and the search field belong to views, but a hotkey arrives from
-/// outside all of them — so the flags live here, where the key monitor can set
-/// them and the view that owns the thing can watch. The menu bar drives the
-/// same flags, so both routes agree.
+/// Presentation state that more than one view reaches: what the shell
+/// presents, and what a page asks of another.
 @MainActor
 @Observable
 final class UIState {
-    var showingPicker = false
-    var showingArtwork = false
-    var showingShortcuts = false
     /// Settings → Server, asked for by the server banner's Sign In, which the
     /// Settings tab pushes.
     var showingServerSettings = false
@@ -36,45 +28,22 @@ final class UIState {
     /// "set it up to be woken?".
     var tvWakeOffer: TvWakeTarget?
 
-    /// The main window's content size, as the shell measures it.
-    ///
-    /// A sheet is bounded by the window it hangs from but cannot ask how big
-    /// that is — a `GeometryReader` inside one only ever sees the sheet's own
-    /// proposal. The window measures itself and leaves the answer here.
-    var windowSize: CGSize = .zero
-    /// How far in the stage starts. The transport floats over the window — the
-    /// only place a `NavigationStack` push cannot drop it — so it needs to know
-    /// where the sidebar ends in order not to sit on it.
-    var sidebarWidth: CGFloat = 0
-    /// How far in from the trailing edge the lyrics panel starts, for the same
-    /// reason — zero while it is closed. Floating over it would cut off the
-    /// last lines of a song, which is the part you are usually reading.
+    /// How far in from the trailing edge the lyrics panel starts; zero while
+    /// it is closed.
     var lyricsWidth: CGFloat = 0
 
     /// Where the queue can be sent. Two ends and the row the music is on.
     enum Jump { case top, bottom, playing }
 
-    /// Counters, not booleans: pressing `g` twice has to jump twice, and a flag
+    /// Counters, not booleans: asking twice has to jump twice, and a flag
     /// that is already true is not a change anything can observe.
-    private(set) var searchFocusToken = 0
-    private(set) var filterFocusToken = 0
     private(set) var queueJumpToken = 0
     private(set) var queueJumpTarget = Jump.top
-    /// Escape drops the selection wherever you are, so every list that has one
-    /// watches this rather than each binding its own key and disagreeing about
-    /// which of them the keystroke belonged to.
+    /// Drops the selection in every list that has one.
     private(set) var clearSelectionToken = 0
-    /// ⌘A, likewise: it belongs to whatever list is on screen, and only that
-    /// list knows what "everything" is.
+    /// Selects everything in the list on screen, which alone knows what
+    /// "everything" is.
     private(set) var selectAllToken = 0
-
-    func focusSearch() { searchFocusToken += 1 }
-
-    func focusFilter() { filterFocusToken += 1 }
-
-    func clearSelection() { clearSelectionToken += 1 }
-
-    func selectAll() { selectAllToken += 1 }
 
     func jumpQueue(to target: Jump) {
         queueJumpTarget = target
@@ -107,14 +76,8 @@ final class UIState {
 
     private static let lyricsKey = "showLyrics"
 
-    /// Opened and closed in one step, not animated. The pages are AppKit
-    /// tables and grids hosted in SwiftUI, which take their final frame at
-    /// once while SwiftUI interpolates everything around them: a slide moved
-    /// the split view, the transport and the pane on one clock and the page
-    /// on another, and the window tore until it settled. In one step the
-    /// column and every page are laid out together.
-    /// The transaction disables animation outright: without it the
-    /// inspector's split view runs its own slide.
+    /// Opened and closed in one step, not animated: the page and the panel
+    /// are laid out together rather than on two clocks.
     func toggleLyrics() {
         var transaction = Transaction()
         transaction.disablesAnimations = true
@@ -122,12 +85,7 @@ final class UIState {
     }
 }
 
-/// Escape drops the selection, wherever you are.
-///
-/// The key is caught once, by the monitor, because a `List` that has focus is
-/// the only thing that would ever see it otherwise — and only one list has
-/// focus. Every list carries this instead and clears itself when the token
-/// moves.
+/// Drops the selection when `clearSelectionToken` moves.
 private struct ClearsSelection<Value: Hashable>: ViewModifier {
     @Environment(UIState.self) private var ui
     @Binding var selection: Set<Value>
