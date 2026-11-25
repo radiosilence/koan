@@ -329,7 +329,7 @@ pub fn set_role(conn: &Connection, username: &str, role: Role) -> Result<(), Acc
     let id = atomically(conn, || {
         koan_auth::accounts::set_role(conn, username, role)?;
         users::adopt_local_rows(conn)?;
-        Ok(account(conn, username)?.id)
+        Ok::<_, AccountError>(account(conn, username)?.id)
     })?;
     // Announced again once this transaction, not only the crate's savepoint
     // in it, has committed: see `koan_auth::changes`.
