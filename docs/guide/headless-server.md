@@ -138,6 +138,8 @@ docker exec -e KOAN_USERNAME=admin -e KOAN_PASSWORD='…' koan koan auth setup
 
 Once there is an admin, everything else is done signed in: the web UI's Users page, the apps' Settings, or GraphQL create accounts and send [invites](authentication.md#invites), so nobody else needs a shell. `koan auth setup` does nothing on a server that already has accounts; `koan auth create-user` adds one from the shell, and `koan auth reset-password` recovers an admin who is locked out.
 
+Each account can turn on [two-step sign-in](authentication.md#two-step-sign-in) on its Account page: an authenticator app or a security key beside the password, or a passkey that signs in alone. Passkeys and security keys need `server.url` to be an `https://` address, since browsers allow them nowhere else.
+
 The API binds to `127.0.0.1` by default. If you expose it on `0.0.0.0` with `--bind 0.0.0.0`, make sure auth is enabled (it is by default) or restrict access at the network level.
 
 Cookie auth needs `cookie_secure = false` over plain HTTP, and browser clients need their origin listed in `cors_origins`. If you reach the server through a hostname, add it to `allowed_hosts` — anything else is refused. See [Configuration](../reference/configuration.md#graphql).

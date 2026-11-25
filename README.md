@@ -106,7 +106,7 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 
 - **Any kōan app controls any other**, on the same network directly or anywhere through a kōan server, and moves what is playing to it, saying when a device has not woken or the music has not arrived. The device it moves to plays its own copy, so it carries on when the phone sleeps. With *Keep running in the menu bar*, a closed Mac app stays reachable.
 - **A cache built for losing signal**: the queue is fetched ahead of the playhead, as many tracks as you choose or all of it, within the cache limit, so it keeps playing underground. A limit of zero keeps only what plays next. See [Cache management](https://koan.rocks/docs/cache-management/).
-- **Signing in without a password**: invite links, approving another device by code, and app passwords for Subsonic apps that only sign in with a token. See [Authentication](https://koan.rocks/docs/authentication/).
+- **Signing in without a password**: invite links, approving another device by code, a passkey in the web UI, and app passwords for Subsonic apps that only sign in with a token. See [Authentication](https://koan.rocks/docs/authentication/).
 
 ### Library
 
@@ -125,6 +125,7 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 - **Share links** whose pages play without an account and unfurl with their cover.
 - **An OpenSubsonic API**, so Subsonic apps play from it too, with favourites, ratings, bookmarks, saved play queues and transcoding to Opus, MP3 or AAC.
 - **Accounts** with API keys and app passwords, managed from the web UI or the apps, and web UI sign-in through an authenticating reverse proxy.
+- **Two-step sign-in**: an authenticator app (TOTP, RFC 6238), a security key or a passkey (WebAuthn) beside the password, with recovery codes, set up on the web UI's Account page; a passkey signs in on its own. The apps, terminal UI and CLI ask for the code. See [Two-step sign-in](https://koan.rocks/docs/authentication/#two-step-sign-in).
 - **ListenBrainz and Last.fm scrobbling** per account, sent by the server. ListenBrainz is set up from the web UI or the apps, Last.fm from the web UI.
 - **MCP** at `/mcp` with its own sign-in, so an assistant such as Claude can browse the library and drive playback on your devices. It can never move, rename or delete a file. See [MCP integration](https://koan.rocks/docs/mcp-integration/).
 - **GraphQL** for everything the apps can do.
