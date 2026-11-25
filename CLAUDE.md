@@ -404,18 +404,18 @@ GPUI comes from koan's fork of Zed, radiosilence/zed, whose default branch `koan
 
 ### apps/ios (`apps/ios/Sources/`)
 
-`Koan/` holds the models, pages and rows both platforms share. `KoanIOS/` is
-the scene root and audio session: the phone's shell over that state, which
-tvOS uses too. `KoanTV/` holds what only a television has: Now Playing as a
-page, share links as codes to scan. What tvOS lacks — hover, drag, the
-pasteboard, sliders, selection menus — goes through small shims in
-`Support/Platform.swift` that leave a view as it is there. Builds, device
-installs and the UI walks go through an Xcode project that XcodeGen generates
-from `apps/ios/project.yml` (`just ios-project`); it is not checked in.
+The SwiftUI here is the tvOS app. `Koan/` holds its models, pages and rows,
+and `KoanTV/` its scene root, tab shell, audio session and what only a
+television has: Now Playing as a page, share links as codes to scan, the Top
+Shelf. `KoanIOS/` is the Swift the GPUI iOS app links beside koan-gui (push,
+App Attest, the Live Activity); push and App Attest are compiled into tvOS too.
+`KoanGUI/` is that app's entry point. Builds, device installs and the UI walks
+go through an Xcode project that XcodeGen generates from `apps/ios/project.yml`
+(`just ios-project`); it is not checked in.
 
-On iOS each tab is a `NavigationStack` with its own path of `Route`s. Pages draw
-from the route that pushed them, never from `nav.current`, and the navigator
-follows the top of the stack in front — see `TabShell`.
+Each tab is a `NavigationStack` with its own path of `Route`s. Pages draw from
+the route that pushed them, never from `nav.current`, and the navigator follows
+the top of the stack in front — see `TabShell`.
 
 | Module | What |
 |--------|------|

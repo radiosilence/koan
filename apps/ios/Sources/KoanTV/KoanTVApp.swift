@@ -9,7 +9,7 @@ import SwiftUI
 /// second window, so the navigator is driven by a tab bar and the transport
 /// sits above it.
 @main
-struct KoanIOSApp: App {
+struct KoanTVApp: App {
     @UIApplicationDelegateAdaptor(PushDelegate.self) private var push
     @State private var state: AppState?
     @State private var startupError: String?
@@ -172,7 +172,7 @@ struct KoanIOSApp: App {
     }
 }
 
-extension KoanIOSApp {
+extension KoanTVApp {
     private func open(_ url: URL, in state: AppState) {
         if url.scheme == "koan", url.host == "album" {
             openRecord(url, in: state)
@@ -187,7 +187,7 @@ extension KoanIOSApp {
     }
 }
 
-extension KoanIOSApp {
+extension KoanTVApp {
     /// A record chosen on the Top Shelf: `koan://album/<uid>` opens its page,
     /// `?play` plays it. Television only: on a phone or a Mac the scheme would
     /// let any web page start the music.

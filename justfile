@@ -651,7 +651,7 @@ ios-phone config="Debug": (gui-ios-lib "iphoneos")
         "target/ios-build/Build/Products/{{config}}-iphoneos/koan-gui.app"
     xcrun devicectl device process launch --device "$phone" {{bundle_id}}
 
-# Type-check the shared SwiftUI sources against the tvOS SDK: what
+# Type-check the tvOS app's SwiftUI sources against the tvOS SDK: what
 # `ios-typecheck` is for the phone. The phone's Live Activity is left out, since
 # tvOS has no ActivityKit.
 tv-typecheck: swift-bindings

@@ -5,7 +5,7 @@ import SwiftUI
 /// The Mac keeps the field in the sidebar, where it is always visible. A phone
 /// has nowhere to keep it, so it becomes the search tab iOS reserves a slot for
 /// — and the results are the same page the Mac shows.
-struct IOSSearchView: View {
+struct SearchTab: View {
     @Environment(SearchModel.self) private var search
 
     var body: some View {

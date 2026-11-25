@@ -80,7 +80,7 @@ struct TabShell: View {
                 stack(.library) { LibraryTab() }
             }
             Tab(Self.title("Search"), systemImage: Icon.search, value: TabID.search, role: .search) { // theme: raw
-                stack(.search) { IOSSearchView() }
+                stack(.search) { SearchTab() }
             }
             // Last on a television, where it is visited least.
             Tab(Self.title("Settings"), systemImage: Icon.settings, value: TabID.settings) { // theme: raw
