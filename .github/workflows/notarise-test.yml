@@ -35,7 +35,8 @@ jobs:
           key=$(mktemp)
           rcodesign encode-app-store-connect-api-key --output-path "$key" \
             "$APPLE_API_ISSUER_ID" "$APPLE_API_KEY_ID" "$APPLE_API_KEY_PATH"
-          rcodesign notary-list --api-key-file "$key" | head -3
+          list=$(rcodesign notary-list --api-key-file "$key")
+          head -3 <<<"$list"
           rm -f "$key"
       - name: DMG signature before
         run: rcodesign print-signature-info released/Koan.dmg | grep -n -i -E 'slot|ticket'
@@ -47,7 +48,12 @@ jobs:
           cp released/Koan.dmg "$dmg"
           scripts/notarise.sh "$dmg" 3600
           rcodesign staple "$dmg"
-          rcodesign print-signature-info "$dmg" | grep -n -i -E 'slot|ticket'
+          info=$(rcodesign print-signature-info "$dmg")
+          grep -n -i -E 'slot|ticket' <<<"$info"
+          if ! grep -q 'slot: Ticket' <<<"$info"; then
+            echo "::error::no ticket stapled to $dmg"
+            exit 1
+          fi
           echo "DMG=$dmg" >> "$GITHUB_ENV"
       - name: Pick up the accepted submission
         run: scripts/notarise.sh "$DMG" 600

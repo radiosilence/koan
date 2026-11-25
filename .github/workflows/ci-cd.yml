@@ -1541,6 +1541,13 @@ jobs:
           cp gui/koan-gui-macos-arm64.dmg "$dmg"
           scripts/notarise.sh "$dmg"
           rcodesign staple "$dmg"
+          # The ticket in the DMG's signature, where Gatekeeper looks offline.
+          # Read whole before searching: rcodesign panics on a closed pipe.
+          info=$(rcodesign print-signature-info "$dmg")
+          if ! grep -q 'slot: Ticket' <<<"$info"; then
+            echo "::error::no ticket stapled to $dmg"
+            exit 1
+          fi
           mkdir stapled
           # The main macOS download, under the name links and the cask use.
           cp "$dmg" stapled/Koan.dmg

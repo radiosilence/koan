@@ -26,14 +26,16 @@ rcodesign encode-app-store-connect-api-key --output-path "$key" \
   "$APPLE_API_ISSUER_ID" "$APPLE_API_KEY_ID" "$APPLE_API_KEY_PATH"
 auth=(--api-key-file "$key")
 
-# Apple's recent submissions, one a line: id, date, name, type and status, the
-# status in lower case ("in progress" is two words).
+# Apple's recent submissions, newest first, one a line: id, date, name, type
+# and status, the status in lower case ("in progress" is two words). Each awk
+# below reads the list to its end: rcodesign panics on a closed pipe, which
+# pipefail would make a failure.
 submissions() { rcodesign notary-list "${auth[@]}"; }
 
-# A submission of this name that is still alive: in progress, or accepted.
-# One that was refused is not worth waiting on again.
+# The newest submission of this name that is still alive: in progress, or
+# accepted. One that was refused is not worth waiting on again.
 id=$(submissions | awk -v name="$name" '
-  $3 == name && ($5 == "accepted" || $5 " " $6 == "in progress") { print $1; exit }')
+  !found && $3 == name && ($5 == "accepted" || $5 " " $6 == "in progress") { print $1; found = 1 }')
 
 if [ -n "$id" ]; then
   echo "$name: picking up submission $id"
@@ -52,7 +54,7 @@ fi
 # fails at the timeout with it still in progress; the status is asked for
 # afterwards either way.
 rcodesign notary-wait "${auth[@]}" --max-wait-seconds "$timeout" "$id" || true
-status=$(submissions | awk -v id="$id" '$1 == id { $1 = $2 = $3 = $4 = ""; sub(/^ +/, ""); print; exit }')
+status=$(submissions | awk -v id="$id" '$1 == id { $1 = $2 = $3 = $4 = ""; sub(/^ +/, ""); print }')
 
 case "$status" in
   accepted)
