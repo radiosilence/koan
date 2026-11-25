@@ -1,0 +1,1 @@
+- **The authentication guide describes the setup page.** It names the setup code in the server's log and why a new server asks for it.
