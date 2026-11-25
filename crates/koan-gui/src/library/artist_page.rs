@@ -1315,10 +1315,10 @@ mod tests {
             shape,
             [
                 "header",
-                "[Albums]",
+                "[Albums / Live Albums]",
                 "0..3",
                 "3..4",
-                "[Live]",
+                "[Compilations]",
                 "4..5",
                 "[features]",
                 "0..1",
