@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/koan-auth", "crates/koan-core", "crates/koan-ffi", "crates/koan-runtime", "crates/koan-gui", "crates/koan-kit", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "koan-kit-web", "tools/uniffi-bindgen", "tools/kit-reference"]
 
 [workspace.package]
-version = "0.75.2"
+version = "0.76.1"
 edition = "2024"
 homepage = "https://koan.rocks"
 repository = "https://github.com/radiosilence/koan"
@@ -14,21 +14,21 @@ license = "AGPL-3.0-or-later"
 # with koan's commits, each proposed upstream, published as gpui-koan-*.
 # Pinned to a revision; the library names stay Zed's (`gpui`,
 # `gpui_platform`).
-gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "7a8891bbeac28240e7fa7aca2f361787ba6742a6" }
+gpui = { package = "gpui-koan", git = "https://github.com/radiosilence/zed", rev = "b5cefbd68cc7dfc20d42c9117b88ef57a5b0007d" }
 # `font-kit` is the macOS text system: without it GPUI draws no text.
-gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "7a8891bbeac28240e7fa7aca2f361787ba6742a6", features = ["font-kit"] }
+gpui_platform = { package = "gpui-koan-platform", git = "https://github.com/radiosilence/zed", rev = "b5cefbd68cc7dfc20d42c9117b88ef57a5b0007d", features = ["font-kit"] }
 # kōan's push relay's client: radiosilence/koan-push-relay.
 koan-relay-client = "0.1.2"
 # Internal crates. Keep the version in step with [workspace.package] above —
 # a stale pin here publishes members that resolve against the wrong sibling.
-koan-auth = { path = "crates/koan-auth", version = "0.75.2" }
-koan-core = { path = "crates/koan-core", version = "0.75.2" }
-koan-server = { path = "crates/koan-server", version = "0.75.2" }
-koan-tui = { path = "crates/koan-tui", version = "0.75.2" }
+koan-auth = { path = "crates/koan-auth", version = "0.76.1" }
+koan-core = { path = "crates/koan-core", version = "0.76.1" }
+koan-server = { path = "crates/koan-server", version = "0.76.1" }
+koan-tui = { path = "crates/koan-tui", version = "0.76.1" }
 # The kōan web kit's components, at the kit's own version rather than koan's: it is released on its own
 # (koan-kit-web.yml), and release.sh leaves this pin alone, refusing a release while the kit in the tree has changed
 # since its version last moved, so the published koan-server names a kit that holds what it was built against.
-koan-kit-web = { path = "koan-kit-web", version = "0.4.0" }
+koan-kit-web = { path = "koan-kit-web", version = "0.5.0" }
 # Feature set is the union every member needs; `default-tls` is an alias for
 # `rustls`, so there is exactly one TLS stack.
 reqwest = { version = "0.13", default-features = false, features = [

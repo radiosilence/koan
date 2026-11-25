@@ -78,6 +78,8 @@
         <li><strong>Any kōan app controls another,</strong> and Move here brings the queue to the device in your hand; a phone or Mac on an Apple TV's network can wake it from standby to play.</li>
         <li><strong>Network amps get the original file</strong> over UPnP.</li>
         <li><strong>The desktop app can serve its library,</strong> and a QR code signs your phone in.</li>
+        <li><strong>Two-step sign-in and passkeys</strong> on a kōan server: an authenticator app or a security key
+          beside the password, or a passkey on its own.</li>
       </ul>
       <p class="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
         <a class="border border-brand px-5 py-3 text-brand no-underline hover:bg-hover/30"
@@ -182,8 +184,11 @@
       <p>On a machine that stays on, run <code>koan --headless</code> or the container: a web UI with gapless playback,
         public share links, the OpenSubsonic API and MCP for assistants. It replaces Navidrome:
         <a href="/docs/migrating-from-navidrome/">how to move</a>.</p>
-      <p>Inviting someone is one link or QR code, which signs a device in with a key of its own. Each part works alone:
-        kōan's apps play from Navidrome, and Play:Sub or any other Subsonic app plays from a kōan server.</p>
+      <p>Inviting someone is one link or QR code, which signs a device in with a key of its own. An account can turn on
+        two-step sign-in, with an authenticator app or a security key, and a passkey signs in on its own, with no
+        password. <a href="/docs/authentication/#two-step-sign-in">Two-step sign-in</a>.</p>
+      <p>Each part works alone: kōan's apps play from Navidrome, and Play:Sub or any other Subsonic app plays from a
+        kōan server.</p>
     </section>
 
     <div class="mx-auto my-6 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">

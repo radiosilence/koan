@@ -1,0 +1,1 @@
+- **koan.rocks and the README say the server has two-step sign-in and passkeys.** The home page, the server guide and the comparison of servers name them, beside invites and app passwords.

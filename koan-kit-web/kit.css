@@ -405,6 +405,24 @@
     @apply block border border-rule bg-surface px-3 py-2 text-meta break-all text-ink;
   }
 
+  /* A QR code to scan off the screen: an inline <svg>, dark on white whatever the scheme, since scanners look for that
+     contrast. The black is the text colour too, so modules drawn in `currentColor` stay dark in the dark scheme. The
+     quiet zone, four modules of white the spec asks for, is the SVG's own, as QR generators draw it by default (the
+     `qrcode` crate does); the padding is room beyond it, so the code does not touch a dark page. Square as it narrows. */
+  .qr {
+    @apply inline-block bg-white p-3 leading-none text-black;
+  }
+
+  .qr > svg {
+    @apply block aspect-square h-auto w-56 max-w-full;
+  }
+
+  /* One-time codes to keep, such as recovery codes: a list in two columns, figures aligned, selected whole with one
+     click so the set copies together. */
+  .codes {
+    @apply m-0 grid list-none grid-cols-2 gap-x-6 gap-y-1 p-0 text-control text-ink tabular-nums select-all;
+  }
+
   /* A list of rows. No rules between them: rows are told apart by rhythm and alignment. */
   .rows {
     @apply m-0 grid list-none p-0;

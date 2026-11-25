@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.76.1
+
+### Fixed
+
+- **The search box keeps its ground on macOS.** Its fill no longer goes missing over pages showing text or sleeves under a frosted bar, which left the page visible through the box.
+
+## 0.76.0
+
+### Added
+
+- **Two-step sign-in, and passkeys.** An account can ask for a code from an authenticator app (RFC 6238), a security key, or a recovery code beside its password, set up on the web UI's Account page. A passkey signs in to the web UI on its own, with no password. The apps, the terminal UI and `koan auth login` ask for the code when the server wants one; Subsonic clients sign in with an API key or app password, since a password alone is refused. Admins turn it off for someone who lost their device on the Users page, or with `koan auth reset-password --remove-second-factor`.
+
+### Changed
+
+- **QR codes and recovery codes are drawn by the web kit.** The Account page's sign-in and authenticator QRs and the Users page's invite QR are dark on white in either scheme and the same size, the invite's no longer at the SVG's own size on the page's ground; recovery codes sit in two columns that select whole.
+
+### Internal
+
+- **The authentication guide covers the setup page and a locked-out admin.** It names `/setup` and the code in the server's log, and how to reset an admin's password from a shell under Docker, Compose or Kubernetes.
+- **The standard forbids type assertions in TypeScript and asks for Zod on outside data.** Casts through `unknown`, non-null `!` and generic JSON helpers check nothing, so every read that is not GraphQL now goes through a Zod schema, browser scripts included, which import it through the page's import map.
+- **The web kit lives in this repository.** `@radiosilence/theme` becomes `@radiosilence/koan-kit-web` in `koan-kit-web/`, beside its specification, published on its own from `koan-kit-web.yml`; ui.koan.rocks shows every control. A change to `koan-kit-web/` or `site/` alone skips `ci-cd.yml`.
+- **The web UI and koan.rocks take the kit as `@radiosilence/koan-kit-web`,** built from `koan-kit-web/` in this repository; `primary` buttons are filled with the accent.
+- **The web kit draws QR codes and one-time codes.** `qr` and `codes` join koan-kit-web 0.4.0, from the Account page's sign-in QR, authenticator app setup and recovery codes, each drawn by hand until now; the web UI takes them up once it moves to that version.
+
 ## 0.75.2
 
 ### Security

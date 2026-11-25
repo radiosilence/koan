@@ -11,7 +11,7 @@ It ships as two packages at one version:
 
 ```toml
 [dependencies]
-koan-kit-web = "0.4"
+koan-kit-web = "0.5"
 ```
 
 The crate builds on `askama_datastar` and re-exports it, so an app's askama and askama_datastar are the kit's: `HtmlSafe` belongs to one askama release, and the components write the attribute syntax of the Datastar that crate serves.
@@ -114,7 +114,7 @@ Text is escaped wherever it lands. Markup is a separate type, built from an `ask
 
 The common props, on every component: `id`, `class` for the app's own layout utilities, `data`, `attr`, and `datastar` for a Datastar attribute the kit does not write. Every component also has `html` and `patch`, so a handler answers with one: `events([kit::Flash::ok("Saved.").patch().into()])`.
 
-Containers whose markup is one element and a class stay classes: `panel`, `rows`, `dense`, `code`, `skeleton`.
+Containers whose markup is one element and a class stay classes: `panel`, `rows`, `dense`, `code`, `codes` (one-time codes to keep, selected whole), `qr` (a QR code's `<svg>`, dark on white in either scheme), `skeleton`.
 
 ### Children
 
@@ -147,7 +147,7 @@ Every expression a component writes is the kit's own constant. A URL, a question
 @import "@radiosilence/koan-kit-web";
 ```
 
-Plain elements come out in the theme, and the classes the components use give the rest: the button weights, `field`, `combo`, `check`, `toggle`, `panel`, `notice`, `status`, `meter`, `pairs`, `empty`, `sheet` and its parts, `actions`, `skip`. A static site with markup of its own imports `@radiosilence/koan-kit-web/tokens.css` for the tokens alone. The package is published to GitHub Packages, so installing it needs a token with `read:packages`.
+Plain elements come out in the theme, and the classes the components use give the rest: the button weights, `field`, `combo`, `check`, `toggle`, `panel`, `notice`, `status`, `meter`, `pairs`, `empty`, `qr`, `codes`, `sheet` and its parts, `actions`, `skip`. A static site with markup of its own imports `@radiosilence/koan-kit-web/tokens.css` for the tokens alone. The package is published to GitHub Packages, so installing it needs a token with `read:packages`.
 
 Tailwind's palette, radii, shadows, blurs and type sizes are removed: `rounded-lg`, `shadow-xl`, `text-sm` and `bg-red-500` compile to nothing. What that cannot reach, such as `rounded-full` and arbitrary values, kit-check reports.
 

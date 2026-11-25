@@ -1,1 +1,0 @@
-- **The web kit lives in this repository.** `@radiosilence/theme` becomes `@radiosilence/koan-kit-web` in `koan-kit-web/`, beside its specification, published on its own from `koan-kit-web.yml`; ui.koan.rocks shows every control.
