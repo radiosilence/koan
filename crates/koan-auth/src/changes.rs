@@ -12,6 +12,9 @@
 //! A change made in a transaction is announced again once it commits. The
 //! first announcement comes as the row is written, and a connection it ended
 //! could authenticate again before the commit, against the account as it was.
+//! This crate's functions announce once their own transaction ends, but
+//! inside a caller's transaction that is only a savepoint: a caller that
+//! wraps one announces again after its own commit.
 
 /// Changes to accounts, as a running count, and the count at each account's
 /// latest change.

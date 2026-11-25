@@ -101,7 +101,7 @@ fn setup_full(
             pool,
             state.clone(),
             auth_enabled,
-            Some(super::SetupGate::default()),
+            auth_enabled.then(super::SetupGate::default),
             Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             server_url.map(str::to_owned),
             Vec::new(),

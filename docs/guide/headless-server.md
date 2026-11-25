@@ -114,7 +114,7 @@ Auth is enabled by default. See [Authentication](authentication.md) for the full
 
 A new server has no accounts, and nothing can sign in until one exists. Until then the web UI answers with a setup page instead of sign-in: open the server in a browser, enter the setup code from the server's log, choose the admin's username and password, and you are signed in as that admin. The page closes for good once any account exists, however it was made.
 
-The code makes the admin whoever can read the server's log rather than whoever reaches the page first, which matters because a database can be empty for reasons other than a new install, such as a volume that did not mount. It is on the log line that begins `No accounts yet`, which `docker logs koan`, `docker compose logs koan` or `kubectl -n koan logs deploy/koan` shows. To make the admin from a shell instead, turn the page off:
+The code makes the admin whoever can read the server's log rather than whoever reaches the page first, which matters because a database can be empty for reasons other than a new install, such as a volume that did not mount. It is on the log line that begins `No accounts yet`, written at start-up and again, at most once a minute, while the page is in use, which `docker logs koan`, `docker compose logs koan` or `kubectl -n koan logs deploy/koan` shows. To make the admin from a shell instead, turn the page off:
 
 ```toml
 [graphql]

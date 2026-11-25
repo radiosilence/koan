@@ -256,7 +256,7 @@ Signing in is guarded against guessing and against timing:
 
 - An unknown username is checked against a dummy argon2 hash, so the response time does not reveal which usernames exist. The setup code and the introspection key are compared in constant time.
 - Each address (or IPv6 /64) gets ten sign-in attempts a minute. Each username gets sixty failures a minute from all addresses together, except from networks the account has recently signed in from, so a stranger cannot lock its owner out. Only a few argon2 checks run at once, and a request that finds them all busy is refused rather than queued.
-- Behind a reverse proxy, the client's address is the last `X-Forwarded-For` entry. The header is believed only from a proxy the server trusts, and if that entry is not an address, the header is ignored.
+- Behind a reverse proxy, the client's address is the last `X-Forwarded-For` entry. The header is believed only from a proxy the server trusts, and if that entry is not an address, the request counts as coming from an unknown address, never from one the client wrote.
 - Sign-in forms refuse cross-site posts (`Sec-Fetch-Site`, `Origin`), and an address to return to after signing in must be a path on this server.
 
 Passwords follow NIST SP 800-63B: at least eight characters, no composition rules, and no forced expiry. Generated passwords carry about 116 bits. OAuth follows OAuth 2.1, with PKCE (S256 only), RFC 8414 metadata, RFC 7591 registration, RFC 9728 resource metadata and the RFC 9207 `iss` parameter; a code works once and expires after a minute. Pairing follows the shape of the device authorization grant in RFC 8628. kōan has no second factor yet.

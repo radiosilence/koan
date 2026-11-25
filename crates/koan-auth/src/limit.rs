@@ -17,14 +17,16 @@ pub const LOGIN_WINDOW_SECS: u64 = 60;
 /// Above this many tracked keys, lapsed windows go before more are added.
 const TRACKED_MAX: usize = 4096;
 
-/// Windows by key, from which lapsed ones are swept once the map has grown
-/// past [`TRACKED_MAX`] and then each time it doubles. A sweep scans the
-/// whole map under the limiter's lock, so sweeping on every insert while a
-/// flood of fresh keys (an IPv6 /48 holds 65536 networks) kept it full would
-/// make each request pay for every key tracked.
+/// Windows by key. Once the map holds more than [`TRACKED_MAX`], lapsed ones
+/// are swept each time it doubles, and at least once a window. A sweep scans
+/// the whole map under the limiter's lock, so sweeping on every insert while
+/// a flood of fresh keys (an IPv6 /48 holds 65536 networks) kept it full would
+/// make each request pay for every key tracked; sweeping once a window as well
+/// lets the map shrink again once a flood has passed.
 struct Windows<K, W> {
     map: HashMap<K, W>,
     sweep_at: usize,
+    swept: Instant,
 }
 
 impl<K: std::hash::Hash + Eq, W> Default for Windows<K, W> {
@@ -32,15 +34,18 @@ impl<K: std::hash::Hash + Eq, W> Default for Windows<K, W> {
         Self {
             map: HashMap::new(),
             sweep_at: TRACKED_MAX,
+            swept: Instant::now(),
         }
     }
 }
 
 impl<K: std::hash::Hash + Eq, W> Windows<K, W> {
-    fn sweep(&mut self, lapsed: impl Fn(&W) -> bool) {
-        if self.map.len() > self.sweep_at {
+    fn sweep(&mut self, window: Duration, lapsed: impl Fn(&W) -> bool) {
+        let len = self.map.len();
+        if len > self.sweep_at || (len > TRACKED_MAX && self.swept.elapsed() >= window) {
             self.map.retain(|_, w| !lapsed(w));
             self.sweep_at = (self.map.len() * 2).max(TRACKED_MAX);
+            self.swept = Instant::now();
         }
     }
 }
@@ -79,7 +84,9 @@ impl RateLimiter {
     pub fn allow(&self, ip: IpAddr) -> bool {
         let now = crate::clock::unix_secs() as u64;
         let mut windows = self.windows.lock();
-        windows.sweep(|(start, _)| now.saturating_sub(*start) >= self.window_secs);
+        windows.sweep(Duration::from_secs(self.window_secs), |(start, _)| {
+            now.saturating_sub(*start) >= self.window_secs
+        });
         let entry = windows.map.entry(network(ip)).or_insert((now, 0));
         if now.saturating_sub(entry.0) >= self.window_secs {
             *entry = (now, 0);
@@ -113,7 +120,9 @@ impl<K: std::hash::Hash + Eq> FailureLimiter<K> {
 
     pub fn record(&self, key: K) {
         let mut windows = self.windows.lock();
-        windows.sweep(|(start, _)| start.elapsed() >= FAILURE_WINDOW);
+        windows.sweep(FAILURE_WINDOW, |(start, _)| {
+            start.elapsed() >= FAILURE_WINDOW
+        });
         let entry = windows.map.entry(key).or_insert((Instant::now(), 0));
         if entry.0.elapsed() >= FAILURE_WINDOW {
             *entry = (Instant::now(), 0);
@@ -178,14 +187,21 @@ mod tests {
     }
 
     #[test]
-    fn lapsed_failures_are_swept() {
+    fn a_passed_flood_is_swept_within_a_window() {
+        // A monotonic clock younger than the window cannot say "a window ago".
+        let Some(long_ago) = Instant::now().checked_sub(FAILURE_WINDOW) else {
+            return;
+        };
         let failures = FailureLimiter::new(1);
         {
+            // After a flood: lapsed windows, and a sweep put off until the
+            // map doubles from the size the flood reached.
             let mut windows = failures.windows.lock();
-            let long_ago = Instant::now() - FAILURE_WINDOW;
             for n in 0..=TRACKED_MAX {
                 windows.map.insert(n, (long_ago, 1));
             }
+            windows.sweep_at = 64 * TRACKED_MAX;
+            windows.swept = long_ago;
         }
         failures.record(usize::MAX);
         let windows = failures.windows.lock();

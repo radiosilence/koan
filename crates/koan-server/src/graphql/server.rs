@@ -462,7 +462,7 @@ impl ApiServer {
             Some(covers.clone()),
         );
 
-        let setup = setup_wizard.then(crate::ui::SetupGate::default);
+        let setup = (setup_wizard && auth_enabled).then(crate::ui::SetupGate::default);
         if auth_enabled {
             log::info!(
                 "Auth enabled (Ed25519 JWT, access TTL {}s, refresh TTL {}s)",

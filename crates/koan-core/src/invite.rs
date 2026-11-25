@@ -326,11 +326,15 @@ pub fn create_first_admin(
 
 /// Change an account's role, refusing to demote the last admin.
 pub fn set_role(conn: &Connection, username: &str, role: Role) -> Result<(), AccountError> {
-    atomically(conn, || {
+    let id = atomically(conn, || {
         koan_auth::accounts::set_role(conn, username, role)?;
         users::adopt_local_rows(conn)?;
-        Ok(())
-    })
+        Ok(account(conn, username)?.id)
+    })?;
+    // Announced again once this transaction, not only the crate's savepoint
+    // in it, has committed: see `koan_auth::changes`.
+    koan_auth::changes::account_changed(id);
+    Ok(())
 }
 
 #[cfg(test)]

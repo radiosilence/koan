@@ -1,1 +1,0 @@
-- **The setup page asks for a code from the server's log.** A headless server with no accounts used to make whoever reached `/setup` first its admin, and a database can be empty because a volume did not mount, not only on a new install. The code is on the log line that begins `No accounts yet`. `graphql.setup_wizard = false` still turns the page off.
