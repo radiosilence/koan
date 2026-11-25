@@ -37,7 +37,12 @@ pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
 
 /// The keypair in [`keypair_dir`], private then public.
 pub fn load_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
-    koan_auth::keys::load(&keypair_dir())
+    koan_auth::keys::load(&keypair_dir()).map_err(|e| match e {
+        AuthError::NoKeypair => {
+            AuthError::Other("keypair not found — run `koan auth setup` first".into())
+        }
+        e => e,
+    })
 }
 
 /// The keypair in [`keypair_dir`], generated there if there is none.

@@ -105,6 +105,12 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         return Ok(());
     }
     crate::sql::atomically(conn, || {
+        // Again under the write lock: another process opening the database
+        // at the same moment may have migrated it meanwhile.
+        let found = version(conn)?;
+        if found >= VERSION {
+            return Ok(());
+        }
         for sql in &MIGRATIONS[found as usize..] {
             conn.execute_batch(sql)?;
         }

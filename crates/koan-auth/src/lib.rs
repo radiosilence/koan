@@ -69,7 +69,7 @@ pub enum AuthError {
     InvalidPassword,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("keypair not found — run `koan auth setup` first")]
+    #[error("no signing keypair has been made")]
     NoKeypair,
     #[error("{0}")]
     Other(String),

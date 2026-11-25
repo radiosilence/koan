@@ -32,8 +32,8 @@ use rusqlite::Connection;
 use url::{Url, form_urlencoded};
 
 use crate::auth::Role;
-use crate::db::queries::api_keys;
 use crate::db::queries::auth as users;
+use crate::db::queries::{api_keys, atomically};
 
 pub use koan_auth::accounts::{
     AccountError, NewAccount, account, delete_account, set_password, valid_username,
@@ -296,15 +296,18 @@ pub fn redeem(
 }
 
 /// Create an account with a generated password. The first admin takes over
-/// what the implicit user had (`users::adopt_local_rows`).
+/// what the implicit user had (`users::adopt_local_rows`), in the same
+/// transaction, so that it holds the write lock it took for the account.
 pub fn create_account(
     conn: &Connection,
     username: &str,
     role: Role,
 ) -> Result<NewAccount, AccountError> {
-    let made = koan_auth::accounts::create_account(conn, username, role)?;
-    users::adopt_local_rows(conn)?;
-    Ok(made)
+    atomically(conn, || {
+        let made = koan_auth::accounts::create_account(conn, username, role)?;
+        users::adopt_local_rows(conn)?;
+        Ok(made)
+    })
 }
 
 /// Make the first admin of a server that has no accounts, with the password
@@ -314,16 +317,20 @@ pub fn create_first_admin(
     username: &str,
     password: &str,
 ) -> Result<i64, AccountError> {
-    let id = koan_auth::accounts::create_first_admin(conn, username, password)?;
-    users::adopt_local_rows(conn)?;
-    Ok(id)
+    atomically(conn, || {
+        let id = koan_auth::accounts::create_first_admin(conn, username, password)?;
+        users::adopt_local_rows(conn)?;
+        Ok(id)
+    })
 }
 
 /// Change an account's role, refusing to demote the last admin.
 pub fn set_role(conn: &Connection, username: &str, role: Role) -> Result<(), AccountError> {
-    koan_auth::accounts::set_role(conn, username, role)?;
-    users::adopt_local_rows(conn)?;
-    Ok(())
+    atomically(conn, || {
+        koan_auth::accounts::set_role(conn, username, role)?;
+        users::adopt_local_rows(conn)?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

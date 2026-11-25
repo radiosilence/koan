@@ -102,16 +102,20 @@ pub fn create_user(
     password: &str,
     role: Role,
 ) -> Result<i64, rusqlite::Error> {
-    let id = koan_auth::users::create_user(conn, username, password, role)?;
-    adopt_local_rows(conn)?;
-    Ok(id)
+    super::atomically(conn, || {
+        let id = koan_auth::users::create_user(conn, username, password, role)?;
+        adopt_local_rows(conn)?;
+        Ok(id)
+    })
 }
 
 /// Update a user's role.
 pub fn update_role(conn: &Connection, username: &str, role: Role) -> Result<bool, rusqlite::Error> {
-    let updated = koan_auth::users::update_role(conn, username, role)?;
-    adopt_local_rows(conn)?;
-    Ok(updated)
+    super::atomically(conn, || {
+        let updated = koan_auth::users::update_role(conn, username, role)?;
+        adopt_local_rows(conn)?;
+        Ok(updated)
+    })
 }
 
 #[cfg(test)]

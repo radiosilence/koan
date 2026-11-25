@@ -108,13 +108,21 @@ pub fn generate(dir: &Path) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     Ok((private_pem.into_bytes(), public_pem.into_bytes()))
 }
 
-/// The keypair in `dir`, private then public.
+/// The keypair in `dir`, private then public. A private key whose public
+/// half is missing has it derived and written back: making a new pair in its
+/// place would end every session and invite it signed.
 pub fn load(dir: &Path) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     let (private, public) = (private_key_path(dir), public_key_path(dir));
-    if !private.exists() || !public.exists() {
+    if !private.exists() {
         return Err(AuthError::NoKeypair);
     }
-    Ok((fs::read(private)?, fs::read(public)?))
+    let private = fs::read(private)?;
+    if !public.exists() {
+        let derived = public_from_private(&private)?;
+        fs::write(&public, &derived)?;
+        return Ok((private, derived.into_bytes()));
+    }
+    Ok((private, fs::read(public)?))
 }
 
 /// The keypair in `dir`, made there first if there is none.
@@ -167,6 +175,9 @@ MC4CAQAwBQYDK2VwBCIEIN4okzaVFYllZz7zbIu3b7smTH+sqY27i7X3MuoWRfKw
         let auth = dir.path().join("auth");
         assert!(matches!(load(&auth), Err(AuthError::NoKeypair)));
         let made = load_or_generate(&auth).unwrap();
+        assert_eq!(load_or_generate(&auth).unwrap(), made);
+        // A lost public half is derived again, never the pair remade.
+        fs::remove_file(auth.join(PUBLIC)).unwrap();
         assert_eq!(load_or_generate(&auth).unwrap(), made);
         #[cfg(unix)]
         {
