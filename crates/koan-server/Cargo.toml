@@ -20,7 +20,6 @@ crossbeam-channel = "0.5"
 form_urlencoded = "1"
 futures-util = { version = "0.3", features = ["sink"] }
 getrandom = "0.4"
-hmac = "0.13"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 ipnet = "2"
 koan-auth = { workspace = true }
