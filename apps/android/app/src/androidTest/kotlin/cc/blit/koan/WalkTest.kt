@@ -73,7 +73,7 @@ class WalkTest {
             title?.let { device.click(it.centerX(), it.top - it.height() * 3) }
             // A record's page, by its Shuffle, which the browser has not. Its
             // Play starts what Now Playing shows later in the walk.
-            if (title != null && find(label("Shuffle")) != null) {
+            if (title != null && device.wait(Until.hasObject(label("Shuffle")), 3_000) == true) {
                 tap { find(label("Play")) }
                 pause(3)
                 snap("04-album")
