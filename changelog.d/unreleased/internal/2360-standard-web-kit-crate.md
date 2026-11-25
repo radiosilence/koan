@@ -1,0 +1,1 @@
+- **STANDARD: controls from the kōan web kit's crate.** A web UI draws every control `koan-kit-web` has with its component, asks before a change through the page's one `kit::Confirm` rather than `confirm()`, and takes the kit's stylesheet from the crate's source, so the markup and its rules are one version.
