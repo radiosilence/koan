@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.75.2
+
+### Security
+
+- **Sign-in fixes from a review of koan-auth.** The setup page now asks for a code the server writes to its log, because a headless server with no accounts made whoever reached `/setup` first its admin, and a database can be empty because a volume did not mount, not only on a new install. Behind a proxy that appends a port or `unknown` to `X-Forwarded-For`, a client could choose the address its sign-in limits were counted against; now only the proxy's own entry is read. Two admins removing each other at once, a password reset that failed part way, and deleting an account over a connection without foreign keys each now run in one transaction. API keys are looked up by digest instead of by scanning every key, a limit on OAuth redirect hosts now applies to clients registered before it was set, and the sign-in limiters no longer rescan their whole map on every request during a flood.
+
+### Changed
+
+- **Filled primary buttons.** A page's main action, such as Play, Sign in or Allow, is filled with the accent so it stands out from the buttons beside it.
+
+### Internal
+
+- **Accounts and signing in are a crate of their own.** `koan-auth`, licensed MIT, holds the account rules, sessions, keys, tokens, sign-in limits, the OAuth server's protocol and the pairing registry, so other services can use them; kōan works as before.
+
 ## 0.75.1
 
 ### Changed
