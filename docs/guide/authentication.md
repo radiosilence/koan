@@ -204,7 +204,7 @@ koan auth create-user --username alice --role user
 #   user     — playback, queue, search, favourites, lyrics
 #   readonly — browse library, view queue. No mutations.
 
-# Reset a user's password (revokes their refresh tokens and API keys)
+# Reset a user's password (revokes their sessions, API keys and app passwords)
 koan auth reset-password alice
 
 # Change a user's role
@@ -237,6 +237,29 @@ it.
 - **Refresh token**: 30 days. Single-use rotation (each refresh returns a new pair). Stored server-side for revocation.
 - **Refresh**: `POST /auth/refresh` with `{"refresh_token": "..."}` returns new access + refresh tokens.
 - **Logout**: `POST /auth/logout` with `{"refresh_token": "..."}` revokes the token.
+
+## How credentials are kept
+
+Accounts and sign-in are the `koan-auth` crate's. A copy of the database alone signs nobody in.
+
+| Credential | Stored as | Why |
+|---|---|---|
+| Password | argon2id (19 MiB, 2 passes, 1 lane, random salt) | The parameters are OWASP's recommended minimum for argon2id, which RFC 9106 specifies. A slow, memory-hard hash makes each guess against a stolen database expensive. |
+| Session and refresh token | SHA-256 of 256 random bits | A secret that long cannot be guessed, so a fast hash is enough. |
+| API key | SHA-256 of 256 random bits | As above. A key is looked up by its digest, whose timing says nothing that helps find a key. |
+| App password | ChaCha20-Poly1305, under a key derived (HKDF-SHA256) from the server's signing key, bound to its account | Subsonic's token sign-in needs the plaintext, so it cannot be hashed. A copy of the database without the key does not open it. |
+| Access, invite and OAuth client tokens | Not stored: Ed25519-signed JWTs, with only EdDSA accepted | They are checked by signature. A token never grants more than the account has now, because the account's role is read again on every request. |
+
+Changing an account's password ends every session, API key and app password it has, and makes every invite sent for it useless. A role change, a revocation or a deletion also closes the sockets the account holds open, so a connection keeps no more than its credentials now give it.
+
+Signing in is guarded against guessing and against timing:
+
+- An unknown username is checked against a dummy argon2 hash, so the response time does not reveal which usernames exist. The setup code and the introspection key are compared in constant time.
+- Each address (or IPv6 /64) gets ten sign-in attempts a minute. Each username gets sixty failures a minute from all addresses together, except from networks the account has recently signed in from, so a stranger cannot lock its owner out. Only a few argon2 checks run at once, and a request that finds them all busy is refused rather than queued.
+- Behind a reverse proxy, the client's address is the last `X-Forwarded-For` entry. The header is believed only from a proxy the server trusts, and if that entry is not an address, the header is ignored.
+- Sign-in forms refuse cross-site posts (`Sec-Fetch-Site`, `Origin`), and an address to return to after signing in must be a path on this server.
+
+Passwords follow NIST SP 800-63B: at least eight characters, no composition rules, and no forced expiry. Generated passwords carry about 116 bits. OAuth follows OAuth 2.1, with PKCE (S256 only), RFC 8414 metadata, RFC 7591 registration, RFC 9728 resource metadata and the RFC 9207 `iss` parameter; a code works once and expires after a minute. Pairing follows the shape of the device authorization grant in RFC 8628. kōan has no second factor yet.
 
 ## GraphQL
 
@@ -301,7 +324,7 @@ Ed25519 keypair is auto-generated on first `koan auth setup` and stored at:
 **Reset a password:**
 ```bash
 koan auth reset-password admin
-# Prompts for new password. Revokes that user's refresh tokens and API keys.
+# Prompts for new password. Revokes that user's sessions, API keys and app passwords.
 ```
 
 **Regenerate keypair:**
