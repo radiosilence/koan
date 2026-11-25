@@ -11,6 +11,7 @@ pub use koan_auth::changes::{
 };
 pub use koan_auth::keys::generate_pem as generate_keypair_pem;
 pub use koan_auth::password::{hash_password, verify_password};
+pub use koan_auth::second_factor;
 pub use koan_auth::secret::{random_api_key, random_app_password, random_token, sha256_hex};
 pub use koan_auth::token::{
     Claims, mint_access_token, mint_scoped_token, parse_duration_secs, validate_access_token,

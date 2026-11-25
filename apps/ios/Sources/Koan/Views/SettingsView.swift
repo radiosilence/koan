@@ -432,6 +432,15 @@ private struct RemoteSettings: View {
                         .accessibilityIdentifier("secret")
                         .koanField(model.password, prompt: model.withApiKey ? "API key" : "Password", secure: true)
                     }
+                    // Two-step sign-in: the account said it wants a code too.
+                    if model.wantsCode && !model.withApiKey {
+                        LabeledContent("Code") {
+                            TextField("Code", text: $model.code, prompt: Text("Code from your authenticator app, or a recovery code"))
+                                .verbatimEntry()
+                                .accessibilityIdentifier("code")
+                                .koanField(model.code, prompt: "Code")
+                        }
+                    }
                     HStack {
                         Button("Sign In") { model.signIn(url: url, username: username) }
                             .koanButton(.prominent)

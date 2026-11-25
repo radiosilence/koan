@@ -4835,20 +4835,33 @@ impl KoanEngine {
     /// Sign in to a Subsonic/Navidrome server.
     ///
     /// Checked against the server before anything is written; the credentials
-    /// then go to `config.local.toml`.
+    /// then go to `config.local.toml`. `code` is the second factor of a koan
+    /// account with two-step sign-in: `NeedsSecondFactor` asks for it.
     pub async fn sign_in_remote(
         self: Arc<Self>,
         url: String,
         username: String,
         password: String,
+        code: Option<String>,
     ) -> Result<(), KoanError> {
+        use koan_core::helpers::SignInError;
         offload::offload(move || {
             serve::refuse_while_sharing()?;
             self.signing_in(|| {
-                koan_core::helpers::set_remote_credentials(&url, &username, &password)
+                koan_core::helpers::set_remote_credentials(
+                    &url,
+                    &username,
+                    &password,
+                    code.as_deref(),
+                )
             })
-            .map_err(|e| KoanError::BadArgument {
-                message: e.to_string(),
+            .map_err(|e| match e {
+                SignInError::NeedsSecondFactor { message } => {
+                    KoanError::NeedsSecondFactor { message }
+                }
+                e => KoanError::BadArgument {
+                    message: e.to_string(),
+                },
             })
         })
         .await

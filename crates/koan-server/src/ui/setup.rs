@@ -21,7 +21,7 @@ use koan_core::db::queries::auth as auth_queries;
 use koan_core::invite::{self, AccountError};
 
 use super::{UiState, html, open, pages, see_other};
-use crate::auth::routes::{ClientIp, authenticate};
+use crate::auth::routes::{ClientIp, SignedIn, authenticate};
 use crate::share::blocking;
 
 /// How often the code is written to the log again while the page is in use,
@@ -132,15 +132,15 @@ pub(super) async fn create(
         }
     };
     log::warn!("web UI: {username:?} made the first admin account through /setup, from {from}");
-    match authenticate(&s.auth, username, &f.password, from).await {
-        Ok((_, access, refresh)) => (
+    match authenticate(&s.auth, username, &f.password, None, from).await {
+        Ok(SignedIn::Session(_, access, refresh)) => (
             StatusCode::SEE_OTHER,
             [(header::LOCATION, "/")],
             s.auth.session_cookies(&access, &refresh),
         )
             .into_response(),
         // Made, but not signed in: the sign-in form will do it.
-        Err(_) => see_other("/login"),
+        Ok(SignedIn::NeedsSecond(_)) | Err(_) => see_other("/login"),
     }
 }
 

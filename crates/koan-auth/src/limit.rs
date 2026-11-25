@@ -56,6 +56,11 @@ impl<K: std::hash::Hash + Eq, W> Windows<K, W> {
 pub const FAILURES_PER_USERNAME_PER_MINUTE: u32 = 60;
 pub const FAILURE_WINDOW: Duration = Duration::from_secs(60);
 
+/// Wrong second-factor codes allowed for one username in a minute. Far fewer
+/// than passwords: a six-digit code is a million guesses, not a password's
+/// unbounded space, and only someone who already has the password reaches it.
+pub const CODE_FAILURES_PER_MINUTE: u32 = 5;
+
 /// A fixed-window cap on requests per address (see [`network`]).
 pub struct RateLimiter {
     windows: Mutex<Windows<IpAddr, (u64, u32)>>,

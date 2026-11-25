@@ -1,8 +1,8 @@
-{#- Every account, with its access, an invite, and for others a new password or deletion. -#}
+{#- Every account, with its access, an invite, and for others a new password, two-step sign-in turned off, or deletion. -#}
 <ul id="users">
 {%- for u in rows %}
 <li class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-1 py-2.5">
-<span class="min-w-[8em] flex-1 truncate wrap-anywhere">{{ u.username }}{% if u.id == me %}<small class="ml-2 text-meta text-muted">you</small>{% endif %}</span>
+<span class="min-w-[8em] flex-1 truncate wrap-anywhere">{{ u.username }}{% if u.id == me %}<small class="ml-2 text-meta text-muted">you</small>{% endif %}{% if two_step.contains(u.id) %}<small class="ml-2 text-meta text-muted">two-step</small>{% endif %}</span>
 <select class="py-1.5 pl-2" aria-label="Access" data-on:change="@post('users/{{ u.id }}/role?role=' + el.value)">
 {%- for (role, label) in crate::ui::users::ROLES %}<option value="{{ role.as_str() }}"{% if role == u.role %} selected{% endif %}>{{ label }}</option>{% endfor -%}
 </select>
@@ -10,6 +10,9 @@
 {%- if u.id != me %}
 {#- Not on your own row: a new password signs out every session, this one included. The name reaches the confirmation as data: escaped into the expression itself, it would be decoded back and run. #}
 <button class="quiet" data-on:click="@post('users/{{ u.id }}/password/form')">Password</button>
+{%- if two_step.contains(u.id) %}
+<button class="quiet" data-username="{{ u.username }}" data-on:click="confirm('Turn off two-step sign-in for ' + el.dataset.username + '? Their browsers are signed out, and their password alone signs them in.') && @post('users/{{ u.id }}/two-step/remove')">Two-step off</button>
+{%- endif %}
 <button class="quiet bad" data-username="{{ u.username }}" data-on:click="confirm('Delete ' + el.dataset.username + '? Their devices stop working and their playlists and favourites go.') && @post('users/{{ u.id }}/delete')">Delete</button>
 {%- endif %}</li>
 {%- endfor %}

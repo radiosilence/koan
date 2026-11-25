@@ -167,15 +167,61 @@ struct Login<'a> {
     error: Option<&'a str>,
     /// On a demo server, the shared account, filled in.
     demo: Option<(&'a str, &'a str)>,
+    /// A challenge for a passkey to sign in with alone, and
+    /// `navigator.credentials.get`'s options as JSON: absent where the
+    /// server's address allows no passkeys.
+    passkey: Option<(String, String)>,
 }
 
 pub(super) fn login(s: &UiState, next: &str, error: Option<&str>) -> Html {
+    use koan_auth::second_factor::Purpose;
+    let passkey = s.relying_party().and_then(|rp| {
+        let (ticket, held) = s.auth.users.passkeys().open(0, "", Purpose::Passkey).ok()?;
+        let options = koan_auth::webauthn::passkey_options(&rp, &held.challenge).to_string();
+        Some((ticket, options))
+    });
     Login {
         base: s.base(),
         title: "Sign in",
         next,
         error,
         demo: crate::demo::enabled().then_some((crate::demo::USERNAME, crate::demo::PASSWORD)),
+        passkey,
+    }
+    .html()
+}
+
+/// A sign-in's second step: a code, or a security key when the account has
+/// one and the server's address allows them.
+#[derive(Template)]
+#[template(path = "pages/second_step.html")]
+struct SecondStep<'a> {
+    base: String,
+    title: &'a str,
+    next: &'a str,
+    ticket: &'a str,
+    totp: bool,
+    /// `navigator.credentials.get`'s options, as JSON.
+    key_options: Option<&'a str>,
+    error: Option<&'a str>,
+}
+
+pub(super) fn second_step(
+    s: &UiState,
+    next: &str,
+    ticket: &str,
+    totp: bool,
+    key_options: Option<&str>,
+    error: Option<&str>,
+) -> Html {
+    SecondStep {
+        base: s.base(),
+        title: "Sign in",
+        next,
+        ticket,
+        totp,
+        key_options,
+        error,
     }
     .html()
 }

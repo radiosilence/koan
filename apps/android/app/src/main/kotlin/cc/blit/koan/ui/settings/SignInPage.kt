@@ -70,7 +70,12 @@ fun SignInPage(model: AccountModel) {
             when {
                 pairing != null -> WaitingForApproval(pairing.code, pairing.link, onCancel = model::cancelPairing)
                 withCode -> CodeForm(model, enabled = state.busy == null, onBack = { withCode = false })
-                else -> PasswordForm(model, enabled = state.busy == null, onCode = { withCode = true })
+                else -> PasswordForm(
+                    model,
+                    enabled = state.busy == null,
+                    wantsCode = state.wantsCode,
+                    onCode = { withCode = true },
+                )
             }
             state.error?.let { KoanText(it, tone = KoanTone.Bad) }
             state.busy?.let { Working(it) }
@@ -79,16 +84,24 @@ fun SignInPage(model: AccountModel) {
 }
 
 @Composable
-private fun PasswordForm(model: AccountModel, enabled: Boolean, onCode: () -> Unit) {
+private fun PasswordForm(model: AccountModel, enabled: Boolean, wantsCode: Boolean, onCode: () -> Unit) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var url by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
     var secret by rememberSaveable { mutableStateOf("") }
     var withApiKey by rememberSaveable { mutableStateOf(false) }
+    var code by rememberSaveable { mutableStateOf("") }
     var notInvite by rememberSaveable { mutableStateOf(false) }
-    val ready = enabled && url.isNotBlank() && username.isNotBlank() && secret.isNotEmpty()
-    val submit = { if (ready) model.signIn(url, username, secret, withApiKey) }
+    val askCode = wantsCode && !withApiKey
+    val ready = enabled && url.isNotBlank() && username.isNotBlank() && secret.isNotEmpty() &&
+        (!askCode || code.isNotBlank())
+    val submit = {
+        if (ready) {
+            model.signIn(url, username, secret, withApiKey, code.takeIf { askCode })
+            code = ""
+        }
+    }
 
     KoanText("Sign in to your Subsonic, Navidrome or kōan server.")
     KoanFormRow("Server") {
@@ -130,6 +143,19 @@ private fun PasswordForm(model: AccountModel, enabled: Boolean, onCode: () -> Un
             keyboardActions = KeyboardActions(onGo = { submit() }),
             visualTransformation = PasswordVisualTransformation(),
         )
+    }
+    // Two-step sign-in: the account said it wants a code too.
+    if (askCode) {
+        KoanFormRow("Code") {
+            KoanField(
+                code,
+                { code = it },
+                Modifier.fillMaxWidth(),
+                placeholder = "From your authenticator app, or a recovery code",
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { submit() }),
+            )
+        }
     }
     KoanButton("Sign in", submit, kind = KoanButtonKind.Prominent, enabled = ready)
     Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.l)) {

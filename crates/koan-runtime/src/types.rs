@@ -1542,6 +1542,11 @@ pub enum KoanError {
     /// import again with one.
     #[error("{message}")]
     NeedsSampleRate { message: String },
+    /// A sign-in to an account with two-step sign-in: ask for a code from its
+    /// authenticator app or a recovery code, and sign in again with it. The
+    /// message is the server's, and says when a code given was wrong.
+    #[error("{message}")]
+    NeedsSecondFactor { message: String },
 }
 
 /// What to offer the output in use about AutoEQ.

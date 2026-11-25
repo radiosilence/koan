@@ -20,6 +20,13 @@ pub use koan_auth::password::Refused;
 pub struct PasswordVerifier {
     pool: Arc<Pool>,
     inner: koan_auth::password::Verifier,
+    /// Sign-ins waiting on their second factor, and security keys being
+    /// registered: with the verifier because every door shares it.
+    tickets: koan_auth::second_factor::Tickets,
+    /// The challenges sign-in pages offer passkeys, one per page shown: kept
+    /// apart, so that loading the sign-in page many times cannot push out a
+    /// sign-in waiting on its second factor.
+    passkeys: koan_auth::second_factor::Tickets,
 }
 
 impl PasswordVerifier {
@@ -27,7 +34,17 @@ impl PasswordVerifier {
         Self {
             pool,
             inner: koan_auth::password::Verifier::new(),
+            tickets: Default::default(),
+            passkeys: Default::default(),
         }
+    }
+
+    pub(crate) fn tickets(&self) -> &koan_auth::second_factor::Tickets {
+        &self.tickets
+    }
+
+    pub(crate) fn passkeys(&self) -> &koan_auth::second_factor::Tickets {
+        &self.passkeys
     }
 
     /// Whether `username` has spent its failures for the minute, as far as a

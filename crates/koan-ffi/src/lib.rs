@@ -2427,14 +2427,21 @@ impl KoanEngine {
     /// Sign in to a Subsonic/Navidrome server.
     ///
     /// Checked against the server before anything is written; the credentials
-    /// then go to `config.local.toml`.
+    /// then go to `config.local.toml`. `code` is the second factor of a koan
+    /// account with two-step sign-in, asked for once `NeedsSecondFactor` says
+    /// so.
+    #[uniffi::method(default(code = None))]
     pub async fn sign_in_remote(
         self: Arc<Self>,
         url: String,
         username: String,
         password: String,
+        code: Option<String>,
     ) -> Result<(), KoanError> {
-        self.0.clone().sign_in_remote(url, username, password).await
+        self.0
+            .clone()
+            .sign_in_remote(url, username, password, code)
+            .await
     }
 
     /// Sign in to a koan server with an API key the account already holds.
@@ -4151,6 +4158,11 @@ mod types {
         /// An import of coefficients that say nothing of their rate. Ask, and
         /// import again with one.
         NeedsSampleRate {
+            message: String,
+        },
+        /// A sign-in to an account with two-step sign-in: ask for a code and
+        /// sign in again with it. The message says when a code was wrong.
+        NeedsSecondFactor {
             message: String,
         },
     }

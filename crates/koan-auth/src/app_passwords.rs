@@ -41,6 +41,12 @@ pub fn seal_app_password(
     user_id: i64,
     password: &str,
 ) -> Result<Vec<u8>, AuthError> {
+    seal(key, user_id, password.as_bytes())
+}
+
+/// Seal `secret` for `user_id` as [`seal_app_password`] does: shared with the
+/// authenticator app secrets, under a key of their own.
+pub(crate) fn seal(key: &[u8; 32], user_id: i64, secret: &[u8]) -> Result<Vec<u8>, AuthError> {
     use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
     use ring::rand::SecureRandom;
 
@@ -51,7 +57,7 @@ pub fn seal_app_password(
     ring::rand::SystemRandom::new()
         .fill(&mut nonce)
         .map_err(|_| AuthError::Hash("rng failure".into()))?;
-    let mut sealed = password.as_bytes().to_vec();
+    let mut sealed = secret.to_vec();
     sealing
         .seal_in_place_append_tag(
             Nonce::assume_unique_for_key(nonce),
@@ -67,6 +73,11 @@ pub fn seal_app_password(
 /// The app password `seal_app_password` sealed, if `key` and `user_id` are the
 /// ones it was sealed with.
 pub fn open_app_password(key: &[u8; 32], user_id: i64, sealed: &[u8]) -> Option<String> {
+    String::from_utf8(open(key, user_id, sealed)?).ok()
+}
+
+/// What [`seal`] sealed, if `key` and `user_id` are the ones it was sealed with.
+pub(crate) fn open(key: &[u8; 32], user_id: i64, sealed: &[u8]) -> Option<Vec<u8>> {
     use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 
     let opening = LessSafeKey::new(UnboundKey::new(&CHACHA20_POLY1305, key).ok()?);
@@ -79,7 +90,7 @@ pub fn open_app_password(key: &[u8; 32], user_id: i64, sealed: &[u8]) -> Option<
             &mut buf,
         )
         .ok()?;
-    String::from_utf8(plain.to_vec()).ok()
+    Some(plain.to_vec())
 }
 
 #[derive(Debug, Clone)]

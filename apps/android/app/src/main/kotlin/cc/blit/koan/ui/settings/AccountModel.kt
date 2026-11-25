@@ -50,6 +50,8 @@ data class AccountState(
     val pendingPairing: PairingRequest? = null,
     /** What became of something done here that no page is showing. */
     val notice: String? = null,
+    /** The account has two-step sign-in: the form asks for a code beside the password. */
+    val wantsCode: Boolean = false,
 )
 
 /**
@@ -85,13 +87,14 @@ class AccountModel(
         }
     }
 
-    fun signIn(url: String, username: String, secret: String, withApiKey: Boolean) {
+    /** `code` is the second factor, for an account that has said it wants one. */
+    fun signIn(url: String, username: String, secret: String, withApiKey: Boolean, code: String? = null) {
         val server = url.trim()
         signInThen("Signing in to ${host(server)}") {
             if (withApiKey) {
                 signInRemoteWithKey(server, username.trim(), secret.trim())
             } else {
-                signInRemote(server, username.trim(), secret)
+                signInRemote(server, username.trim(), secret, code?.trim()?.ifEmpty { null })
             }
         }
     }
@@ -228,10 +231,12 @@ class AccountModel(
             _state.update { it.copy(busy = label, error = null) }
             try {
                 activity.run(label) { engine().signIn() }
-                _state.update { it.copy(busy = "Loading the library") }
+                _state.update { it.copy(busy = "Loading the library", wantsCode = false) }
                 syncAfterSignIn()
             } catch (e: KoanException) {
-                _state.update { it.copy(error = e.describe()) }
+                _state.update {
+                    it.copy(error = e.describe(), wantsCode = e is KoanException.NeedsSecondFactor)
+                }
             } finally {
                 _state.update { it.copy(busy = null) }
             }

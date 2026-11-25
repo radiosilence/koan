@@ -253,7 +253,7 @@ impl SettingsPage {
                     let signed = if with_key {
                         helpers::set_remote_api_key(&url, &username, &secret)
                     } else {
-                        helpers::set_remote_credentials(&url, &username, &secret)
+                        helpers::set_remote_credentials(&url, &username, &secret, None)
                     };
                     done(move |page| {
                         page.fields.remove(&Field::Secret);

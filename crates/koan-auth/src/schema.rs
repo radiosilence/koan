@@ -9,12 +9,13 @@
 //! The first version is kōan's tables as they stood when they moved here,
 //! columns and all, so a kōan database adopts it without a change: `device`
 //! and `device_key` on `api_keys` are kōan's, binding a key to the device it
-//! signed in.
+//! signed in. The second adds the second factor's tables.
 
 use rusqlite::{Connection, OptionalExtension};
 
 /// Each version's statements, in order: the first creates the tables.
-const MIGRATIONS: &[&str] = &["
+const MIGRATIONS: &[&str] = &[
+    "
     CREATE TABLE IF NOT EXISTS users (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         username      TEXT NOT NULL UNIQUE,
@@ -66,7 +67,44 @@ const MIGRATIONS: &[&str] = &["
     );
 
     CREATE INDEX IF NOT EXISTS idx_app_passwords_user ON app_passwords(user_id);
-"];
+",
+    "
+    -- A second factor: see `second_factor`. An authenticator app's secret is
+    -- sealed as an app password is, and unconfirmed until a code from it is
+    -- given; `last_step` is the last step a code was accepted for.
+    CREATE TABLE IF NOT EXISTS totp (
+        user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        sealed     BLOB NOT NULL,
+        confirmed  INTEGER NOT NULL DEFAULT 0,
+        last_step  INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+    );
+
+    -- WebAuthn credentials: the COSE public key and the signature counter.
+    CREATE TABLE IF NOT EXISTS security_keys (
+        id            INTEGER PRIMARY KEY,
+        user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name          TEXT NOT NULL,
+        credential_id BLOB NOT NULL UNIQUE,
+        public_key    BLOB NOT NULL,
+        sign_count    INTEGER NOT NULL DEFAULT 0,
+        created_at    INTEGER NOT NULL,
+        last_used_at  INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_security_keys_user ON security_keys(user_id);
+
+    -- Only `sha256(code)`: a code is random, so a fast hash is enough.
+    CREATE TABLE IF NOT EXISTS recovery_codes (
+        id        INTEGER PRIMARY KEY,
+        user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code_hash TEXT NOT NULL,
+        used_at   INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_recovery_codes_user ON recovery_codes(user_id);
+",
+];
 
 /// The version this build's tables are at.
 pub const VERSION: i64 = MIGRATIONS.len() as i64;

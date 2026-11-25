@@ -153,8 +153,14 @@ pub fn cmd_auth_create_user(tty: Tty, username: &str, role_str: &str, save_to_1p
     }
 }
 
-/// `koan auth reset-password <username>`
-pub fn cmd_auth_reset_password(tty: Tty, username: &str, save_to_1password: bool) {
+/// `koan auth reset-password <username>`, and with `remove_second_factor`
+/// the account's two-step sign-in turned off: for someone who lost both.
+pub fn cmd_auth_reset_password(
+    tty: Tty,
+    username: &str,
+    save_to_1password: bool,
+    remove_second_factor: bool,
+) {
     let db = open_db();
     let password = new_password(tty);
 
@@ -165,6 +171,26 @@ pub fn cmd_auth_reset_password(tty: Tty, username: &str, save_to_1password: bool
                 "✓".green().bold(),
                 username
             );
+            if remove_second_factor {
+                let removed = auth_queries::get_user_by_username(&db.conn, username)
+                    .ok()
+                    .flatten()
+                    .map(|u| koan_core::auth::second_factor::turn_off(&db.conn, u.id));
+                match removed {
+                    Some(Ok(true)) => println!(
+                        "{} Two-step sign-in turned off: the password alone signs in.",
+                        "✓".green().bold()
+                    ),
+                    Some(Ok(false)) => println!("  '{username}' had no two-step sign-in."),
+                    _ => {
+                        eprintln!(
+                            "{} Two-step sign-in could not be turned off",
+                            "✗".red().bold()
+                        );
+                        std::process::exit(1);
+                    }
+                }
+            }
             offer_save_to_1password(tty, save_to_1password, username, &password);
         }
         Ok(false) => {
@@ -240,6 +266,14 @@ fn generate_password() -> String {
         }
     }
     password
+}
+
+/// `KOAN_CODE`: a second factor for an account with two-step sign-in, which
+/// takes precedence over asking.
+fn env_code() -> Option<String> {
+    std::env::var("KOAN_CODE")
+        .ok()
+        .filter(|c| !c.trim().is_empty())
 }
 
 /// `KOAN_PASSWORD`, which takes precedence over asking.
@@ -591,11 +625,12 @@ pub fn cmd_auth_login(tty: Tty, server_url: &str, username: &str) {
     let url = format!("{}/auth/login", server_url.trim_end_matches('/'));
 
     let client = reqwest::blocking::Client::new();
-    let resp = match client
+    let send = |code: Option<&str>| match client
         .post(&url)
         .json(&serde_json::json!({
             "username": username,
-            "password": password
+            "password": password,
+            "code": code,
         }))
         .send()
     {
@@ -605,6 +640,26 @@ pub fn cmd_auth_login(tty: Tty, server_url: &str, username: &str) {
             std::process::exit(1);
         }
     };
+    let mut resp = send(env_code().as_deref());
+    // Two-step sign-in: the password passed, and the server wants a code.
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED && env_code().is_none() {
+        let body = resp.text().unwrap_or_default();
+        let wants_code = serde_json::from_str::<serde_json::Value>(&body)
+            .is_ok_and(|v| v["second_factor"] == true);
+        if !wants_code {
+            eprintln!(
+                "{} Login failed (401 Unauthorized): {}",
+                "✗".red().bold(),
+                body
+            );
+            std::process::exit(1);
+        }
+        if !tty.0 {
+            fail("This account uses two-step sign-in: set KOAN_CODE.");
+        }
+        let code = prompt("Code from your authenticator app, or a recovery code: ");
+        resp = send(Some(&code));
+    }
 
     if !resp.status().is_success() {
         let status = resp.status();

@@ -1,0 +1,17 @@
+{% extends "signin.html" %}
+{% block body %}
+{#- A sign-in's second step, its password passed: a security key, or a code from an authenticator app, or a recovery code. -#}
+<p class="m-0 text-ink">This account uses two-step sign-in.</p>
+{%- if let Some(options) = key_options %}
+<form class="grid gap-3.5" method="post" action="login/second" data-passkey-sign-in data-options="{{ options }}"><input type="hidden" name="ticket" value="{{ ticket }}"><input type="hidden" name="next" value="{{ next }}"><input type="hidden" name="assertion">
+<button class="primary" type="submit"{% if !totp %} autofocus{% endif %}>Use a security key or passkey</button>
+<p class="m-0 {{ crate::ui::pages::ERROR }}" role="alert" data-passkey-error hidden></p></form>
+{%- endif %}
+<form class="grid gap-3.5" method="post" action="login/second"><input type="hidden" name="ticket" value="{{ ticket }}"><input type="hidden" name="next" value="{{ next }}">
+<label class="field"><span>{% if totp %}code from your authenticator app{% else %}recovery code{% endif %}</span><input name="code" autocomplete="one-time-code" autocapitalize="none" spellcheck="false" required{% if totp || key_options.is_none() %} autofocus{% endif %}></label>
+<p class="m-0 {{ crate::ui::pages::SUB }}">{% if totp %}Lost the app? A recovery code works here too.{% else %}Lost your key? Type one of your recovery codes.{% endif %}</p>
+{% if let Some(e) = error %}<p class="m-0 {{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>{% endif %}
+<button{% if key_options.is_none() %} class="primary"{% endif %}>Continue</button></form>
+<a class="{{ crate::ui::pages::SUB }}" href="login?next={{ next|urlencode }}">Sign in as someone else</a>
+<script type="module" src="{{ crate::ui::ASSETS.passkey_js }}"></script>
+{% endblock %}
