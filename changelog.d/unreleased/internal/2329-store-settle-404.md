@@ -1,0 +1,1 @@
+- **App Store resubmission survives a slow cancel.** `push.py` keeps waiting when a just-cancelled review submission briefly answers 404, instead of stopping before the new submission.
