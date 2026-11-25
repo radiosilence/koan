@@ -1,0 +1,1 @@
+- **The standard forbids type assertions in TypeScript and asks for Zod on outside data.** Casts through `unknown`, non-null `!` and generic JSON helpers check nothing, so every read that is not GraphQL now goes through a Zod schema, browser scripts included, which import it through the page's import map.
