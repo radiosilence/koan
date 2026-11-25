@@ -1,0 +1,492 @@
+/*
+ * The kōan web kit: the controls every server-rendered page is drawn with, built from tokens.css. Plain elements come
+ * out in the theme (a `<button>` is the bordered button, an `<input>` the square field), and a handful of classes give
+ * the rest: the button weights, a labelled field, a field joined to its button, a panel, a notice, a status, the
+ * progress meter and the toast.
+ *
+ * Element rules are in `@layer base` and the classes in `@layer components`, so any utility in a template still wins.
+ * The rules and their reasons are in the README; koan's docs/design/koan-theme.md is the specification.
+ */
+
+@layer base {
+  /* `clip` rather than `hidden`, which would make body a scroll container and stop `sticky` sticking. */
+  html,
+  body {
+    @apply overflow-x-clip;
+  }
+
+  /* Touch screens get no hover, so a tap's highlight is the only sign it landed. Preflight removes it. */
+  html {
+    -webkit-tap-highlight-color: revert;
+  }
+
+  body {
+    @apply min-h-dvh bg-bg text-body text-ink;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  a {
+    @apply text-brand hover:underline;
+  }
+
+  p {
+    @apply my-[1em];
+  }
+
+  /* The app's own words are lowercase; what comes from a person or the outside world keeps its case, so a heading that
+   * shows one says `normal-case`. Screen readers read the markup, which keeps its capitals. */
+  h1 {
+    @apply mt-1 mb-4 text-display font-extralight wrap-anywhere text-strong lowercase max-sm:text-title;
+  }
+
+  h2 {
+    @apply mt-8 mb-3 text-title-sm font-light text-strong lowercase;
+  }
+
+  h3 {
+    @apply mt-6 mb-2 text-meta font-normal text-muted lowercase;
+  }
+
+  /* Labels and summaries are not lowercased here: they so often hold a person's or the outside world's text (a file
+   * name, a title, a path) that the app's own words in them are written lowercase in the source instead. */
+  button,
+  .button {
+    @apply lowercase;
+  }
+
+  summary {
+    @apply cursor-pointer;
+  }
+
+  strong {
+    @apply font-semibold text-strong;
+  }
+
+  /* Geist Mono is already monospace; preflight's `font-family` on code would only change the size. */
+  code,
+  kbd,
+  samp,
+  pre {
+    font: inherit;
+  }
+
+  small {
+    @apply text-meta;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand;
+  }
+
+  /* Bordered: a button's weight unless the page says otherwise. Square, as every control in the theme is; the outline
+   * is `muted` because `rule` is too faint to show where a control is. `.button` draws a link the same way. */
+  button,
+  .button,
+  input:is([type="submit"], [type="button"], [type="reset"]) {
+    @apply inline-flex cursor-pointer items-center justify-center gap-1.5 border border-muted bg-transparent px-3 py-1.5 text-meta text-ink select-none hover:bg-hover/30 hover:no-underline active:bg-hover disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent;
+  }
+
+  input:not([type="submit"], [type="button"], [type="reset"], [type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+  select,
+  textarea {
+    @apply min-w-0 border border-muted bg-transparent px-2.5 py-2 text-input text-ink normal-case;
+  }
+
+  /* Drawn rather than native, which on Safari is a rounded menu button whatever the border says. */
+  select {
+    @apply cursor-pointer appearance-none pr-8;
+    background: var(--chevron) right 10px center / 10px no-repeat;
+  }
+
+  ::placeholder {
+    @apply text-muted opacity-100;
+  }
+
+  /* The toggle: a square box, outlined off, filled with a tick on. A choice of one is the same box. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    @apply m-0 size-3.5 flex-none cursor-pointer appearance-none border border-muted bg-transparent p-0 align-[-2px] checked:border-brand;
+  }
+
+  input[type="checkbox"]:checked,
+  input[type="radio"]:checked {
+    background: var(--brand) var(--tick) center / 100% no-repeat;
+  }
+
+  /* The slider: a hairline track, the part done thicker in the accent, and a square thumb shown only while it is in
+   * use. WebKit has no part for the done share, so there it is drawn from `--fill` (a percentage), which the page's
+   * script sets from the value on load and on input; Firefox draws it itself. */
+  input[type="range"] {
+    @apply h-11 cursor-pointer appearance-none border-0 bg-transparent p-0;
+  }
+
+  input[type="range"]::-webkit-slider-runnable-track {
+    @apply h-[3px];
+    background:
+      linear-gradient(var(--brand), var(--brand)) 0 50% / var(--fill, 0%) 3px no-repeat,
+      linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    @apply -mt-[2.5px] size-2 appearance-none border-0 bg-ink opacity-0;
+  }
+
+  input[type="range"]::-moz-range-track {
+    @apply h-px bg-rule;
+  }
+
+  input[type="range"]::-moz-range-progress {
+    @apply h-[3px] bg-brand;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    @apply size-2 border-0 bg-ink opacity-0;
+    border-radius: 0;
+  }
+
+  input[type="range"]:is(:hover, :focus-visible, :active)::-webkit-slider-thumb {
+    @apply opacity-100;
+  }
+
+  input[type="range"]:is(:hover, :focus-visible, :active)::-moz-range-thumb {
+    @apply opacity-100;
+  }
+
+  input[type="range"]:focus-visible {
+    @apply outline-none;
+  }
+
+  /* With no shadow, the hairline is what separates a dialog from the dimmed page behind it. */
+  dialog {
+    @apply border border-rule bg-bg text-ink;
+  }
+
+  dialog::backdrop {
+    @apply bg-bg/80;
+  }
+}
+
+@layer components {
+  /* The weights beside the bordered default. Primary is the main action of the page, a card or a form, filled with the
+   * accent so it reads first among bordered controls; standard is the label alone; quiet is a bar's text button; link
+   * goes somewhere, or is a lesser action inline with text. Repeated row actions in a long list stay bordered. */
+  .primary {
+    @apply border-transparent bg-brand px-5 py-3 text-body text-bg hover:bg-brand hover:opacity-90 active:bg-brand active:opacity-80;
+  }
+
+  .standard {
+    @apply border-transparent px-1 py-2 text-control hover:bg-transparent hover:text-strong;
+  }
+
+  .quiet {
+    @apply border-transparent bg-transparent px-2 text-muted hover:bg-transparent hover:text-ink;
+  }
+
+  .link {
+    @apply border-0 bg-transparent p-0 text-muted underline hover:bg-transparent hover:text-ink active:bg-transparent;
+  }
+
+  /* Filled: the button's own tone as its ground rather than its outline. On the bordered default a quiet fill a step
+   * above the page; on `bad` the error colour, with the label in `bg`. `primary` is always filled. */
+  .fill {
+    @apply border-transparent bg-hover/40 hover:bg-hover/70 active:bg-hover;
+  }
+
+  .bad.fill {
+    @apply bg-bad text-bg hover:bg-bad hover:opacity-90 active:opacity-80;
+  }
+
+  /* Destructive: compact or bordered, in `bad`. */
+  .bad {
+    @apply border-bad text-bad;
+  }
+
+  :is(.quiet, .standard, .link).bad {
+    @apply border-transparent hover:text-bad;
+  }
+
+  /* A glyph alone, with a 40px target. Its accessible name is an aria-label. */
+  .icon-button {
+    @apply inline-grid size-10 place-items-center border-0 bg-transparent p-0 text-ink hover:bg-hover/30;
+  }
+
+  /* A labelled control: the label leads, the control fills the width, and a hint or the control's status follows. The
+   * hint keeps its case, since it may quote the outside world. */
+  .field {
+    @apply grid gap-1.5 text-control text-ink;
+  }
+
+  .field :is(input:not([type="checkbox"], [type="radio"], [type="range"]), select, textarea) {
+    @apply w-full;
+  }
+
+  .field > span:first-child {
+    @apply lowercase;
+  }
+
+  .field > small {
+    @apply text-fine text-muted normal-case;
+  }
+
+  .field > small.bad,
+  .field.bad > small {
+    @apply text-bad;
+  }
+
+  .field.bad :is(input, select, textarea) {
+    @apply border-bad;
+  }
+
+  .field > small.warn,
+  .field.warn > small {
+    @apply text-warn;
+  }
+
+  /* A field joined to the action it feeds: the two share a border and read as one control. The field takes the spare
+   * width and the action keeps its own; a focused part is lifted so its outline is not hidden under its neighbour. */
+  .combo {
+    @apply inline-flex items-stretch;
+  }
+
+  .combo > * + * {
+    @apply -ml-px;
+  }
+
+  .combo > :is(input, select) {
+    @apply flex-1;
+  }
+
+  .combo > :focus-visible {
+    @apply relative z-10;
+  }
+
+  /* A toggle in a form: the label leads, the box sits at the trailing edge, where a switch would. */
+  .toggle {
+    @apply flex cursor-pointer items-center justify-between gap-4 py-2 text-body;
+  }
+
+  /* A region of a page: a quieter, lighter ground rather than an outline, so a page of them reads as calm blocks rather
+   * than a grid of boxes. The border is there but clear, so an app can tone it (a status, a selection) without the
+   * panel changing size. What would sit on `surface` inside it (a code value, a nested panel) drops back to `bg`. */
+  .panel {
+    @apply border border-transparent bg-surface p-5;
+  }
+
+  .panel :is(.code, .panel) {
+    @apply bg-bg;
+  }
+
+  .panel > :first-child {
+    @apply mt-0;
+  }
+
+  .panel > :last-child {
+    @apply mb-0;
+  }
+
+  /* Something the page has to say about itself: a result, an error, a warning. A rule on its leading edge in the tone. */
+  .notice {
+    @apply my-4 block border-l-2 border-brand py-1 pl-3 text-control;
+  }
+
+  .notice.bad {
+    @apply border-bad text-bad;
+  }
+
+  .notice.warn {
+    @apply border-warn text-warn;
+  }
+
+  /* Prose, with whatever inline markup it holds; an action follows the words on the same line. */
+  .notice > :is(button, .button) {
+    @apply ms-3 align-baseline;
+  }
+
+  /* A status: a square mark and the word, both in its tone. The word always says what the colour does, so the colour is
+   * never the only way to read it. `.busy` breathes, for a status still being found out. */
+  .status {
+    --tone: var(--muted);
+    @apply inline-flex items-center gap-2 text-meta lowercase;
+    color: var(--tone);
+  }
+
+  .status::before {
+    content: "";
+    @apply size-1.5 flex-none;
+    background: var(--tone);
+  }
+
+  /* Still being found out: the mark breathes, or with reduced motion is hollow, so it reads as unsettled either way. */
+  .status.busy::before {
+    @apply animate-pulse motion-reduce:animate-none;
+
+    @media (prefers-reduced-motion: reduce) {
+      background: transparent;
+      box-shadow: inset 0 0 0 1px var(--tone);
+    }
+  }
+
+  :is(.status, .meter).ok {
+    --tone: var(--ok);
+  }
+
+  :is(.status, .meter).warn {
+    --tone: var(--warn);
+  }
+
+  :is(.status, .meter).bad {
+    --tone: var(--bad);
+  }
+
+  :is(.status, .meter).wait {
+    --tone: var(--muted);
+  }
+
+  /* The progress meter: a hairline, the part done thicker in its tone (the accent unless a status says otherwise).
+   * Without a value, before there is anything to count, a short length of it moves along; under reduced motion it is
+   * the thicker track alone, which no amount done looks like. */
+  progress.meter {
+    --tone: var(--brand);
+    @apply block h-[3px] w-full appearance-none border-0 bg-transparent;
+    background: linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
+  }
+
+  progress.meter::-webkit-progress-bar {
+    @apply bg-transparent;
+  }
+
+  progress.meter::-webkit-progress-value {
+    background: var(--tone);
+  }
+
+  progress.meter::-moz-progress-bar {
+    background: var(--tone);
+  }
+
+  progress.meter:indeterminate {
+    @apply animate-sweep;
+    background:
+      linear-gradient(var(--tone), var(--tone)) 0 50% / 25% 3px no-repeat,
+      linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+      background: linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 3px no-repeat;
+    }
+  }
+
+  progress.meter:indeterminate::-moz-progress-bar {
+    @apply bg-transparent;
+  }
+
+  /* In flight. On a control, for as long as its request runs (Datastar's indicator sets the class); `.spinner` is the
+   * same mark standing alone. */
+  .busy:is(button, .button, a)::after,
+  .spinner {
+    @apply inline-block size-[.8em] flex-none animate-busy border-2 border-current border-r-transparent align-[-.1em] motion-reduce:animate-none motion-reduce:border-r-current;
+  }
+
+  .busy:is(button, .button, a)::after {
+    content: "";
+    @apply ms-[.45em];
+  }
+
+  .busy:is(button, .button) {
+    @apply cursor-progress;
+  }
+
+  /* Stands in for content on its way: a flat fill that breathes. */
+  .skeleton {
+    @apply animate-pulse bg-hover/30 text-transparent motion-reduce:animate-none;
+  }
+
+  /* A value to read or copy: a token, a URL, a command. */
+  .code {
+    @apply block border border-rule bg-surface px-3 py-2 text-meta break-all text-ink;
+  }
+
+  /* A list of rows. No rules between them: rows are told apart by rhythm and alignment. */
+  .rows {
+    @apply m-0 grid list-none p-0;
+  }
+
+  .rows > li {
+    @apply flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 py-2;
+  }
+
+  /* Technical data read across rows: compact, figures right-aligned in the `.num` columns. */
+  table.dense {
+    @apply w-full border-collapse text-meta;
+  }
+
+  table.dense th {
+    @apply border-b border-rule pb-1.5 text-left font-normal text-muted lowercase;
+  }
+
+  table.dense :is(th, td) {
+    @apply py-1 pr-4 last:pr-0;
+  }
+
+  table.dense .num {
+    @apply text-right tabular-nums;
+  }
+
+  /* A disclosure: the browser's marker, which differs in every engine, replaced by a chevron that turns. */
+  details.disclosure > summary {
+    @apply list-none;
+  }
+
+  details.disclosure > summary::-webkit-details-marker {
+    @apply hidden;
+  }
+
+  details.disclosure > summary::before {
+    content: "›";
+    @apply inline-block w-[1em] transition-transform duration-[120ms] motion-reduce:transition-none;
+  }
+
+  details.disclosure[open] > summary::before {
+    @apply rotate-90;
+  }
+
+  /* A message that floats over the page, so it is seen wherever the tap was. `.brief` goes by itself; an error stays
+   * until it is dismissed or replaced. */
+  .toast {
+    @apply fixed inset-x-4 bottom-4 z-50 mx-auto max-w-form border border-rule bg-bg px-4 py-3 text-control;
+  }
+
+  .toast.bad {
+    @apply border-bad text-bad;
+  }
+
+  .toast.brief {
+    @apply animate-fade;
+  }
+
+  /* A dialog that rises from the bottom on a phone and is a centred panel wherever there is a pointer. iOS shrinks the
+   * visual viewport for its keyboard and not the layout one fixed elements sit in, so a page script that measures the
+   * difference sets `--keyboard-inset` to keep the sheet above the keyboard. */
+  dialog.sheet {
+    position: fixed;
+    inset: auto 0 var(--keyboard-inset, 0px) 0;
+    width: auto;
+    max-width: none;
+    max-height: min(85dvh, calc(100dvh - var(--keyboard-inset, 0px) - 1rem));
+    margin: 0;
+    border-width: 1px 0 0;
+    /* Flush with the bottom of a phone, so clear of its home indicator. */
+    padding-bottom: max(var(--sheet-padding-bottom, 0px), env(safe-area-inset-bottom));
+  }
+
+  @media (width >= 40rem) {
+    dialog.sheet {
+      inset: 0;
+      width: 100%;
+      max-width: var(--container-panel);
+      max-height: 85dvh;
+      margin: auto;
+      border-width: 1px;
+      padding-bottom: var(--sheet-padding-bottom, 0px);
+    }
+  }
+}

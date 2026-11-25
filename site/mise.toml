@@ -21,8 +21,18 @@ run = [
   "node ../node_modules/@radiosilence/theme/kit-check.mjs public src/docs.html",
 ]
 
+# The web kit's storybook, from theme/ as it is in this commit rather than as published, served at ui.koan.rocks (a
+# route in jaritanet that prefixes /ui).
+[tasks.ui]
+description = "Build the web kit's storybook into public/ui/"
+run = [
+  "mkdir -p public/ui",
+  "tailwindcss --input ../theme/storybook/in.css --output public/ui/out.css --minify",
+  "cp ../theme/storybook/index.html ../theme/geist-mono.woff2 public/ui/",
+]
+
 # nano-web, as in the image. --dev re-reads files as they change; rerun `mise run css` after editing docs or styles.
 [tasks.preview]
 description = "Build the site and serve it on http://localhost:3000"
-depends = ["css"]
+depends = ["css", "ui"]
 run = "nano-web serve public --port 3000 --dev"

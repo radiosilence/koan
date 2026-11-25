@@ -1,0 +1,150 @@
+/*
+ * The kōan theme's tokens: the typeface, the colours, the type scale and the motion the kit draws with. kit.css builds
+ * the controls from them; a page that wants the tokens without the controls (a static site with its own markup)
+ * imports this file alone.
+ *
+ * Tailwind's own palette, radii, shadows, blurs and type sizes are removed rather than left beside the theme's, so
+ * `rounded-lg`, `shadow-xl`, `text-sm` and `bg-red-500` compile to nothing. What clearing cannot reach (`rounded-full`,
+ * arbitrary values) `kit-check` reports. The look has square corners, no shadows or blur, one accent and seven type roles
+ * (koan's docs/design/koan-theme.md); a vocabulary that cannot say anything else keeps it that way.
+ *
+ * The font URL is relative, so it resolves beside the compiled stylesheet. A project serves geist-mono.woff2 from this
+ * package next to its CSS.
+ */
+@font-face {
+  font-family: "Geist Mono";
+  src: url("geist-mono.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Dark is the default; the light values apply only when the reader asks for them. */
+:root {
+  color-scheme: dark light;
+  --bg: #1e1e1e;
+  --surface: #2a2a2a;
+  --rule: #383838;
+  --hover: #4d4d4d;
+  --ink: #cccccc;
+  --strong: #ffffff;
+  /* 4.6:1 on --surface, where #8c8c8c fell short of AA. */
+  --muted: #919191;
+  /* An app sets its own accent by overriding --brand after importing the theme, in both schemes. koan keeps mint. */
+  --brand: #7dd3a7;
+  /* A status that is fine: connected, done, moving. The theme's mint whatever the app's accent, so a status reads the
+   * same in every app. */
+  --ok: #7dd3a7;
+  --bad: #ef6b73;
+  --warn: #e6b450;
+  /* The checkbox's tick, in `bg`: a data URL cannot read a custom property, so it is stated per scheme. */
+  --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3 7.5l2.5 2.5L11 4.5' fill='none' stroke='%231e1e1e' stroke-width='1.6' stroke-linecap='square'/%3E%3C/svg%3E");
+  /* The select's chevron, in `muted`, stated per scheme for the same reason. */
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23919191' stroke-width='1.4' stroke-linecap='square'/%3E%3C/svg%3E");
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --surface: #f2f2f2;
+    --rule: #e0e0e0;
+    --hover: #c4c4c4;
+    --ink: #333333;
+    --strong: #111111;
+    --muted: #666666;
+    /* The green is under 2:1 on white; this is the same hue, darker. */
+    --brand: #1f7a50;
+    --ok: #1f7a50;
+    --bad: #c43f3f;
+    /* The dark amber is unreadable on white; this one is 4.9:1 on --surface. */
+    --warn: #8a6100;
+    --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3 7.5l2.5 2.5L11 4.5' fill='none' stroke='%23ffffff' stroke-width='1.6' stroke-linecap='square'/%3E%3C/svg%3E");
+    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23666666' stroke-width='1.4' stroke-linecap='square'/%3E%3C/svg%3E");
+  }
+}
+
+@theme {
+  --color-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+  --text-shadow-*: initial;
+  --blur-*: initial;
+  --text-*: initial;
+
+  /* A QR code needs true black on true white, whatever the scheme. */
+  --color-black: #000;
+  --color-white: #fff;
+
+  --text-fine: 12px;
+  --text-fine--line-height: 1.35;
+  --text-meta: 13px;
+  --text-meta--line-height: 1.35;
+  --text-control: 14px;
+  --text-control--line-height: 1.45;
+  --text-body: 15px;
+  --text-body--line-height: 1.45;
+  /* iOS zooms into a focused field set smaller than this. */
+  --text-input: 16px;
+  --text-input--line-height: 1.45;
+  --text-title-sm: 22px;
+  --text-title-sm--line-height: 1.2;
+  --text-title: 26px;
+  --text-title--line-height: 1.2;
+  --text-display: 34px;
+  --text-display--line-height: 1.1;
+
+  --container-form: 520px;
+  --container-panel: 560px;
+
+  --animate-busy: busy 0.7s linear infinite;
+  --animate-sweep: sweep 1.6s ease-in-out infinite alternate;
+  /* A confirmation: seen, then gone by itself. */
+  --animate-fade: fade 4s forwards;
+
+  @keyframes busy {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes sweep {
+    from {
+      background-position:
+        0 50%,
+        0 50%;
+    }
+    to {
+      background-position:
+        100% 50%,
+        0 50%;
+    }
+  }
+
+  @keyframes fade {
+    0%,
+    80% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      visibility: hidden;
+    }
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-rule: var(--rule);
+  --color-hover: var(--hover);
+  --color-ink: var(--ink);
+  --color-strong: var(--strong);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-ok: var(--ok);
+  --color-bad: var(--bad);
+  --color-warn: var(--warn);
+  --default-font-family: "Geist Mono", ui-monospace, monospace;
+}

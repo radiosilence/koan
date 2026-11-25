@@ -1,0 +1,38 @@
+{
+  "name": "@radiosilence/theme",
+  "version": "0.2.9",
+  "description": "The kōan theme for Tailwind v4: tokens, typeface and the kit of controls radiosilence's web UIs are drawn with",
+  "license": "MIT",
+  "author": "James Cleveland <jc@blit.cc>",
+  "style": "./theme.css",
+  "exports": {
+    ".": {
+      "style": "./theme.css",
+      "default": "./theme.css"
+    },
+    "./theme.css": "./theme.css",
+    "./tokens.css": "./tokens.css",
+    "./kit.css": "./kit.css",
+    "./geist-mono.woff2": "./geist-mono.woff2"
+  },
+  "files": [
+    "theme.css",
+    "tokens.css",
+    "kit.css",
+    "kit-check.mjs",
+    "geist-mono.woff2",
+    "OFL.txt"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/radiosilence/koan.git",
+    "directory": "theme"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "bin": {
+    "kit-check": "./kit-check.mjs"
+  },
+  "homepage": "https://ui.koan.rocks"
+}
