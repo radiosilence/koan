@@ -11,9 +11,10 @@
 //! then on the app signs in the OpenSubsonic way, and every device it was
 //! opened on has a key of its own to revoke.
 //!
-//! The server never keeps a password it can read back. A new account's
-//! password is generated, shown once in the invite email for the web UI and
-//! other Subsonic apps, and stored only as a hash.
+//! The token and the rules about accounts are `koan-auth`'s; the link, the
+//! email and trading a token for a key are kōan's. A new account's password is
+//! generated, shown once in the invite email for the web UI and other Subsonic
+//! apps, and stored only as a hash.
 //!
 //! The link travels in the fragment of a koan.rocks address, which browsers
 //! do not send, so the site serving the page never sees it. With the app
@@ -27,30 +28,23 @@
 //! The server never sends mail. It produces the email for the admin to send
 //! from their own client.
 
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use url::{Url, form_urlencoded};
 
-use crate::auth::{self, Role};
-use crate::db::queries::api_keys;
+use crate::auth::Role;
 use crate::db::queries::auth as users;
+use crate::db::queries::{api_keys, atomically};
+
+pub use koan_auth::accounts::{
+    AccountError, NewAccount, account, delete_account, set_password, valid_username,
+};
+pub use koan_auth::api_keys::device_name;
+pub use koan_auth::invite::{QR_TOKEN_TTL_SECS, TOKEN_TTL_SECS, mint_token};
+pub use koan_auth::secret::generate_password;
 
 pub const JOIN_PAGE: &str = "https://koan.rocks/join/";
 pub const APP_STORE: &str = "https://apps.apple.com/app/id6817137172";
 pub const MAC_DOWNLOAD: &str = "https://github.com/radiosilence/koan/releases/latest";
-
-/// How long an invite link signs devices in for.
-pub const TOKEN_TTL_SECS: u64 = 7 * 24 * 60 * 60;
-/// How long an invite shown as a QR code signs devices in for. A code on a
-/// screen is seen by whoever can see the screen, or a recording of it, so it
-/// lasts as long as a device pairing waits.
-pub const QR_TOKEN_TTL_SECS: u64 = 10 * 60;
-const TOKEN_TYP: &str = "koan-invite";
-
-const MAX_USERNAME: usize = 64;
-const MIN_PASSWORD: usize = 8;
-const MAX_DEVICE_NAME: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invite {
@@ -274,52 +268,8 @@ fn html_escape(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Tokens
+// Redeeming, and accounts with kōan's implicit user
 // ---------------------------------------------------------------------------
-
-#[derive(Serialize, Deserialize)]
-struct Claims {
-    typ: String,
-    /// The account's id. Ids are never reused, so a token outlives no
-    /// account it was made for.
-    sub: i64,
-    username: String,
-    /// `password_mark` of the account's password hash when the token was
-    /// made.
-    pwd: String,
-    iat: u64,
-    exp: u64,
-}
-
-/// Enough of a digest of the password hash to tell when it changed, and too
-/// little to say anything about the password.
-fn password_mark(password_hash: &str) -> String {
-    auth::sha256_hex(password_hash)[..16].to_owned()
-}
-
-/// A token for the account `user_id`, signed with the server's private key and
-/// good for `ttl_secs`.
-pub fn mint_token(
-    conn: &Connection,
-    private_pem: &[u8],
-    user_id: i64,
-    ttl_secs: u64,
-) -> Result<String, AccountError> {
-    let user = users::get_user_by_id(conn, user_id)
-        .map_err(other)?
-        .ok_or_else(|| AccountError::NoSuchUser(user_id.to_string()))?;
-    let now = crate::clock::unix_secs() as u64;
-    let claims = Claims {
-        typ: TOKEN_TYP.into(),
-        sub: user.id,
-        username: user.username,
-        pwd: password_mark(&user.password_hash),
-        iat: now,
-        exp: now + ttl_secs,
-    };
-    let key = EncodingKey::from_ed_pem(private_pem).map_err(other)?;
-    jsonwebtoken::encode(&Header::new(Algorithm::EdDSA), &claims, &key).map_err(other)
-}
 
 /// What redeeming an invite gives the app: the account, and a key to sign in
 /// with.
@@ -337,235 +287,55 @@ pub fn redeem(
     token: &str,
     device: &str,
 ) -> Result<Redeemed, AccountError> {
-    let key = DecodingKey::from_ed_pem(public_pem).map_err(other)?;
-    let mut validation = Validation::new(Algorithm::EdDSA);
-    validation.set_required_spec_claims(&["exp"]);
-    // Both clocks are the server's, so no skew to allow for.
-    validation.leeway = 0;
-    let claims = jsonwebtoken::decode::<Claims>(token, &key, &validation)
-        .map_err(|_| AccountError::BadInvite)?
-        .claims;
-    if claims.typ != TOKEN_TYP {
-        return Err(AccountError::BadInvite);
-    }
-    let user = users::get_user_by_id(conn, claims.sub)
-        .map_err(other)?
-        .filter(|u| u.username == claims.username)
-        .filter(|u| password_mark(&u.password_hash) == claims.pwd)
-        .ok_or(AccountError::BadInvite)?;
-    let (_, api_key) =
-        api_keys::create_api_key(conn, user.id, &device_name(device)).map_err(other)?;
+    let user = koan_auth::invite::invited(conn, public_pem, token)?;
+    let (_, api_key) = api_keys::create_api_key(conn, user.id, &device_name(device))?;
     Ok(Redeemed {
         username: user.username,
         api_key,
     })
 }
 
-/// What a device calls itself, as the name of the API key made for it: no
-/// control characters, at most 100 characters, and `koan` for none.
-pub fn device_name(device: &str) -> String {
-    let name: String = device
-        .trim()
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(MAX_DEVICE_NAME)
-        .collect();
-    if name.is_empty() { "koan".into() } else { name }
-}
-
-// ---------------------------------------------------------------------------
-// Accounts
-// ---------------------------------------------------------------------------
-
-/// A password someone can type from an email: 20 characters with no
-/// lookalikes (0/O, 1/l/I), about 116 bits.
-pub fn generate_password() -> Result<String, auth::AuthError> {
-    use ring::rand::SecureRandom;
-
-    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let rng = ring::rand::SystemRandom::new();
-    let mut out = String::with_capacity(20);
-    let mut byte = [0u8; 1];
-    while out.len() < 20 {
-        rng.fill(&mut byte)
-            .map_err(|_| auth::AuthError::Hash("rng failure".into()))?;
-        // Reject the top of the range so every character is equally likely.
-        let limit = 256 - 256 % ALPHABET.len();
-        if (byte[0] as usize) < limit {
-            out.push(ALPHABET[byte[0] as usize % ALPHABET.len()] as char);
-        }
-    }
-    Ok(out)
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum AccountError {
-    #[error("usernames are 1 to {MAX_USERNAME} characters, without spaces")]
-    BadUsername,
-    #[error("passwords are at least {MIN_PASSWORD} characters")]
-    ShortPassword,
-    #[error("there is already an account called {0}")]
-    Taken(String),
-    #[error("{0} is reserved")]
-    Reserved(String),
-    #[error("there is no account called {0}")]
-    NoSuchUser(String),
-    #[error("this invite is not valid here, or has expired")]
-    BadInvite,
-    #[error("the last admin cannot be removed or demoted")]
-    LastAdmin,
-    #[error("this server already has accounts")]
-    AlreadySetUp,
-    #[error(transparent)]
-    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
-}
-
-fn other(e: impl std::error::Error + Send + Sync + 'static) -> AccountError {
-    AccountError::Other(Box::new(e))
-}
-
-/// An account just made: its id, for a token, and its generated password,
-/// for the email. The password is not kept anywhere it can be read back.
-#[derive(Debug)]
-pub struct NewAccount {
-    pub id: i64,
-    pub password: String,
-}
-
-/// Create an account with a generated password.
+/// Create an account with a generated password. The first admin takes over
+/// what the implicit user had (`users::adopt_local_rows`), in the same
+/// transaction, so that it holds the write lock it took for the account.
 pub fn create_account(
     conn: &Connection,
     username: &str,
     role: Role,
 ) -> Result<NewAccount, AccountError> {
-    let username = valid_username(username)?;
-    if users::get_user_by_username(conn, username)
-        .map_err(other)?
-        .is_some()
-    {
-        return Err(AccountError::Taken(username.to_owned()));
-    }
-    let password = generate_password().map_err(other)?;
-    let id = users::create_user(conn, username, &password, role).map_err(other)?;
-    Ok(NewAccount { id, password })
-}
-
-/// `username` trimmed, or why it cannot name an account.
-pub fn valid_username(username: &str) -> Result<&str, AccountError> {
-    let username = username.trim();
-    if username.is_empty()
-        || username.chars().count() > MAX_USERNAME
-        || username.chars().any(char::is_whitespace)
-    {
-        return Err(AccountError::BadUsername);
-    }
-    if username.eq_ignore_ascii_case(auth::ANONYMOUS) {
-        return Err(AccountError::Reserved(username.to_owned()));
-    }
-    Ok(username)
+    atomically(conn, || {
+        let made = koan_auth::accounts::create_account(conn, username, role)?;
+        users::adopt_local_rows(conn)?;
+        Ok(made)
+    })
 }
 
 /// Make the first admin of a server that has no accounts, with the password
-/// they chose: the web UI's setup page. Refused once any account exists, and
-/// the check and the insert share one write lock, so two people racing for an
-/// empty server cannot both become its admin.
+/// they chose: the web UI's setup page.
 pub fn create_first_admin(
     conn: &Connection,
     username: &str,
     password: &str,
 ) -> Result<i64, AccountError> {
-    let username = valid_username(username)?;
-    if password.chars().count() < MIN_PASSWORD {
-        return Err(AccountError::ShortPassword);
-    }
-    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
-        .map_err(other)?;
-    if users::has_users(&tx).map_err(other)? {
-        return Err(AccountError::AlreadySetUp);
-    }
-    let id = users::create_user(&tx, username, password, Role::Admin).map_err(other)?;
-    tx.commit().map_err(other)?;
-    Ok(id)
-}
-
-/// The account called `username`, or `NoSuchUser`.
-pub fn account(conn: &Connection, username: &str) -> Result<users::UserRow, AccountError> {
-    users::get_user_by_username(conn, username)
-        .map_err(other)?
-        .ok_or_else(|| AccountError::NoSuchUser(username.to_owned()))
-}
-
-/// Give an account `password`, or a generated one when `None`, which is
-/// returned. Signs every device out: sessions end and API keys are revoked
-/// (see `update_password`), invited devices included.
-pub fn set_password(
-    conn: &Connection,
-    username: &str,
-    password: Option<&str>,
-) -> Result<String, AccountError> {
-    account(conn, username)?;
-    let password = match password {
-        Some(p) if p.chars().count() < MIN_PASSWORD => return Err(AccountError::ShortPassword),
-        Some(p) => p.to_owned(),
-        None => generate_password().map_err(other)?,
-    };
-    users::update_password(conn, username, &password)
-        .map_err(|e| AccountError::Other(e.to_string().into()))?;
-    Ok(password)
+    atomically(conn, || {
+        let id = koan_auth::accounts::create_first_admin(conn, username, password)?;
+        users::adopt_local_rows(conn)?;
+        Ok(id)
+    })
 }
 
 /// Change an account's role, refusing to demote the last admin.
 pub fn set_role(conn: &Connection, username: &str, role: Role) -> Result<(), AccountError> {
-    let user = account(conn, username)?;
-    if user.role == Role::Admin
-        && role != Role::Admin
-        && users::admin_count(conn).map_err(other)? <= 1
-    {
-        return Err(AccountError::LastAdmin);
-    }
-    users::update_role(conn, username, role).map_err(other)?;
-    Ok(())
-}
-
-/// Delete an account, refusing to delete the last admin.
-pub fn delete_account(conn: &Connection, username: &str) -> Result<(), AccountError> {
-    let user = account(conn, username)?;
-    if user.role == Role::Admin && users::admin_count(conn).map_err(other)? <= 1 {
-        return Err(AccountError::LastAdmin);
-    }
-    users::delete_user(conn, user.id).map_err(other)?;
-    Ok(())
+    atomically(conn, || {
+        koan_auth::accounts::set_role(conn, username, role)?;
+        users::adopt_local_rows(conn)?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_first_admin_is_made_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::connection::Database::open(&dir.path().join("t.db")).unwrap();
-        assert!(matches!(
-            create_first_admin(&db.conn, "ada", "short"),
-            Err(AccountError::ShortPassword)
-        ));
-        assert!(matches!(
-            create_first_admin(&db.conn, "a da", "long enough"),
-            Err(AccountError::BadUsername)
-        ));
-        let id = create_first_admin(&db.conn, " ada ", "long enough").unwrap();
-        let ada = users::get_user_by_id(&db.conn, id).unwrap().unwrap();
-        assert_eq!((ada.username.as_str(), ada.role), ("ada", Role::Admin));
-        assert!(matches!(
-            create_first_admin(&db.conn, "mallory", "long enough"),
-            Err(AccountError::AlreadySetUp)
-        ));
-        assert!(
-            users::get_user_by_username(&db.conn, "mallory")
-                .unwrap()
-                .is_none()
-        );
-    }
 
     fn invite() -> Invite {
         Invite::with_token(
@@ -693,27 +463,10 @@ mod tests {
     }
 
     #[test]
-    fn a_token_lasts_as_long_as_it_was_minted_for() {
-        let (_dir, db) = db();
-        let conn = &db.conn;
-        let (private, public) = auth::generate_keypair_pem().unwrap();
-        let made = create_account(conn, "sarita", Role::User).unwrap();
-        let key = DecodingKey::from_ed_pem(public.as_bytes()).unwrap();
-        for ttl in [TOKEN_TTL_SECS, QR_TOKEN_TTL_SECS] {
-            let token = mint_token(conn, private.as_bytes(), made.id, ttl).unwrap();
-            let claims =
-                jsonwebtoken::decode::<Claims>(&token, &key, &Validation::new(Algorithm::EdDSA))
-                    .unwrap()
-                    .claims;
-            assert_eq!(claims.exp - claims.iat, ttl);
-        }
-    }
-
-    #[test]
     fn a_token_is_redeemed_for_a_key_per_device() {
         let (_dir, db) = db();
         let conn = &db.conn;
-        let (private, public) = auth::generate_keypair_pem().unwrap();
+        let (private, public) = crate::auth::generate_keypair_pem().unwrap();
         let made = create_account(conn, "sarita", Role::User).unwrap();
         let token = mint_token(conn, private.as_bytes(), made.id, TOKEN_TTL_SECS).unwrap();
 
@@ -732,7 +485,7 @@ mod tests {
 
         // Another server's key, a token for a deleted account, or something
         // that is not a token are all refused alike.
-        let (_, elsewhere) = auth::generate_keypair_pem().unwrap();
+        let (_, elsewhere) = crate::auth::generate_keypair_pem().unwrap();
         assert!(matches!(
             redeem(conn, elsewhere.as_bytes(), &token, "x"),
             Err(AccountError::BadInvite)
@@ -742,7 +495,8 @@ mod tests {
             Err(AccountError::BadInvite)
         ));
         let session =
-            auth::mint_access_token(private.as_bytes(), made.id, "sarita", Role::User, 60).unwrap();
+            crate::auth::mint_access_token(private.as_bytes(), made.id, "sarita", Role::User, 60)
+                .unwrap();
         assert!(matches!(
             redeem(conn, public.as_bytes(), &session, "x"),
             Err(AccountError::BadInvite)
@@ -752,78 +506,5 @@ mod tests {
             redeem(conn, public.as_bytes(), &token, "x"),
             Err(AccountError::BadInvite)
         ));
-    }
-
-    #[test]
-    fn a_new_password_withdraws_links_already_sent() {
-        let (_dir, db) = db();
-        let conn = &db.conn;
-        let (private, public) = auth::generate_keypair_pem().unwrap();
-        let made = create_account(conn, "sarita", Role::User).unwrap();
-        let sent = mint_token(conn, private.as_bytes(), made.id, TOKEN_TTL_SECS).unwrap();
-        set_password(conn, "sarita", None).unwrap();
-        assert!(matches!(
-            redeem(conn, public.as_bytes(), &sent, "x"),
-            Err(AccountError::BadInvite)
-        ));
-        let again = mint_token(conn, private.as_bytes(), made.id, TOKEN_TTL_SECS).unwrap();
-        redeem(conn, public.as_bytes(), &again, "x").unwrap();
-    }
-
-    #[test]
-    fn accounts_are_created_and_guarded() {
-        let (_dir, db) = db();
-        let conn = &db.conn;
-        create_account(conn, "owner", Role::Admin).unwrap();
-        assert!(matches!(
-            create_account(conn, "owner", Role::User),
-            Err(AccountError::Taken(_))
-        ));
-        assert!(matches!(
-            create_account(conn, "two words", Role::User),
-            Err(AccountError::BadUsername)
-        ));
-        assert!(matches!(
-            create_account(conn, "anonymous", Role::User),
-            Err(AccountError::Reserved(_))
-        ));
-        assert!(matches!(
-            set_role(conn, "owner", Role::User),
-            Err(AccountError::LastAdmin)
-        ));
-        assert!(matches!(
-            delete_account(conn, "owner"),
-            Err(AccountError::LastAdmin)
-        ));
-        assert!(matches!(
-            set_password(conn, "nobody", None),
-            Err(AccountError::NoSuchUser(_))
-        ));
-    }
-
-    #[test]
-    fn a_new_password_signs_every_device_out() {
-        let (_dir, db) = db();
-        let conn = &db.conn;
-        let made = create_account(conn, "sarita", Role::Readonly).unwrap();
-        let hash = |conn| account(conn, "sarita").unwrap().password_hash;
-        auth::verify_password(&made.password, &hash(conn)).unwrap();
-        let (_, key) = api_keys::create_api_key(conn, made.id, "phone").unwrap();
-
-        assert!(matches!(
-            set_password(conn, "sarita", Some("short")),
-            Err(AccountError::ShortPassword)
-        ));
-        set_password(conn, "sarita", Some("correct horse")).unwrap();
-        auth::verify_password("correct horse", &hash(conn)).unwrap();
-        assert!(
-            api_keys::authenticate_api_key(conn, &key)
-                .unwrap()
-                .is_none()
-        );
-
-        let generated = set_password(conn, "sarita", None).unwrap();
-        assert_ne!(generated, made.password);
-        auth::verify_password(&generated, &hash(conn)).unwrap();
     }
 }

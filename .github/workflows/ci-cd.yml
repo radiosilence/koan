@@ -206,7 +206,7 @@ jobs:
             # What the Apple apps contain, for CD: everything above, and the
             # core and server they link, which the Linux jobs check.
             apple_apps=$apple
-            if touches '^crates/(koan-core|koan-server|koan-runtime)/|^Cargo\.toml$'; then
+            if touches '^crates/(koan-auth|koan-core|koan-server|koan-runtime)/|^Cargo\.toml$'; then
               apple_apps=true
             fi
             if [ "$EVENT" != "pull_request" ] && [ "$rust" = true ]; then
@@ -231,7 +231,7 @@ jobs:
             # break it, nor can the Apple apps or the site.
             android=false
             if [ "$release" = true ] || [ "$inputs_android" = true ] \
-              || touches '^apps/android/|^crates/(koan-core|koan-server|koan-runtime|koan-ffi)/|^tools/|^Cargo\.toml$|^\.cargo/|^rust-toolchain|^\.github/'; then
+              || touches '^apps/android/|^crates/(koan-auth|koan-core|koan-server|koan-runtime|koan-ffi)/|^tools/|^Cargo\.toml$|^\.cargo/|^rust-toolchain|^\.github/'; then
               android=true
             fi
           fi
@@ -900,7 +900,7 @@ jobs:
           # Internal path deps carry a `version` for crates.io. If it drifts from
           # the workspace version, cargo publishes a crate pinned to a stale
           # sibling — path deps mask it locally and --no-verify masked it in CI.
-          BAD=$(grep -hn 'koan-\(core\|server\|tui\) = ' crates/*/Cargo.toml Cargo.toml \
+          BAD=$(grep -hn 'koan-\(auth\|core\|server\|tui\) = ' crates/*/Cargo.toml Cargo.toml \
                 | grep 'version' | grep -v "\"${CURRENT_VERSION}\"" || true)
           if [ -n "$BAD" ]; then
             echo "internal version pins out of sync with ${CURRENT_VERSION}:"

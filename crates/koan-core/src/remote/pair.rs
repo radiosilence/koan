@@ -28,10 +28,8 @@ use crate::remote::client::SubsonicError;
 
 pub const PAIR_PAGE: &str = "https://koan.rocks/pair/";
 
-/// Crockford's base32: no I, L, O or U, so a code read off a screen cannot be
-/// mistyped as another.
-pub const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-pub const CODE_LEN: usize = 8;
+/// Crockford's base32 codes, which the server and the device must agree on.
+pub use koan_auth::pair::{CODE_ALPHABET, CODE_LEN};
 
 /// The server pings a waiting device every half minute. Three missed mean
 /// the connection is gone.
@@ -58,6 +56,17 @@ pub enum PairMessage {
     },
     Declined,
     Expired,
+}
+
+impl From<koan_auth::pair::Outcome> for PairMessage {
+    fn from(outcome: koan_auth::pair::Outcome) -> Self {
+        use koan_auth::pair::Outcome;
+        match outcome {
+            Outcome::Approved { username, api_key } => Self::Approved { username, api_key },
+            Outcome::Declined => Self::Declined,
+            Outcome::Expired => Self::Expired,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -1,0 +1,36 @@
+[package]
+name = "koan-auth"
+version.workspace = true
+edition.workspace = true
+# MIT rather than the workspace's AGPL, so that a service under another licence
+# can depend on it.
+license = "MIT"
+repository.workspace = true
+homepage.workspace = true
+description = "Accounts and signing in for koan and the services beside it: passwords, sessions, API keys, invites, sign-in limits and an OAuth 2.1 authorization server, over SQLite."
+keywords = ["auth", "argon2", "jwt", "oauth", "sqlite"]
+categories = ["authentication", "web-programming"]
+
+[dependencies]
+argon2 = "0.6"
+base64 = "0.23"
+http = "1"
+ipnet = "2"
+jsonwebtoken = { version = "12", features = ["aws_lc_rs"] }
+log = "0.4"
+lru = "0.19"
+parking_lot = "0.13"
+pem = "4"
+ring = "0.17"
+rusqlite = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.129"
+sha2 = "0.11"
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["sync", "time", "macros"] }
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "time"] }

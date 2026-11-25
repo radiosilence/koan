@@ -1,13 +1,11 @@
 //! Signing in and out of the web UI, on koan's own login and refresh tokens.
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
 
 use axum::Form;
 use axum::extract::{ConnectInfo, Query, State};
-use axum::http::{Extensions, HeaderMap, HeaderName, StatusCode, header};
+use axum::http::{Extensions, HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use ipnet::IpNet;
 use serde::Deserialize;
 
 use koan_core::db::queries::auth as auth_queries;
@@ -16,125 +14,34 @@ use super::{Logged, UiState, encode, html, pages, see_other};
 use crate::auth::routes::{ClientIp, authenticate, proxied_access, refresh_token_from, rotate};
 
 /// An authenticating reverse proxy in front of the web UI, whose header names
-/// the account signed in to it.
+/// the account signed in to it: `koan_auth::net::ProxyAuth`, configured by
+/// kōan's settings.
 #[derive(Clone)]
-pub struct ProxyAuth {
-    header: HeaderName,
-    from: Arc<Vec<IpNet>>,
-}
+pub struct ProxyAuth(koan_auth::net::ProxyAuth);
 
 impl ProxyAuth {
     /// From `graphql.proxy_auth_header` and `graphql.proxy_auth_from`. Off
-    /// when neither is set; on when both are. Anything between is refused
-    /// rather than read as either: a header with no proxy to believe it from,
-    /// a proxy with no header, a header name or entry that does not parse, or
-    /// a range covering every address, which would let any client name any
-    /// account.
+    /// when neither is set; on when both are; anything between is refused.
     pub fn from_config(header: &str, from: &[String]) -> Result<Option<Self>, String> {
-        let header = header.trim();
-        match (header.is_empty(), from.is_empty()) {
-            (true, true) => return Ok(None),
-            (false, true) => {
-                return Err(
-                    "graphql.proxy_auth_header is set but graphql.proxy_auth_from is empty; \
-                     name the addresses the authenticating proxy connects from"
-                        .into(),
-                );
-            }
-            (true, false) => {
-                return Err(
-                    "graphql.proxy_auth_from is set but graphql.proxy_auth_header is empty; \
-                     name the header the authenticating proxy sets"
-                        .into(),
-                );
-            }
-            (false, false) => {}
-        }
-        let header = HeaderName::from_bytes(header.as_bytes())
-            .map_err(|_| format!("graphql.proxy_auth_header {header:?} is not a header name"))?;
-        let from = from
-            .iter()
-            .map(|entry| {
-                let entry = entry.trim();
-                let net = entry
-                    .parse::<IpNet>()
-                    .or_else(|_| entry.parse::<IpAddr>().map(IpNet::from))
-                    .map_err(|_| {
-                        format!("graphql.proxy_auth_from: {entry:?} is not an address or range")
-                    })?;
-                let net = canonical(net);
-                if net.prefix_len() == 0 {
-                    return Err(format!(
-                        "graphql.proxy_auth_from: {entry:?} covers every address, so any client \
-                         could name any account; name the proxy's own address"
-                    ));
-                }
-                Ok(net)
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        let ranges = from.iter().map(ToString::to_string).collect::<Vec<_>>();
-        log::info!(
-            "web UI: proxy sign-in on, believing {header} from {}",
-            ranges.join(", ")
-        );
-        Ok(Some(Self {
+        koan_auth::net::ProxyAuth::from_config(
             header,
-            from: Arc::new(from),
-        }))
+            from,
+            ("graphql.proxy_auth_header", "graphql.proxy_auth_from"),
+        )
+        .map(|proxy| proxy.map(Self))
     }
 
-    /// What the proxy says about who is signed in. Only a connection from
-    /// the proxy itself is heard; a header from anywhere else is absent. From
-    /// the proxy, one value naming one account is believed, and anything else
-    /// it sent is unusable: a proxy that appended to or merged with a client's
-    /// own header would otherwise let the client name the account.
+    /// What the proxy says about who is signed in: heard only from the
+    /// proxy's own address.
     pub(super) fn user<'a>(&self, headers: &'a HeaderMap, ext: &Extensions) -> Vouch<'a> {
-        let Some(ConnectInfo(peer)) = ext.get::<ConnectInfo<SocketAddr>>() else {
-            return Vouch::Absent;
-        };
-        let peer = peer.ip().to_canonical();
-        if !self.from.iter().any(|net| net.contains(&peer)) {
-            return Vouch::Absent;
-        }
-        let mut values = headers.get_all(&self.header).iter();
-        let Some(first) = values.next() else {
-            return Vouch::Absent;
-        };
-        match std::str::from_utf8(first.as_bytes()).map(str::trim) {
-            Ok(name) if values.next().is_none() && !name.is_empty() && !name.contains(',') => {
-                Vouch::Named(name)
-            }
-            _ => Vouch::Unusable,
-        }
+        let peer = ext
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(peer)| peer.ip());
+        self.0.user(peer, headers)
     }
 }
 
-/// An IPv4-mapped IPv6 range as the IPv4 range it maps, since a peer's
-/// address is compared in that form.
-fn canonical(net: IpNet) -> IpNet {
-    match net {
-        IpNet::V6(v6) if v6.prefix_len() >= 96 => match v6.addr().to_ipv4_mapped() {
-            Some(v4) => ipnet::Ipv4Net::new(v4, v6.prefix_len() - 96)
-                .map_or(net, IpNet::V4)
-                .trunc(),
-            None => net,
-        },
-        _ => net,
-    }
-}
-
-/// What a request's proxy says about who is signed in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Vouch<'a> {
-    /// Proxy sign-in is off, the request did not come from the proxy, or the
-    /// proxy sent no header.
-    Absent,
-    /// The proxy sent the header, but not as one account's name. Never read
-    /// as absent: the browser's own session would then stand in for whoever
-    /// the proxy signed in.
-    Unusable,
-    Named(&'a str),
-}
+pub(super) use koan_auth::net::Vouch;
 
 /// What a request's proxy says about who is signed in.
 pub(super) fn vouched<'a>(s: &UiState, headers: &'a HeaderMap, ext: &Extensions) -> Vouch<'a> {
@@ -157,33 +64,17 @@ pub(super) struct LoginForm {
     next: String,
 }
 
-/// Where to go after signing in: a path on this server, or the albums. Anything
-/// else (`//evil.example`, `https://…`) would make the form an open redirect,
-/// and the auth routes themselves would loop.
+/// Where to go after signing in: a path on this server, or the albums. Not
+/// the auth routes themselves, which would loop.
 fn local_path(next: &str) -> &str {
-    let local = next.starts_with('/')
-        && !next.starts_with("//")
-        && !next.starts_with("/auth/")
-        && !next.starts_with("/login")
-        && next.bytes().all(|b| b.is_ascii_graphic() && b != b'\\');
-    if local { next } else { "/" }
+    koan_auth::web::local_path(next)
+        .filter(|p| !p.starts_with("/auth/") && !p.starts_with("/login"))
+        .unwrap_or("/")
 }
 
 /// A form cannot carry Datastar's header, so these POSTs prove they came from
-/// this origin the way a browser does: `Sec-Fetch-Site`, or an `Origin` naming
-/// the host the request was sent to.
-pub(super) fn same_origin(headers: &HeaderMap) -> bool {
-    let get = |name| headers.get(name).and_then(|v| v.to_str().ok());
-    if get(header::HeaderName::from_static("sec-fetch-site")) == Some("same-origin") {
-        return true;
-    }
-    match (get(header::ORIGIN), get(header::HOST)) {
-        (Some(origin), Some(host)) => origin
-            .split_once("://")
-            .is_some_and(|(_, authority)| authority.eq_ignore_ascii_case(host)),
-        _ => false,
-    }
-}
+/// this origin the way a browser does: see `koan_auth::web::same_origin`.
+pub(super) use koan_auth::web::same_origin;
 
 fn cross_site() -> Response {
     (StatusCode::FORBIDDEN, "cross-site request refused").into_response()

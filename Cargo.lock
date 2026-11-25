@@ -4399,6 +4399,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "koan-auth"
+version = "0.75.1"
+dependencies = [
+ "argon2",
+ "base64 0.23.1",
+ "http",
+ "ipnet",
+ "jsonwebtoken",
+ "log",
+ "lru 0.19.0",
+ "parking_lot 0.13.0",
+ "pem",
+ "ring",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "koan-cli"
 version = "0.75.1"
 dependencies = [
@@ -4429,7 +4454,6 @@ dependencies = [
 name = "koan-core"
 version = "0.75.1"
 dependencies = [
- "argon2",
  "base64 0.23.1",
  "biquad",
  "chrono",
@@ -4447,7 +4471,7 @@ dependencies = [
  "flacenc",
  "getrandom 0.4.3",
  "hex",
- "jsonwebtoken",
+ "koan-auth",
  "koan-relay-client",
  "libc",
  "lofty",
@@ -4458,7 +4482,6 @@ dependencies = [
  "num-bigint 0.5.1",
  "opus-rs",
  "parking_lot 0.13.0",
- "pem",
  "quick-xml 0.42.0",
  "rayon",
  "realfft",
@@ -4620,6 +4643,7 @@ dependencies = [
  "image",
  "ipnet",
  "jsonwebtoken",
+ "koan-auth",
  "koan-core",
  "koan-relay-client",
  "log",

@@ -8155,7 +8155,7 @@ mod tests {
             opened.id.clone(),
             opened.code.replace('-', "").to_lowercase(),
         );
-        let device = opened.device(true);
+        let device = crate::pair::device(opened, true);
 
         let body = call(format!("/rest/koanPairInfo?pair={code}")).await;
         assert!(body.contains("code=\"10\""), "{body}");
@@ -8374,7 +8374,7 @@ mod tests {
         );
         // Still waiting for someone who may approve it.
         let id = opened.id.clone();
-        let device = opened.device(true);
+        let device = crate::pair::device(opened, true);
         let body = call(format!(
             "/rest/koanPairApprove?pair={id}&u=mate&p=hunter22&v=1.16.1&c=test"
         ))

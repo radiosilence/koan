@@ -30,7 +30,7 @@ pub(super) async fn page(
     headers: HeaderMap,
 ) -> Response {
     let inner = ConnectPage {
-        url: super::oauth::public_base(&s).map(|base| format!("{base}/mcp")),
+        url: super::oauth::mcp_url(&s),
         admin: user.role == koan_core::auth::Role::Admin,
         username: &user.username,
         abilities: super::oauth::abilities(&user),

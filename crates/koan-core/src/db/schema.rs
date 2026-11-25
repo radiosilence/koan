@@ -29,6 +29,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // checks are reads, and catch a column added without a version bump.
     if found == SCHEMA_VERSION {
         add_missing_columns(conn)?;
+        koan_auth::schema::migrate(conn)?;
         return crate::db::queries::auth::adopt_local_rows(conn);
     }
 
@@ -638,6 +639,10 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     )?;
     cascade_orphans(conn)?;
     refuse_dangling_references(conn)?;
+    // The account tables are `koan-auth`'s, versioned apart: made above as
+    // they were before they moved, which its first version adopts as they
+    // are, and changed only by its own migrations since.
+    koan_auth::schema::migrate(conn)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -2023,6 +2028,37 @@ mod tests {
     }
 
     use super::*;
+
+    /// The account tables kōan makes are the ones `koan-auth` makes, column
+    /// for column, so its first version adopts them as they stand.
+    #[test]
+    fn the_account_tables_are_koan_auths() {
+        type Column = (String, String, bool, Option<String>, i64);
+        let columns = |conn: &Connection, table: &str| -> Vec<Column> {
+            let mut columns = conn
+                .prepare(&format!(
+                    "SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info('{table}')"
+                ))
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+                .unwrap()
+                .collect::<Result<Vec<Column>, _>>()
+                .unwrap();
+            columns.sort();
+            columns
+        };
+        let koan = Connection::open_in_memory().unwrap();
+        create_tables(&koan).unwrap();
+        let alone = Connection::open_in_memory().unwrap();
+        koan_auth::schema::migrate(&alone).unwrap();
+        for table in ["users", "refresh_tokens", "api_keys", "app_passwords"] {
+            assert_eq!(columns(&koan, table), columns(&alone, table), "{table}");
+        }
+        assert_eq!(
+            koan_auth::schema::version(&koan).unwrap(),
+            koan_auth::schema::VERSION
+        );
+    }
     use crate::db::connection::Database;
 
     /// Queries that answer a question about a handful of rows, and must not
