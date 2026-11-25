@@ -22,6 +22,10 @@ pub fn release_types<'a>(values: impl IntoIterator<Item = &'a str>) -> Option<St
     (!types.is_empty()).then(|| types.join(";"))
 }
 
+/// The secondary types that decide a record's section ahead of any other.
+const SPOKEN_WORD: &[&str] = &["spokenword", "interview", "audiobook", "audio drama"];
+const MIXES: &[&str] = &["dj-mix", "mixtape", "street"];
+
 /// The heading a record sits under on its artist's page, in page order. An
 /// artist's albums are listed in this order (`koan_release_section`), so a
 /// client draws a heading wherever the section changes.
@@ -45,9 +49,9 @@ impl ReleaseSection {
     pub fn of(types: Option<&str>) -> Self {
         let types = names(types);
         let has = |wanted: &[&str]| types.iter().any(|t| wanted.contains(t));
-        if has(&["spokenword", "interview", "audiobook", "audio drama"]) {
+        if has(SPOKEN_WORD) {
             Self::SpokenWord
-        } else if has(&["dj-mix", "mixtape", "street"]) {
+        } else if has(MIXES) {
             Self::Mixes
         } else if has(&["compilation"]) {
             Self::Compilations
@@ -71,7 +75,9 @@ impl ReleaseSection {
 
 /// The few words a record's tile shows for its type: `EP`, `Live`, `Remix
 /// EP`. `None` for an album and for a record whose type is not known, which
-/// is what a tile without one is taken to be.
+/// is what a tile without one is taken to be. A spoken word or mix type is
+/// named ahead of the others, as it decides the record's section: a mixed
+/// compilation reads `DJ Mix` under Mixes.
 pub fn release_badge(types: Option<&str>) -> Option<String> {
     let types = names(types);
     let primary = types.iter().find_map(|t| match *t {
@@ -80,7 +86,11 @@ pub fn release_badge(types: Option<&str>) -> Option<String> {
         "broadcast" => Some("Broadcast"),
         _ => None,
     });
-    let secondary = types.iter().find_map(|t| secondary_label(t));
+    let secondary = types
+        .iter()
+        .find(|t| SPOKEN_WORD.contains(*t) || MIXES.contains(*t))
+        .or_else(|| types.iter().find(|t| secondary_label(t).is_some()))
+        .and_then(|t| secondary_label(t));
     match (secondary, primary) {
         (Some(s), Some(p)) if p != "Broadcast" => Some(format!("{s} {p}")),
         (Some(s), _) => Some(s.to_string()),
@@ -158,6 +168,26 @@ mod tests {
             Some("Live")
         );
         assert_eq!(release_badge(Some("other")), None);
+        assert_eq!(
+            release_badge(Some("album;compilation;dj-mix")).as_deref(),
+            Some("DJ Mix")
+        );
+        assert_eq!(
+            release_badge(Some("album;compilation;spokenword")).as_deref(),
+            Some("Spoken Word")
+        );
+        assert_eq!(
+            release_badge(Some("album;live;interview")).as_deref(),
+            Some("Interview")
+        );
+        assert_eq!(
+            release_badge(Some("ep;remix;dj-mix")).as_deref(),
+            Some("DJ Mix EP")
+        );
+        assert_eq!(
+            release_badge(Some("album;live;compilation")).as_deref(),
+            Some("Live")
+        );
     }
 
     #[test]
