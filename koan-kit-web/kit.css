@@ -2,7 +2,7 @@
  * The kōan web kit: the controls every server-rendered page is drawn with, built from tokens.css. Plain elements come
  * out in the theme (a `<button>` is the bordered button, an `<input>` the square field), and a handful of classes give
  * the rest: the button weights, a labelled field, a field joined to its button, a panel, a notice, a status, the
- * progress meter and the toast.
+ * progress meter and the toast. The koan-kit-web crate writes the markup for each, using these classes and no others.
  *
  * Element rules are in `@layer base` and the classes in `@layer components`, so any utility in a template still wins.
  * The rules and their reasons are in the README; koan's docs/design/koan-theme.md is the specification.
@@ -488,5 +488,96 @@
       border-width: 1px;
       padding-bottom: var(--sheet-padding-bottom, 0px);
     }
+  }
+
+  /* A glyph of the set, at the size its component drew it: it keeps that size in a flex row, and sits on the baseline
+   * of the words beside it. */
+  .icon {
+    @apply inline-block flex-none align-[-0.2em];
+  }
+
+  /* A checkbox or radio leading its words, inline: a choice in a row of filters, or one of a set of radios. A form's
+   * row with the box trailing is a `toggle`. */
+  .check {
+    @apply inline-flex cursor-pointer items-center gap-2 text-control;
+  }
+
+  /* A row of actions: a sheet's foot, a form's end. Trailing, as a dialog's buttons are, and wrapping when narrow. */
+  .actions {
+    @apply flex flex-wrap items-center justify-end gap-2;
+  }
+
+  /* Labels and their values on two columns, the labels muted. A long value wraps anywhere rather than widen the page. */
+  dl.pairs {
+    @apply m-0 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-control;
+  }
+
+  dl.pairs > dt {
+    @apply text-muted;
+  }
+
+  dl.pairs > dd {
+    @apply m-0 wrap-anywhere;
+  }
+
+  /* Where a list would be, when it has nothing: quiet and centred, the title a step stronger than why. */
+  .empty {
+    @apply grid justify-items-center gap-2 py-12 text-center text-control text-muted;
+  }
+
+  .empty > strong {
+    @apply font-normal text-strong;
+  }
+
+  .empty > p {
+    @apply m-0 max-w-form;
+  }
+
+  /* The link a keyboard reaches first: out of sight until it is focused, then over the page's top-left corner. */
+  .skip {
+    @apply sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-bg focus:px-3 focus:py-2;
+  }
+
+  /* The release a page was built from: fine print that leads somewhere, receding until it is hovered. */
+  a.release {
+    @apply text-fine text-muted hover:text-ink hover:no-underline;
+  }
+
+  /* A notice's glyph leads its words. */
+  .notice > .icon {
+    @apply me-1.5;
+  }
+
+  /* A disclosure's body sits under its summary's words, past the chevron. */
+  details.disclosure > summary + * {
+    @apply pt-1 pb-2 pl-[1em];
+  }
+
+  /* A sheet's parts: its header (the title, and a close), what it holds, and its actions along the foot. The parts
+   * carry the padding, so what it holds can run edge to edge. */
+  dialog.sheet > header {
+    @apply flex items-baseline justify-between gap-4 px-5 pt-5 pb-3;
+  }
+
+  dialog.sheet > header > h2 {
+    @apply m-0;
+  }
+
+  dialog.sheet > section {
+    @apply px-5 pb-4 text-control;
+  }
+
+  dialog.sheet > section:empty:not([aria-busy="true"]) {
+    @apply hidden;
+  }
+
+  /* A preview on its way: the spinner, where it will be. */
+  dialog.sheet > section[aria-busy="true"]:empty::before {
+    content: "";
+    @apply mx-auto my-4 block size-4 animate-busy border-2 border-muted border-r-transparent motion-reduce:animate-none motion-reduce:border-r-muted;
+  }
+
+  dialog.sheet > footer {
+    @apply px-5 pb-5;
   }
 }

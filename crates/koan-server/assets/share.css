@@ -412,7 +412,7 @@
 }
 @font-face {
   font-family: "Geist Mono";
-  src: url("geist-mono.woff2") format("woff2-variations");
+  src: url("geist-mono.woff2?v=4a0c51217eb6bd13") format("woff2-variations");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -863,6 +863,20 @@
   .field > small.warn, .field.warn > small {
     color: var(--warn);
   }
+  .combo {
+    display: inline-flex;
+    align-items: stretch;
+  }
+  .combo > * + * {
+    margin-left: -1px;
+  }
+  .combo > :is(input, select) {
+    flex: 1;
+  }
+  .combo > :focus-visible {
+    position: relative;
+    z-index: 10;
+  }
   .toggle {
     display: flex;
     cursor: pointer;
@@ -1140,6 +1154,170 @@
       border-width: 1px;
       padding-bottom: var(--sheet-padding-bottom, 0px);
     }
+  }
+  .icon {
+    display: inline-block;
+    flex: none;
+    vertical-align: -0.2em;
+  }
+  .check {
+    display: inline-flex;
+    cursor: pointer;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    font-size: var(--text-control);
+    line-height: var(--tw-leading, var(--text-control--line-height));
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: calc(var(--spacing) * 2);
+  }
+  dl.pairs {
+    margin: 0px;
+    display: grid;
+    grid-template-columns: max-content minmax(0,1fr);
+    column-gap: calc(var(--spacing) * 4);
+    row-gap: var(--spacing);
+    font-size: var(--text-control);
+    line-height: var(--tw-leading, var(--text-control--line-height));
+  }
+  dl.pairs > dt {
+    color: var(--muted);
+  }
+  dl.pairs > dd {
+    margin: 0px;
+    overflow-wrap: anywhere;
+  }
+  .empty {
+    display: grid;
+    justify-items: center;
+    gap: calc(var(--spacing) * 2);
+    padding-block: calc(var(--spacing) * 12);
+    text-align: center;
+    font-size: var(--text-control);
+    line-height: var(--tw-leading, var(--text-control--line-height));
+    color: var(--muted);
+  }
+  .empty > strong {
+    --tw-font-weight: var(--font-weight-normal);
+    font-weight: var(--font-weight-normal);
+    color: var(--strong);
+  }
+  .empty > p {
+    margin: 0px;
+    max-width: var(--container-form);
+  }
+  .skip {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border-width: 0;
+    &:focus {
+      position: static;
+      width: auto;
+      height: auto;
+      padding: 0;
+      margin: 0;
+      overflow: visible;
+      clip-path: none;
+      white-space: normal;
+    }
+    &:focus {
+      position: fixed;
+    }
+    &:focus {
+      top: calc(var(--spacing) * 2);
+    }
+    &:focus {
+      left: calc(var(--spacing) * 2);
+    }
+    &:focus {
+      z-index: 50;
+    }
+    &:focus {
+      background-color: var(--bg);
+    }
+    &:focus {
+      padding-inline: calc(var(--spacing) * 3);
+    }
+    &:focus {
+      padding-block: calc(var(--spacing) * 2);
+    }
+  }
+  a.release {
+    font-size: var(--text-fine);
+    line-height: var(--tw-leading, var(--text-fine--line-height));
+    color: var(--muted);
+    &:hover {
+      @media (hover: hover) {
+        color: var(--ink);
+      }
+    }
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-line: none;
+      }
+    }
+  }
+  .notice > .icon {
+    margin-inline-end: calc(var(--spacing) * 1.5);
+  }
+  details.disclosure > summary + * {
+    padding-top: var(--spacing);
+    padding-bottom: calc(var(--spacing) * 2);
+    padding-left: 1em;
+  }
+  dialog.sheet > header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: calc(var(--spacing) * 4);
+    padding-inline: calc(var(--spacing) * 5);
+    padding-top: calc(var(--spacing) * 5);
+    padding-bottom: calc(var(--spacing) * 3);
+  }
+  dialog.sheet > header > h2 {
+    margin: 0px;
+  }
+  dialog.sheet > section {
+    padding-inline: calc(var(--spacing) * 5);
+    padding-bottom: calc(var(--spacing) * 4);
+    font-size: var(--text-control);
+    line-height: var(--tw-leading, var(--text-control--line-height));
+  }
+  dialog.sheet > section:empty:not([aria-busy="true"]) {
+    display: none;
+  }
+  dialog.sheet > section[aria-busy="true"]:empty::before {
+    content: "";
+    margin-inline: auto;
+    margin-block: calc(var(--spacing) * 4);
+    display: block;
+    width: calc(var(--spacing) * 4);
+    height: calc(var(--spacing) * 4);
+    animation: var(--animate-busy);
+    border-style: var(--tw-border-style);
+    border-width: 2px;
+    border-color: var(--muted);
+    border-right-color: transparent;
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      border-right-color: var(--muted);
+    }
+  }
+  dialog.sheet > footer {
+    padding-inline: calc(var(--spacing) * 5);
+    padding-bottom: calc(var(--spacing) * 5);
   }
 }
 @layer base {

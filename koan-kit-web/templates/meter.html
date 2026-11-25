@@ -1,0 +1,4 @@
+{#- A hairline, the part done thicker in its tone; with no value, a length of it moving along. -#}
+<progress class="meter{% if let Some(tone) = tone %} {{ tone }}{% endif %}{{ attrs.classes() }}"
+{%- if let Some((value, max)) = value %} value="{{ value }}" max="{{ max }}"{% endif %}
+{%- if let Some(label) = label.present() %} aria-label="{{ label }}"{% endif %}{{ attrs }}></progress>

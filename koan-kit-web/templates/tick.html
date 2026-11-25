@@ -1,0 +1,7 @@
+{#- The box itself, shared by Check and Toggle. -#}
+<input type="{% if tick.radio %}radio{% else %}checkbox{% endif %}" name="{{ tick.name }}"
+{%- if let Some(value) = tick.value.present() %} value="{{ value }}"{% endif %}
+{%- if tick.checked %} checked{% endif %}
+{%- if tick.disabled %} disabled{% endif %}
+{%- if tick.required %} required{% endif %}
+{%- if let Some(signal) = tick.bind %} data-bind="{{ signal }}"{% endif %}>

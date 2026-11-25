@@ -3,7 +3,7 @@
 @source "./docs.html";
 
 /* The tokens alone: the site's markup is its own, so the web kit's element defaults and controls would only fight it. */
-@import "@radiosilence/theme/tokens.css";
+@import "../../koan-kit-web/tokens.css";
 
 /* Syntax colours for the documentation's code, which the web UI has no use for. */
 :root {

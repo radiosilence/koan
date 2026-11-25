@@ -2,14 +2,14 @@
  * The share page's stylesheet, compiled by Tailwind into assets/share.css (`just css`). The compiled file is committed:
  * the crate embeds it, and building koan must not need the Tailwind CLI.
  *
- * The page is drawn with the kōan web kit (@radiosilence/theme) and carries the rest as utilities in its template,
+ * The page is drawn with the kōan web kit (koan-kit-web/, from the tree) and carries the rest as utilities in its template,
  * including the playing row's, which share.js marks.
  */
 @import "tailwindcss" source(none);
 @source "../src/share.rs";
 @source "../templates/share";
 @source "../scripts/share.ts";
-@import "@radiosilence/theme";
+@import "../../../koan-kit-web/theme.css";
 
 @theme {
   /* Narrower than this, the cover stacks above the title. */

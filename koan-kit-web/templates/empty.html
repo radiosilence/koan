@@ -1,0 +1,13 @@
+{#- Where a list would be: a glyph, what is missing, why, and what would fill it. -#}
+<div class="empty{{ attrs.classes() }}"{{ attrs }}>
+{%- if let Some(glyph) = icon %}
+  {{ glyph.svg(34) }}
+{%- endif %}
+  <strong>{{ title }}</strong>
+{%- if !detail.is_empty() %}
+  <p>{{ detail }}</p>
+{%- endif %}
+{%- if let Some(action) = action %}
+  {{ action }}
+{%- endif %}
+</div>

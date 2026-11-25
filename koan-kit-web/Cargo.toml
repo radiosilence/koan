@@ -1,0 +1,62 @@
+[package]
+name = "koan-kit-web"
+# The kit's own version, shared with package.json and released on its own rather than with koan: a push to main that
+# changes it publishes both (.github/workflows/koan-kit-web.yml). A test fails when the two disagree.
+version = "0.4.0"
+edition = "2024"
+license = "MIT AND OFL-1.1"
+repository = "https://github.com/radiosilence/koan"
+homepage = "https://ui.koan.rocks"
+documentation = "https://docs.rs/koan-kit-web"
+readme = "README.md"
+description = "The kōan web kit as askama components wired for Datastar: buttons, fields, sheets, notices and the rest, drawn with the kit's own stylesheet, which the crate carries"
+keywords = ["askama", "datastar", "components", "design-system", "tailwind"]
+categories = ["web-programming", "template-engine"]
+# The stylesheet travels with the markup: an app's `just css` imports theme.css from the crate's source, so one
+# version in Cargo.lock names both, and kit-check runs from there too.
+include = [
+  "src/",
+  "templates/",
+  "theme.css",
+  "tokens.css",
+  "kit.css",
+  "kit-check.mjs",
+  "geist-mono.woff2",
+  "OFL.txt",
+  "LICENSE",
+  "README.md",
+  "CHANGELOG.md",
+]
+
+[features]
+# Every component in every state, as the storybook draws it. The example and the crate's own tests use it; an app
+# has no need of it.
+storybook = []
+
+[dependencies]
+askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
+# The kit's markup is askama_datastar's `Html`, and the attributes it writes are the syntax of the Datastar that crate
+# serves, so the two move together. Re-exported, so an app that takes the kit has the one that matches it.
+askama_datastar = "0.1.2"
+# `font::serve` answers as a handler, and `Confirm::preview` as SSE events.
+axum = { version = "0.8.9", default-features = false }
+# An import map's CSP source is the SHA-256 of its text, in base64.
+base64 = { version = "0.23.1", default-features = false, features = ["alloc"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
+sha2 = { version = "0.11.1", default-features = false }
+
+[dev-dependencies]
+axum = "0.8.9"
+tokio = { version = "1.54.1", features = ["fs", "macros", "net", "rt-multi-thread", "time"] }
+
+[[example]]
+name = "storybook"
+required-features = ["storybook"]
+
+[lints.rust]
+missing_docs = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"

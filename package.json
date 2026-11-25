@@ -1,9 +1,8 @@
 {
   "name": "koan-styles",
   "private": true,
-  "description": "The shared theme the web UI, share page and koan.rocks stylesheets import, and the Zod the web UI's scripts parse JSON with (bundled by `just zod`). Tailwind itself is the standalone binary from mise.",
+  "description": "The Zod the web UI's scripts parse JSON with (bundled by `just zod`). The stylesheets import the kōan web kit from koan-kit-web/ in the tree, and Tailwind is the standalone binary from mise.",
   "dependencies": {
-    "@radiosilence/theme": "0.2.8",
     "zod": "4.6.7"
   }
 }

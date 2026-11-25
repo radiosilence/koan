@@ -1,0 +1,18 @@
+{#- The page's one sheet for asking before a change. A button that asks fills the `_kitconfirm` signals from its own
+    data and opens it; the header closes it when a handler sets `open` false; the section empties itself on each opening
+    and fetches that opening's preview, cancelling the last one's; yes waits for `ready`, sends the button's request,
+    and is busy while it runs. -#}
+<dialog class="sheet{{ attrs.classes() }}" closedby="any" aria-labelledby="kit-confirm-question"{{ attrs }}
+  data-signals__ifmissing="{_kitconfirm: {ask: '', yes: '', url: '', preview: '', bad: false, ready: false, open: false, n: 0}}">
+  <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; el.closest('dialog').close()">
+    <h2 id="kit-confirm-question" data-text="$_kitconfirm.ask"></h2>
+  </header>
+  <section id="kit-confirm-preview" data-attr:aria-busy="!$_kitconfirm.ready"
+    data-effect="$_kitconfirm.n &amp;&amp; (el.replaceChildren(), $_kitconfirm.preview &amp;&amp; @get($_kitconfirm.preview, {requestCancellation: 'cleanup'}))"></section>
+  <footer class="actions">
+    <button type="button" class="quiet" commandfor="kit-confirm" command="close" autofocus>{{ cancel }}</button>
+    <button type="button" data-class:primary="!$_kitconfirm.bad" data-class:bad="$_kitconfirm.bad" data-class:fill="$_kitconfirm.bad"
+      data-indicator="_kitconfirmbusy" data-class:busy="$_kitconfirmbusy" data-attr:disabled="!$_kitconfirm.ready || $_kitconfirmbusy"
+      data-text="$_kitconfirm.yes" data-on:click="@post($_kitconfirm.url)"></button>
+  </footer>
+</dialog>

@@ -1,8 +1,8 @@
 {
   "name": "@radiosilence/koan-kit-web",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "The kōan theme for Tailwind v4: tokens, typeface and the kit of controls radiosilence's web UIs are drawn with",
-  "license": "MIT",
+  "license": "MIT AND OFL-1.1",
   "author": "James Cleveland <jc@blit.cc>",
   "style": "./theme.css",
   "exports": {

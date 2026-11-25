@@ -1,2 +1,5 @@
 node_modules/
 *.tgz
+# The storybook's compiled stylesheet and the font beside it, made by `mise run storybook`; site.yml builds its own.
+storybook/out.css
+storybook/geist-mono.woff2

@@ -44,6 +44,23 @@ if [ "$version" = "$current" ] || [ "$newest" != "$version" ]; then
   exit 1
 fi
 
+# The published koan-server names the web kit by the kit's own version (koan-kit-web/, released on its own by
+# koan-kit-web.yml), so the kit in the tree must be the kit that version holds: a change to it since its version last
+# moved would ship a koan-server built against a kit nobody can download. Its docs and storybook do not count.
+kit_bump=$(git log -1 --format=%H -G '^version = ' origin/main -- koan-kit-web/Cargo.toml)
+if [ -n "$kit_bump" ]; then
+  kit_changes=$(git diff --name-only "$kit_bump" origin/main -- koan-kit-web/Cargo.toml koan-kit-web/src \
+    koan-kit-web/templates 'koan-kit-web/*.css' koan-kit-web/kit-check.mjs koan-kit-web/geist-mono.woff2)
+  if [ -n "$kit_changes" ]; then
+    echo "koan-kit-web/ has changed since its version last moved, so the published koan-server would name a kit" >&2
+    echo "without these changes:" >&2
+    printf '%s\n' "$kit_changes" | sed 's/^/  /' >&2
+    echo "bump the kit's version (koan-kit-web/Cargo.toml, package.json and the pin in Cargo.toml) with its" >&2
+    echo "CHANGELOG.md, merge that, and release again" >&2
+    exit 1
+  fi
+fi
+
 # A branch left by a closed or merged release PR is cut again; an open PR is not touched.
 local_branch=$(git rev-parse -q --verify "refs/heads/$branch" || true)
 remote_branch=$(git ls-remote --heads origin "$branch")

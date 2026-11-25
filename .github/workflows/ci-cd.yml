@@ -167,19 +167,21 @@ jobs:
             # they count.
             inputs=$(python3 .github/scripts/native_inputs.py "$base" HEAD) || inputs=$'apple=true\nandroid=true'
 
-            # The web kit and koan.rocks have workflows of their own (koan-kit-web.yml, site.yml), so a change to nothing else
-            # runs none of this one, the always-on checks and main's audit included; `Checks` still reports.
-            if ! printf '%s\n' "$files" | grep -qvE '^(koan-kit-web|site)/'; then
-              echo "only koan-kit-web/ and site/ changed -- skipping everything"
+            # koan.rocks has a workflow of its own (site.yml), so a change to nothing else runs none of this one, the
+            # always-on checks and main's audit included; `Checks` still reports. The web kit is a workspace member, whose
+            # components koan-server renders and whose stylesheet the web UI imports, so a change to it runs the Rust and
+            # stylesheet jobs below.
+            if ! printf '%s\n' "$files" | grep -qvE '^site/'; then
+              echo "only site/ changed -- skipping everything"
               ci=false deps=false
             fi
             eval "$(printf '%s\n' "$inputs" | sed 's/^/inputs_/')"
 
             # Anything cargo compiles or that decides how.
-            touches '^crates/|^tools/|^Cargo\.(toml|lock)$|^docs/guide/koan-kit\.md$|^docs/reference/koan-kit-api\.md$|^site/public/koan-kit\.txt$|^\.cargo/|^rust-toolchain|^justfile$|^mise\.toml$|^\.github/' || rust=false
+            touches '^crates/|^koan-kit-web/|^tools/|^Cargo\.(toml|lock)$|^docs/guide/koan-kit\.md$|^docs/reference/koan-kit-api\.md$|^site/public/koan-kit\.txt$|^\.cargo/|^rust-toolchain|^justfile$|^mise\.toml$|^\.github/' || rust=false
             # The web UI's stylesheets and scripts: their sources, everything
             # Tailwind reads class names from, and the tools.
-            touches '^crates/koan-server/|^package\.json$|^aube-lock\.yaml$|^\.npmrc$|^scripts/styles-deps\.sh$|^mise\.toml$|^justfile$|^\.github/' || web=false
+            touches '^crates/koan-server/|^koan-kit-web/|^package\.json$|^aube-lock\.yaml$|^scripts/styles-deps\.sh$|^mise\.toml$|^justfile$|^\.github/' || web=false
             touches '^deploy/|^\.github/' || package=false
             # The image is the Linux binaries in a runtime layer. The Rust
             # jobs already check the code, so a pull request builds them and
@@ -353,18 +355,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     timeout-minutes: 10
-    # The theme the stylesheets import comes from GitHub Packages.
+    # The kit the stylesheets import is koan-kit-web/, in the tree.
     permissions:
       contents: read
-      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
-          install_args: just github:tailwindlabs/tailwindcss aube node
+          install_args: just github:tailwindlabs/tailwindcss node
       - run: just css
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Compiled stylesheets match their sources
         run: git diff --exit-code crates/koan-server/assets
 
@@ -377,18 +376,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     timeout-minutes: 10
-    # The npm packages install from GitHub Packages, beside the theme.
+    # Zod installs from the npm registry, which needs no token.
     permissions:
       contents: read
-      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install_args: just github:microsoft/typescript-go aube node bun
       - run: just js zod
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: The Zod bundle matches its source
         run: git diff --exit-code crates/koan-server/assets/zod.js
 
@@ -1263,21 +1259,24 @@ jobs:
         # Publishing is not idempotent: it errors on a version that already
         # exists. A release retried after a partial publish, or after a
         # downstream failure, would fail here and take the GitHub release with
-        # it, so each crate already in the index at this version is excluded
-        # and only the rest go out.
+        # it, so each crate already in the index at its version is excluded
+        # and only the rest go out. Each at its own version: the web kit
+        # (koan-kit-web) has one of its own, which koan-kit-web.yml usually
+        # published before this ran, and which cargo publishes ahead of
+        # koan-server when it did not.
         run: |
           EXCLUDE=()
           PENDING=0
-          for crate in $(cargo metadata --no-deps --format-version 1 \
-                         | jq -r '.packages[] | select(.publish != []) | .name'); do
+          while read -r crate version; do
             if curl -sf "https://index.crates.io/${crate:0:2}/${crate:2:2}/${crate}" \
-               | grep -q "\"vers\":\"${VERSION}\""; then
-              echo "${crate} ${VERSION} is already on crates.io"
+               | grep -q "\"vers\":\"${version}\""; then
+              echo "${crate} ${version} is already on crates.io"
               EXCLUDE+=(--exclude "$crate")
             else
               PENDING=$((PENDING + 1))
             fi
-          done
+          done < <(cargo metadata --no-deps --format-version 1 \
+                   | jq -r '.packages[] | select(.publish != []) | "\(.name) \(.version)"')
           if [ "$PENDING" -eq 0 ]; then
             echo "nothing to publish"
             exit 0

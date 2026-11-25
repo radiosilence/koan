@@ -24,6 +24,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 ipnet = "2"
 koan-auth = { workspace = true }
 koan-core = { workspace = true }
+koan-kit-web = { workspace = true }
 koan-relay-client = { workspace = true }
 log = "0.4"
 lru = "0.19"

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- **The kit's components, as a crate.** `koan-kit-web` on crates.io holds the kit's controls as askama components wired for Datastar, and carries the stylesheet, so one version in an app's `Cargo.lock` names both the markup and the rules that draw it. Fields link their notes to their controls, buttons are busy for exactly as long as their own request runs, sheets open through `commandfor` with no script, and a page's one `Confirm` asks before a change, or shows the server's preview of it. Every expression is the kit's own; text reaches only escaped attributes. A test fails on a class the components write that the stylesheet has no rule for. See the README.
+- **The storybook is generated from the components,** each beside the call that drew it, so ui.koan.rocks shows the markup an app receives. `--serve` runs it live, with Datastar.
+- **New classes:** `check` (a box leading its words, inline), `pairs` (labels and values), `empty` (where a list would be), `actions` (a row of buttons), `skip` (the skip link §8 asks for), `release` (a footer's release link), `icon`, and a sheet's `header`, `section` and `footer`.
+- **The font's URL carries its hash,** `geist-mono.woff2?v=…`, so it can be cached for good and a new one is fetched again. An app serves it with the crate's `font::serve` beside its stylesheet rather than copying it out of the package.
+- **The icon set is the kit's,** `koan_kit_web::icon`, compiled from the kōan apps' own SVGs.
+- **The licence names the font:** `MIT AND OFL-1.1`.
+
 ## 0.3.0
 
 - **Renamed `@radiosilence/koan-kit-web`,** the web counterpart of koan-kit, and moved into the koan repository beside its specification. Nothing in it changed from `@radiosilence/theme` 0.2.9: replace the package name in `package.json`, the stylesheet's `@import` and the `kit-check` path. ui.koan.rocks shows every control.

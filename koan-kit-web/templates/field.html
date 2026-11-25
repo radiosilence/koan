@@ -1,0 +1,9 @@
+{#- A label leading, the control filling the width, and the note under it, which describes the control. -#}
+{%- let note = self.note() -%}
+<label class="field{% if let Some((Some(tone), _)) = note %} {{ tone }}{% endif %}{{ attrs.classes() }}"{{ attrs }}>
+  <span>{{ label }}</span>
+  {{ self.control() }}
+  {%- if let Some((_, text)) = note %}
+  <small id="{{ self.note_id() }}">{{ text }}</small>
+  {%- endif %}
+</label>
