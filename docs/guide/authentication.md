@@ -7,6 +7,14 @@ kōan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default
 A new server has no accounts. Until one exists, its web UI sends sign-in to a setup page at `/setup`:
 
 1. Start the server and find the line in its log that begins `No accounts yet`. It holds the setup code, and is written at start-up and again, at most once a minute, while the page is in use.
+
+   | Where the server runs | Where the log is |
+   |---|---|
+   | Directly on a machine | the server's output, in its terminal or its service manager's log |
+   | `docker run` | `docker logs koan 2>&1 \| grep 'No accounts yet'` |
+   | Docker Compose | `docker compose logs koan \| grep 'No accounts yet'` |
+   | Kubernetes | `kubectl -n koan logs deploy/koan \| grep 'No accounts yet'` |
+
 2. Open `/setup` on the server (`http://localhost:4000/setup`, or any page, which redirects there), enter the code, and choose the admin's username and password.
 3. You are signed in as that admin, and the page closes for good.
 
