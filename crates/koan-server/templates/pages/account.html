@@ -7,6 +7,9 @@
 {%- when Some((keys, passwords)) %}
 <form class="{{ crate::ui::pages::SUB }} flex flex-wrap items-center gap-x-3 gap-y-1" method="post" action="auth/signout"><span>Signed in as <strong class="text-ink">{{ username }}</strong></span>
 <button class="quiet px-0">Sign out</button></form>
+{%- if let Some((_, true)) = two_step %}
+<p class="notice mt-4 max-w-4xl">Your account signs in with a password alone. <a href="account#second-factor">Turn on two-step sign-in</a> so that a stolen password is not enough.</p>
+{%- endif %}
 {%- if let Some(link) = link %}
 <section class="panel mt-6 mb-8 flex max-w-4xl flex-wrap items-center gap-x-8 gap-y-4">
 <div class="bg-white p-3 [&_svg]:block [&_svg]:size-64 [&_svg]:max-w-full" role="img" aria-label="Sign-in link as a QR code">{{ link.qr }}</div>
@@ -14,6 +17,7 @@
 <div class="{{ crate::ui::pages::COPY_ROW }}">{% call copy::field("link-device", link.link, "Sign-in link", "Copy link") %}{% endcall %}</div></div>
 </section>
 {%- endif %}
+{%- if let Some((section, _)) = two_step %}{{ section }}{% endif %}
 <h2>API keys</h2><p class="{{ crate::ui::pages::SUB }}">A Subsonic client that supports API keys can sign in with one instead of your password. It acts as you, with your permissions, until you revoke it.</p>
 {% call account::create_form("account/keys", "keyname", "Name, e.g. phone", "Key name", "Create key", "key-result") %}{% endcall %}{{ keys }}
 <h2>App passwords</h2><p class="{{ crate::ui::pages::SUB }}">For a Subsonic app that only signs in with a username and password: give it your username and an app password in place of yours. Make one per app. kōan keeps it encrypted, never shows it again, and it stops working when you revoke it or change your password.</p>

@@ -347,4 +347,5 @@ fun KoanException.describe() = when (this) {
     is KoanException.Remote -> detail
     is KoanException.Refused -> detail
     is KoanException.NeedsSampleRate -> detail
+    is KoanException.NeedsSecondFactor -> detail
 }

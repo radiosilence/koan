@@ -249,6 +249,7 @@ koan auth list-users                  # list all users
 koan auth login --server http://localhost:4000 --username admin  # login (stores refresh token in config.local.toml)
 koan auth logout --server http://localhost:4000  # logout (revoke token)
 koan auth reset-password admin        # reset password (revokes all tokens for that user)
+koan auth reset-password alice --remove-second-factor  # also turn off two-step sign-in
 koan auth set-role alice admin        # change role
 koan auth api-key create --username alice --name phone  # Subsonic API key, printed once
 koan auth api-key list [--username alice]               # keys with created / last used

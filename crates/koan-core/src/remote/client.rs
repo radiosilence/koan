@@ -2016,26 +2016,32 @@ pub fn offers_unsigned(base_url: &str, extension: &str) -> Result<bool, Subsonic
 /// Trade an account's password for an API key named for `device`
 /// (`koanSignIn`). The password goes as `p=enc:`, over plain HTTP too: this
 /// once, so that it is never sent again. Only for a server that offers
-/// `profile::SIGN_IN`.
+/// `profile::SIGN_IN`. `code` is the second factor of an account with
+/// two-step sign-in; the server answers error 45 when one is wanted or wrong.
 pub fn koan_sign_in(
     base_url: &str,
     username: &str,
     password: &str,
+    code: Option<&str>,
     device: &str,
 ) -> Result<KoanJoined, SubsonicError> {
     let url = format!("{}/rest/koanSignIn", base_url.trim_end_matches('/'));
     let hex: String = password.bytes().map(|b| format!("{b:02x}")).collect();
     let p = format!("enc:{hex}");
+    let mut query = vec![
+        ("u", username),
+        ("p", &p),
+        ("name", device),
+        ("v", API_VERSION),
+        ("c", CLIENT_NAME),
+        ("f", "json"),
+    ];
+    if let Some(code) = code.map(str::trim).filter(|c| !c.is_empty()) {
+        query.push(("code", code));
+    }
     let resp: SubsonicResponseWrapper = download::api_client()?
         .get(&url)
-        .query(&[
-            ("u", username),
-            ("p", &p),
-            ("name", device),
-            ("v", API_VERSION),
-            ("c", CLIENT_NAME),
-            ("f", "json"),
-        ])
+        .query(&query)
         .send()?
         .json()?;
     resp.subsonic_response

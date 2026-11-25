@@ -24,6 +24,7 @@ mod pair;
 mod properties;
 mod scan;
 mod scrobbling;
+mod second_factor;
 mod session;
 mod setup;
 #[cfg(test)]
@@ -59,7 +60,7 @@ use crate::share::{asset, blocking, not_found};
 
 /// `'unsafe-eval'` because Datastar compiles its attribute expressions.
 /// Everything else is this server's own, and nothing is inline but the import
-/// map naming the player, allowed by its hash. `data:` images are the theme's
+/// map naming the player and Zod, allowed by its hash. `data:` images are the theme's
 /// checkbox tick and select chevron, which a stylesheet can only give as data
 /// URLs.
 static PAGE_CSP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
@@ -80,6 +81,10 @@ const PARTIAL: &str = "x-koan-partial";
 
 const UI_CSS: &str = include_str!("../../assets/ui.css");
 const UI_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/ui.js"));
+const PASSKEY_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/passkey.js"));
+/// Zod, which the scripts parse JSON with, bundled into one module by
+/// `just zod` (vendor/zod.ts) and committed, so `cargo build` needs no Node.
+const ZOD_JS: &str = include_str!("../../assets/zod.js");
 const NO_COVER_SVG: &str = include_str!("../../assets/no-cover.svg");
 
 /// The page's stylesheet and scripts, each URL carrying a hash of its asset.
@@ -87,6 +92,7 @@ pub(super) struct AssetUrls {
     pub css: String,
     pub css_hash: String,
     pub ui_js: String,
+    pub passkey_js: String,
     pub player_js: String,
     pub imports: crate::share::ImportMap,
     pub datastar_js: String,
@@ -95,11 +101,13 @@ pub(super) struct AssetUrls {
 pub(super) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::new(|| {
     use crate::share::versioned;
     let player_js = versioned("./ui/assets/player.js", crate::share::ENGINE_JS);
+    let zod_js = versioned("./ui/assets/zod.js", ZOD_JS);
     AssetUrls {
         css: versioned("./ui/assets/ui.css", UI_CSS),
         css_hash: crate::share::content_hash(UI_CSS),
         ui_js: versioned("./ui/assets/ui.js", UI_JS),
-        imports: crate::share::ImportMap::player(&player_js),
+        passkey_js: versioned("./ui/assets/passkey.js", PASSKEY_JS),
+        imports: crate::share::ImportMap::of(&[("koan/player", &player_js), ("zod/mini", &zod_js)]),
         player_js,
         datastar_js: askama_datastar::script::url("./ui/assets/datastar.js"),
     }
@@ -130,6 +138,12 @@ pub struct UiState {
 }
 
 impl UiState {
+    /// This server as WebAuthn knows it, from `server.url`: none without one,
+    /// or for an address browsers allow no security keys on.
+    fn relying_party(&self) -> Option<koan_auth::webauthn::RelyingParty> {
+        koan_auth::webauthn::RelyingParty::from_url(self.server_url.as_deref()?, "kōan")
+    }
+
     /// What pages name as `<base href>`; see `crate::base`.
     fn base(&self) -> String {
         crate::base::href(self.server_url.as_deref())
@@ -192,6 +206,28 @@ pub(crate) fn router(
         .route("/account/keys", post(account::create_key))
         .route("/account/keys/{id}/revoke", post(account::revoke_key))
         .route("/account/app-passwords", post(account::create_app_password))
+        .route("/account/two-step/totp", post(second_factor::begin_totp))
+        .route(
+            "/account/two-step/totp/confirm",
+            post(second_factor::confirm_totp),
+        )
+        .route(
+            "/account/two-step/totp/remove",
+            post(second_factor::remove_totp),
+        )
+        .route("/account/two-step/keys", post(second_factor::finish_key))
+        .route(
+            "/account/two-step/keys/begin",
+            post(second_factor::begin_key),
+        )
+        .route(
+            "/account/two-step/keys/{id}/remove",
+            post(second_factor::remove_key),
+        )
+        .route(
+            "/account/two-step/recovery-codes",
+            post(second_factor::new_recovery_codes),
+        )
         .route(
             "/account/app-passwords/{id}/revoke",
             post(account::revoke_app_password),
@@ -222,6 +258,10 @@ pub(crate) fn router(
         .route("/users/{id}/password/form", post(users::password_form))
         .route("/users/{id}/role", post(users::set_role))
         .route("/users/{id}/delete", post(users::delete))
+        .route(
+            "/users/{id}/two-step/remove",
+            post(users::remove_second_factor),
+        )
         .route("/ui/stream/{id}", get(stream))
         .route("/ui/cover/{id}", get(cover))
         .layer(from_fn(askama_datastar::require_datastar_on_post))
@@ -285,6 +325,21 @@ pub(crate) fn router(
             )),
         )
         .route("/login", sign_in)
+        .route(
+            "/login/second",
+            post(session::second).layer(from_fn_with_state(state.auth.clone(), login_rate_limit)),
+        )
+        .route(
+            "/login/passkey",
+            post(session::passkey).layer(from_fn_with_state(state.auth.clone(), login_rate_limit)),
+        )
+        .route(
+            "/login/passkey/challenge",
+            post(session::passkey_challenge).layer(from_fn_with_state(
+                Arc::new(RateLimiter::new(60, 30)),
+                rate_limit,
+            )),
+        )
         .route("/setup", setup)
         .route("/auth/resume", get(session::resume))
         .route(session::PROXY_RESUME, get(session::proxy_resume))
@@ -351,6 +406,8 @@ async fn ui_asset(Path(name): Path<String>, query: RawQuery) -> Response {
     match name.as_str() {
         "ui.css" => asset(UI_CSS, "text/css; charset=utf-8", query),
         "ui.js" => asset(UI_JS, JS, query),
+        "passkey.js" => asset(PASSKEY_JS, JS, query),
+        "zod.js" => asset(ZOD_JS, JS, query),
         "player.js" => asset(crate::share::ENGINE_JS, JS, query),
         "datastar.js" => askama_datastar::script::serve(query).await,
         other => crate::share::binary_asset(other).unwrap_or_else(not_found),

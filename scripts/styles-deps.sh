@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the npm packages the stylesheets import (package.json at the root),
+# Installs the npm packages the stylesheets and scripts import (package.json at the root),
 # writing the GitHub Packages token file .npmrc names first if it is missing.
 # GH_TOKEN in CI, the gh login otherwise.
 set -euo pipefail

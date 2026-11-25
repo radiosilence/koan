@@ -41,6 +41,10 @@ final class SettingsModel {
     /// account's password: one that can be revoked on its own, and the only
     /// thing worth typing on a device with no keyboard.
     var withApiKey = false
+    /// The second factor of an account with two-step sign-in, asked for once
+    /// the server has said it wants one (`wantsCode`).
+    var code = ""
+    var wantsCode = false
 
     /// This Mac is serving its own library. Its account's password is then
     /// reset from Share this Mac, as its host, rather than changed here.
@@ -195,20 +199,24 @@ final class SettingsModel {
         let engine = self.engine
         let password = self.password
         let withKey = self.withApiKey
+        let typedCode = wantsCode && !self.code.isEmpty ? self.code : nil
+        self.code = ""
         Task {
             let result = await activity.run("Signing in") {
                 if withKey {
                     try await engine.signInRemoteWithKey(url: url, username: username, apiKey: password)
                 } else {
-                    try await engine.signInRemote(url: url, username: username, password: password)
+                    try await engine.signInRemote(url: url, username: username, password: password, code: typedCode)
                 }
             }
             switch result {
             case .success:
                 self.password = ""
+                wantsCode = false
                 lastError = nil
                 lastResult = "Signed in to \(url)"
             case .failure(let e):
+                if case KoanError.NeedsSecondFactor = e { wantsCode = true }
                 lastError = Self.describe(e)
                 reload()
                 return
@@ -347,6 +355,7 @@ final class SettingsModel {
         case let KoanError.Player(message): message
         case let KoanError.Remote(message): message
         case let KoanError.Refused(message): message
+        case let KoanError.NeedsSecondFactor(message): message
         default: error.localizedDescription
         }
     }

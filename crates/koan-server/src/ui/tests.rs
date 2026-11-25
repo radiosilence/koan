@@ -3232,3 +3232,93 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
         r.body
     );
 }
+
+#[tokio::test]
+async fn two_step_sign_in_asks_for_a_code_after_the_password() {
+    let f = setup(true);
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let key = koan_auth::second_factor::totp_key(&f.state.private_pem);
+    let secret = koan_auth::second_factor::begin_totp(&db.conn, &key, 1).unwrap();
+    db.conn
+        .execute("UPDATE totp SET confirmed = 1 WHERE user_id = 1", [])
+        .unwrap();
+    let code = || {
+        let step = koan_auth::totp::step(koan_core::clock::unix_secs());
+        format!("{:06}", koan_auth::totp::hotp(&secret, step as u64))
+    };
+
+    // The password alone opens no session: the second step's page.
+    let r = send(
+        &f.app,
+        form("/login", "username=alice&password=hunter2&next=%2Fqueue"),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("two-step sign-in"), "{}", r.body);
+    assert!(r.cookies().is_empty());
+    let ticket = r
+        .body
+        .split("name=\"ticket\" value=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap()
+        .to_owned();
+
+    let r = send(
+        &f.app,
+        form(
+            "/login/second",
+            &format!("ticket={ticket}&code=000000&next=%2Fqueue"),
+        ),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert!(r.cookies().is_empty());
+    // The same ticket again, its tries running on.
+    assert!(r.body.contains(&format!("value=\"{ticket}\"")));
+    let ticket = r
+        .body
+        .split("name=\"ticket\" value=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap()
+        .to_owned();
+
+    let r = send(
+        &f.app,
+        form(
+            "/login/second",
+            &format!("ticket={ticket}&code={}&next=%2Fqueue", code()),
+        ),
+    )
+    .await;
+    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/queue"));
+    assert!(!r.cookie("koan_access").is_empty());
+
+    // The ticket answered once.
+    let r = send(
+        &f.app,
+        form("/login/second", &format!("ticket={ticket}&code={}", code())),
+    )
+    .await;
+    assert!(r.cookies().is_empty());
+}
+
+#[tokio::test]
+async fn the_sign_in_page_offers_passkeys_only_where_browsers_allow_them() {
+    let f = setup_at(true, Some("https://music.example.org"));
+    let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
+    assert!(r.body.contains("data-passkey-login"), "{}", r.body);
+    assert!(r.body.contains("username webauthn"));
+    let r = send(&f.app, form("/login/passkey/challenge", "")).await;
+    let v: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(v["options"]["userVerification"], "required", "{}", r.body);
+    assert_eq!(v["options"]["rpId"], "music.example.org");
+    assert!(v["ticket"].as_str().is_some_and(|t| !t.is_empty()));
+
+    let f = setup(true);
+    let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
+    assert!(!r.body.contains("data-passkey-login"));
+    let r = send(&f.app, form("/login/passkey/challenge", "")).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}

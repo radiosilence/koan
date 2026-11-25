@@ -87,6 +87,8 @@ struct AppState {
     /// What app passwords are sealed under; `None` until the server has a
     /// signing key, and with it no app passwords.
     app_key: Option<[u8; 32]>,
+    /// What authenticator app secrets are sealed under, likewise.
+    totp_key: Option<[u8; 32]>,
     /// Upstream Navidrome/Subsonic, used to build signed stream URLs for tracks
     /// with no local file. Resolved once at startup rather than per request,
     /// which would re-read two TOML files. Credentials rather than a
@@ -189,6 +191,10 @@ enum SubsonicErrorCode {
     TokenAuthUnsupported = 41,
     ConflictingAuth = 43,
     InvalidApiKey = 44,
+    /// koan's own: the account has two-step sign-in, and its password was
+    /// sent without a good second factor. `koanSignIn` takes one as `code`;
+    /// nothing else does, so other requests sign in with a key instead.
+    SecondFactor = 45,
     NotAuthorized = 50,
     NotFound = 70,
 }
@@ -225,6 +231,29 @@ impl SubsonicError {
         Self::new(
             SubsonicErrorCode::Generic,
             "Server busy checking passwords; try again shortly",
+        )
+    }
+
+    /// The password was right, and the account wants its second factor too.
+    /// `code` is what `koanSignIn` was given, if the request was one: empty
+    /// when it was given none. `totp` is whether the account has an
+    /// authenticator app; without one, only its keys or a recovery code will
+    /// do, and an app can use no key.
+    fn second_factor(code: Option<&str>, totp: bool) -> Self {
+        Self::auth(
+            SubsonicErrorCode::SecondFactor,
+            match code.map(str::trim) {
+                Some("") if totp => {
+                    "This account uses two-step sign-in: give a code from your authenticator app, or a recovery code"
+                }
+                Some("") => {
+                    "This account's second factor is a security key, which apps cannot use: sign in with an invite or pairing from a signed-in device, or an API key. A recovery code works too, once each"
+                }
+                Some(_) => "Wrong code",
+                None => {
+                    "This account uses two-step sign-in, so its password alone does not sign in: sign in with an API key or an app password from the Account page of kōan's web UI"
+                }
+            },
         )
     }
 
@@ -332,6 +361,10 @@ struct SubsonicParams {
     #[serde(rename = "apiKey")]
     api_key: Option<String>,
     f: Option<String>,
+    /// A second factor beside `p`: set by `koanSignIn` alone, never read
+    /// from another request's parameters.
+    #[serde(skip)]
+    code: Option<String>,
 }
 
 impl SubsonicParams {
@@ -439,6 +472,7 @@ impl RawParams {
             p: self.get("p").map(String::from),
             api_key: self.get("apiKey").map(String::from),
             f: self.get("f").map(String::from),
+            code: None,
         }
     }
 }
@@ -1043,10 +1077,52 @@ fn check_credential(params: &SubsonicParams, state: &AppState) -> Result<Caller,
             via: Via::AppPassword,
         });
     }
-    match state.users.verify(username, &password) {
-        Ok(account) => caller((account.id, account.role), Via::Password),
-        Err(Refused::Busy) => Err(SubsonicError::busy()),
-        Err(Refused::Wrong) => Err(SubsonicError::wrong_auth()),
+    let account = match state.users.verify(username, &password) {
+        Ok(account) => account,
+        Err(Refused::Busy) => return Err(SubsonicError::busy()),
+        Err(Refused::Wrong) => return Err(SubsonicError::wrong_auth()),
+    };
+    second_factor(state, &account, params.code.as_deref())?;
+    caller((account.id, account.role), Via::Password)
+}
+
+/// Refuse a right password for an account with two-step sign-in unless
+/// `code` is its second factor. Only `koanSignIn` passes one; a wrong code
+/// counts against the account's budget for codes, and is not a wrong
+/// password, which the sign-in throttle would count again.
+fn second_factor(
+    state: &AppState,
+    account: &queries::auth::UserRow,
+    code: Option<&str>,
+) -> Result<(), SubsonicError> {
+    let db = state.open_db()?;
+    let factors = koan_auth::second_factor::factors(&db.conn, account.id)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+    if !factors.enabled() {
+        return Ok(());
+    }
+    let refused = || SubsonicError::second_factor(code, factors.totp);
+    let Some(given) = code.filter(|c| !c.trim().is_empty()) else {
+        return Err(refused());
+    };
+    if state.users.codes_spent(&account.username) {
+        return Err(SubsonicError::generic(
+            "Too many wrong codes for this account; try again in a minute",
+        ));
+    }
+    let key = state.totp_key.as_ref().ok_or_else(refused)?;
+    use koan_auth::second_factor::Checked;
+    match koan_auth::second_factor::check_code(&db.conn, key, account.id, given)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+    {
+        Checked::Right => Ok(()),
+        Checked::Wrong => {
+            state.users.code_failed(&account.username);
+            Err(refused())
+        }
+        Checked::Locked => Err(SubsonicError::generic(
+            "Too many wrong codes in a row: sign in to the web UI with a passkey, or ask an admin to turn two-step sign-in off",
+        )),
     }
 }
 
@@ -5909,7 +5985,9 @@ async fn koan_revoke_key(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
 async fn koan_sign_in(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
-        let auth = params.auth();
+        let mut auth = params.auth();
+        // Present, if empty, so that error 45 asks for a code rather than a key.
+        auth.code = Some(params.get("code").unwrap_or_default().to_owned());
         respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
             if caller.via != Via::Password {
                 return Err(SubsonicError::new(
@@ -7088,6 +7166,9 @@ pub fn subsonic_router(
         app_key: koan_core::auth::load_keypair()
             .ok()
             .map(|(private, _)| koan_core::auth::app_password_key(&private)),
+        totp_key: koan_core::auth::load_keypair()
+            .ok()
+            .map(|(private, _)| koan_auth::second_factor::totp_key(&private)),
         upstream: koan_core::helpers::subsonic_auth(&cfg),
         http: reqwest::Client::builder()
             // A whole-request deadline would cut off long proxied streams.
@@ -7144,6 +7225,7 @@ mod tests {
             username: "testuser".into(),
             password: Some("testpass".into()),
             app_key: Some(koan_core::auth::app_password_key(b"test signing key")),
+            totp_key: Some(koan_auth::second_factor::totp_key(b"test signing key")),
             upstream: None,
             http: reqwest::Client::new(),
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
@@ -8184,6 +8266,82 @@ mod tests {
         assert!(body.contains("\"code\":70"), "{body}");
         let body = call(format!("/rest/koanPairInfo?pair=ABCD-EFGH&{mate}")).await;
         assert!(body.contains("\"code\":70"), "{body}");
+    }
+
+    /// Turn on `username`'s authenticator app, as the Account page would,
+    /// and give back a function making its code for now.
+    pub(crate) fn turn_on_totp(
+        conn: &rusqlite::Connection,
+        key: &[u8; 32],
+        username: &str,
+    ) -> impl Fn() -> String + use<> {
+        let id = koan_core::db::queries::auth::get_user_by_username(conn, username)
+            .unwrap()
+            .unwrap()
+            .id;
+        let secret = koan_auth::second_factor::begin_totp(conn, key, id).unwrap();
+        // Confirmed without spending this step's code, which the sign-in
+        // under test spends.
+        conn.execute("UPDATE totp SET confirmed = 1 WHERE user_id = ?1", [id])
+            .unwrap();
+        move || {
+            let step = koan_auth::totp::step(koan_core::clock::unix_secs());
+            format!("{:06}", koan_auth::totp::hotp(&secret, step as u64))
+        }
+    }
+
+    #[tokio::test]
+    async fn two_step_sign_in_refuses_the_password_alone_and_signs_in_with_a_code() {
+        let (state, _dir) = test_state();
+        let call = |path: String| {
+            let state = state.clone();
+            async move { get_response(build_test_router(state), &path).await.1 }
+        };
+        let enc = |p: &str| p.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+        let code = {
+            let db = state.open_db().unwrap();
+            turn_on_totp(&db.conn, state.totp_key.as_ref().unwrap(), "mate")
+        };
+
+        // The password alone signs in nowhere: not as `p`, not at koanSignIn.
+        let body = call(format!(
+            "/rest/ping?u=mate&p=enc:{}&v=1.16.1&c=test",
+            enc("hunter22")
+        ))
+        .await;
+        assert!(body.contains("code=\"45\""), "{body}");
+        let sign_in = |code: &str| {
+            format!(
+                "/rest/koanSignIn?u=mate&p=enc:{}&code={code}&name=phone&v=1.16.1&c=test&f=json",
+                enc("hunter22")
+            )
+        };
+        let body = call(sign_in("")).await;
+        assert!(body.contains("\"code\":45"), "{body}");
+        let body = call(sign_in("000000")).await;
+        assert!(body.contains("Wrong code"), "{body}");
+
+        // With the code, a key; the same code again is spent.
+        let now = code();
+        let body = call(sign_in(&now)).await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let key = v["subsonic-response"]["join"]["apiKey"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let body = call(format!("/rest/ping?apiKey={key}&v=1.16.1&c=test")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = call(sign_in(&now)).await;
+        assert!(body.contains("Wrong code"), "{body}");
+
+        // A code is not a credential on any other request.
+        let body = call(format!(
+            "/rest/ping?u=mate&p=enc:{}&code={}&v=1.16.1&c=test",
+            enc("hunter22"),
+            code()
+        ))
+        .await;
+        assert!(body.contains("code=\"45\""), "{body}");
     }
 
     #[tokio::test]

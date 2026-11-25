@@ -154,9 +154,19 @@ css:
     node node_modules/@radiosilence/theme/kit-check.mjs crates/koan-server/templates crates/koan-server/src crates/koan-server/scripts
 
 # Typecheck the web UI and share page scripts (crates/koan-server/scripts/*.ts).
-# Cargo strips their types when it builds koan-server (build.rs).
+# Cargo strips their types when it builds koan-server (build.rs). Zod's types
+# come from the npm packages, installed first.
 js:
+    scripts/styles-deps.sh
     tsc -p crates/koan-server/scripts
+
+# Bundle the Zod the web scripts parse JSON with (crates/koan-server/vendor/zod.ts,
+# only what they use) into crates/koan-server/assets/zod.js, which the server
+# embeds and serves through the import map. The output is committed, so
+# `cargo build` needs no Node; CI fails a build where it is stale.
+zod:
+    scripts/styles-deps.sh
+    bun build crates/koan-server/vendor/zod.ts --target browser --format esm --minify --outfile crates/koan-server/assets/zod.js
 
 # Compile the kōan icon set (apps/ios/Resources/Icons/*.svg) into
 # Support/KoanGlyphs.swift and the web's crates/koan-server/src/icon/glyphs.rs. The output is committed; `--check` fails if stale.

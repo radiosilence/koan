@@ -28,6 +28,8 @@ Trades the account's password for an API key, so a device sends the password onc
 
 `GET|POST /rest/koanSignIn?name=<device>`, signed with the account's own password (`p=enc:…` works over plain HTTP). Answers `join` with `username` and `apiKey`. The key replaces any of the account's keys with the same `name`, so a device that signs in again holds one key. Any other credential is refused with error 50.
 
+An account with two-step sign-in also needs `code`: a code from its authenticator app, or a recovery code. Without one, or with a wrong one, the answer is error 45, koan's own code for "a second factor is needed", whose message says which; the client asks the person for a code and signs in again. A server that predates two-step sign-in ignores `code`. Error 45 answers the account's password on every other request too, since nothing else takes a code.
+
 ### `koanInvite`
 
 Invite links: an admin mints a signed token for an account, or any account for itself, and a device trades it for an API key without the password. The token, the link format and redeeming it are on [Pairing and invites](pairing-and-invites.md#invites-koaninvite).

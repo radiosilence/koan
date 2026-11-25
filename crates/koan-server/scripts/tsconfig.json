@@ -4,7 +4,7 @@
     "lib": ["es2024", "dom"],
     "module": "esnext",
     "moduleResolution": "bundler",
-    "paths": { "koan/player": ["./player.ts"] },
+    "paths": { "koan/player": ["./player.ts"], "zod/mini": ["../vendor/zod.ts"] },
     "types": [],
     "strict": true,
     "exactOptionalPropertyTypes": true,
@@ -12,5 +12,5 @@
     "verbatimModuleSyntax": true,
     "noEmit": true
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "../vendor/*.ts"]
 }

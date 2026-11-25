@@ -89,10 +89,27 @@ class ModelsTest {
         advanceUntilIdle()
         model.signIn(" https://music.example.com ", "droid", "nope", withApiKey = false)
         advanceUntilIdle()
-        assertEquals(listOf(listOf<Any?>("https://music.example.com", "droid", "nope")), fake.called("signInRemote"))
+        assertEquals(listOf(listOf<Any?>("https://music.example.com", "droid", "nope", null)), fake.called("signInRemote"))
         assertEquals("wrong password", model.state.value.error)
         assertEquals(false, model.state.value.signedIn)
         assertNull(model.state.value.busy)
+    }
+
+    @Test fun twoStepSignInAsksForACodeAndSendsIt() = runTest(dispatcher) {
+        current = settings(signedIn = false)
+        fake.answers["signInRemote"] = { args ->
+            if (args[3] == null) throw KoanException.NeedsSecondFactor("This account uses two-step sign-in")
+        }
+        val model = account()
+        advanceUntilIdle()
+        model.signIn("https://music.example.com", "droid", "hunter22", withApiKey = false)
+        advanceUntilIdle()
+        assertEquals(true, model.state.value.wantsCode)
+        model.signIn("https://music.example.com", "droid", "hunter22", withApiKey = false, code = " 123456 ")
+        advanceUntilIdle()
+        assertEquals("123456", fake.called("signInRemote").last()[3])
+        assertEquals(false, model.state.value.wantsCode)
+        assertEquals(true, model.state.value.signedIn)
     }
 
     @Test fun signingOutForgetsTheServerAndReturnsToSignIn() = runTest(dispatcher) {

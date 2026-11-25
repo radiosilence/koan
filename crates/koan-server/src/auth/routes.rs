@@ -11,6 +11,7 @@ use axum::response::{AppendHeaders, IntoResponse, Response};
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
 
+use koan_auth::second_factor::Checked;
 use koan_core::auth;
 use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries::auth as auth_queries;
@@ -226,6 +227,10 @@ impl AuthRouteState {
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
+    /// The second factor, for an account that has one: a code from its
+    /// authenticator app, or a recovery code.
+    #[serde(default)]
+    pub code: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -364,45 +369,80 @@ async fn buffer_body(
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// Check a username and password and open a session: a fresh access token and
-/// a stored refresh token. The error is the response to send. Shared by the
-/// JSON login and the web UI's sign-in form, so both are one implementation.
+/// What a password sign-in came to.
+pub(crate) enum SignedIn {
+    /// A session: the account, a fresh access token and a stored refresh token.
+    Session(auth_queries::UserRow, String, String),
+    /// The password passed, and the account has a second factor that was not
+    /// given: see `koan_auth::second_factor`. `totp` is whether it has an
+    /// authenticator app, without which only the web sign-in, which can use
+    /// its keys, or a recovery code will do.
+    NeedsSecond {
+        user: auth_queries::UserRow,
+        totp: bool,
+    },
+}
+
+/// What a person gave as their second factor.
+pub(crate) enum Answer {
+    /// A code from an authenticator app, or a recovery code.
+    Code(String),
+    /// A security key's answer to the ticket's challenge.
+    Key(koan_auth::webauthn::Assertion),
+}
+
+fn refused(status: StatusCode, message: &str) -> Box<Response> {
+    Box::new(
+        (
+            status,
+            Json(MessageResponse {
+                message: message.into(),
+            }),
+        )
+            .into_response(),
+    )
+}
+
+fn internal(what: &str, e: impl std::fmt::Display) -> Box<Response> {
+    log::error!("auth {what}: {e}");
+    Box::new((StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response())
+}
+
+/// Check a username and password, and with an account that has a second
+/// factor `code` too, and open a session. The error is the response to send.
+/// Shared by the JSON login and the web UI's sign-in form, so both are one
+/// implementation.
 ///
-/// On the blocking pool as a whole: the queries and argon2 both block, and on a runtime worker they stall every other request the server
-/// is handling. The password goes through the server's one verifier, so the
-/// ceiling on argon2 and the per-username budget on failures hold here as on
-/// every other door.
+/// On the blocking pool as a whole: the queries and argon2 both block, and on
+/// a runtime worker they stall every other request the server is handling.
+/// The password goes through the server's one verifier, so the ceiling on
+/// argon2 and the per-username budget on failures hold here as on every
+/// other door. The code is checked only once the password has passed.
 pub(crate) async fn authenticate(
     state: &AuthRouteState,
     username: &str,
     password: &str,
+    code: Option<&str>,
     from: IpAddr,
-) -> Result<(auth_queries::UserRow, String, String), Box<Response>> {
+) -> Result<SignedIn, Box<Response>> {
     let state = state.clone();
     let (username, password) = (username.to_owned(), password.to_owned());
-    tokio::task::spawn_blocking(move || authenticate_blocking(&state, &username, &password, from))
-        .await
-        .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())))
+    let code = code.map(str::to_owned);
+    tokio::task::spawn_blocking(move || {
+        authenticate_blocking(&state, &username, &password, code.as_deref(), from)
+    })
+    .await
+    .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())))
 }
 
 fn authenticate_blocking(
     state: &AuthRouteState,
     username: &str,
     password: &str,
+    code: Option<&str>,
     from: IpAddr,
-) -> Result<(auth_queries::UserRow, String, String), Box<Response>> {
+) -> Result<SignedIn, Box<Response>> {
     use super::password::Refused;
-    let refused = |status, message: &str| {
-        Box::new(
-            (
-                status,
-                Json(MessageResponse {
-                    message: message.into(),
-                }),
-            )
-                .into_response(),
-        )
-    };
     if state.users.spent(username, from) {
         return Err(refused(
             StatusCode::TOO_MANY_REQUESTS,
@@ -410,10 +450,7 @@ fn authenticate_blocking(
         ));
     }
     let user = match state.users.verify(username, password) {
-        Ok(user) => {
-            state.users.signed_in(username, from);
-            user
-        }
+        Ok(user) => user,
         Err(Refused::Wrong) => {
             state.users.failed(username);
             return Err(refused(
@@ -429,50 +466,254 @@ fn authenticate_blocking(
         }
     };
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err((status, msg)) => return Err(Box::new((status, msg).into_response())),
-    };
+    let db = state
+        .open_db()
+        .map_err(|(status, msg)| Box::new((status, msg).into_response()))?;
+    let factors = koan_auth::second_factor::factors(&db.conn, user.id)
+        .map_err(|e| internal("second factor lookup", e))?;
+    if factors.enabled() {
+        let Some(code) = code.filter(|c| !c.trim().is_empty()) else {
+            return Ok(SignedIn::NeedsSecond {
+                user,
+                totp: factors.totp,
+            });
+        };
+        check_code(state, &db.conn, &user, code).map_err(Missed::response)?;
+    }
+    state.users.signed_in(username, from);
+    let (access, refresh) = open_session(state, &db.conn, &user)?;
+    Ok(SignedIn::Session(user, access, refresh))
+}
 
-    let access_token = match auth::mint_access_token(
+/// Why a second factor was not taken.
+pub(crate) enum Missed {
+    /// The answer was wrong, or the account may not answer now: it counts
+    /// against the sign-in's tries.
+    Wrong(Box<Response>),
+    /// The server could not judge it: nothing is counted.
+    Server(Box<Response>),
+}
+
+impl Missed {
+    fn response(self) -> Box<Response> {
+        match self {
+            Missed::Wrong(r) | Missed::Server(r) => r,
+        }
+    }
+}
+
+/// What a second factor's check came to, as the response to send.
+fn judged(
+    state: &AuthRouteState,
+    user: &auth_queries::UserRow,
+    checked: rusqlite::Result<Checked>,
+    wrong: &str,
+) -> Result<(), Missed> {
+    match checked {
+        Ok(Checked::Right) => Ok(()),
+        Ok(Checked::Wrong) => {
+            state.users.code_failed(&user.username);
+            Err(Missed::Wrong(refused(StatusCode::UNAUTHORIZED, wrong)))
+        }
+        Ok(Checked::Locked) => Err(Missed::Wrong(refused(
+            StatusCode::LOCKED,
+            "too many wrong codes in a row: sign in with a passkey, or ask an admin to turn two-step sign-in off",
+        ))),
+        Err(e) => Err(Missed::Server(internal("second factor check", e))),
+    }
+}
+
+/// Check a second-factor code for `user`, on the account's budget for wrong
+/// codes.
+fn check_code(
+    state: &AuthRouteState,
+    conn: &rusqlite::Connection,
+    user: &auth_queries::UserRow,
+    code: &str,
+) -> Result<(), Missed> {
+    if state.users.codes_spent(&user.username) {
+        return Err(Missed::Wrong(refused(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many wrong codes for this account; try again in a minute",
+        )));
+    }
+    let key = koan_auth::second_factor::totp_key(&state.private_pem);
+    let checked = koan_auth::second_factor::check_code(conn, &key, user.id, code);
+    judged(state, user, checked, "wrong code")
+}
+
+/// Finish a sign-in that `ticket` holds, its password already passed, with
+/// the second factor: a code, or a security key's answer checked as `rp`'s.
+/// A ticket that has lapsed, or has taken too many wrong answers, is `GONE`:
+/// the password must be given again. One the server failed to judge is
+/// given back untouched.
+pub(crate) async fn finish_second(
+    state: &AuthRouteState,
+    ticket: String,
+    answer: Answer,
+    rp: Option<koan_auth::webauthn::RelyingParty>,
+    from: IpAddr,
+) -> Result<(auth_queries::UserRow, String, String), Box<Response>> {
+    use koan_auth::second_factor::Purpose;
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || {
+        let tickets = state.users.tickets();
+        let gone = || refused(StatusCode::GONE, "sign in again");
+        // Taken while it is answered, so that one answer cannot pass twice
+        // in requests racing each other; given back unless it was right.
+        let held = tickets.take(&ticket, Purpose::SignIn).ok_or_else(gone)?;
+        match answered(&state, &held, answer, rp.as_ref()) {
+            Ok(user) => {
+                state.users.signed_in(&user.username, from);
+                let session = state
+                    .open_db()
+                    .map_err(|(status, msg)| Box::new((status, msg).into_response()))
+                    .and_then(|db| open_session(&state, &db.conn, &user));
+                session.map(|(access, refresh)| (user, access, refresh))
+            }
+            Err(Missed::Wrong(e)) => {
+                tickets.missed_answer(&ticket, held);
+                Err(e)
+            }
+            Err(Missed::Server(e)) => {
+                tickets.give_back(&ticket, held);
+                Err(e)
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())))
+}
+
+/// The account `held` signs in, when `answer` is its second factor.
+fn answered(
+    state: &AuthRouteState,
+    held: &koan_auth::second_factor::Ticket,
+    answer: Answer,
+    rp: Option<&koan_auth::webauthn::RelyingParty>,
+) -> Result<auth_queries::UserRow, Missed> {
+    let server = |(status, msg): (StatusCode, String)| {
+        Missed::Server(Box::new((status, msg).into_response()))
+    };
+    let db = state.open_db().map_err(server)?;
+    let user = auth_queries::get_user_by_id(&db.conn, held.user_id)
+        .map_err(|e| Missed::Server(internal("user lookup", e)))?
+        .filter(|u| u.username == held.username)
+        .ok_or_else(|| Missed::Wrong(refused(StatusCode::GONE, "sign in again")))?;
+    match answer {
+        Answer::Code(code) => check_code(state, &db.conn, &user, &code)?,
+        Answer::Key(assertion) => {
+            // A server whose address no longer takes keys refuses the
+            // answer without counting it against the person.
+            let Some(rp) = rp else {
+                return Err(Missed::Server(refused(
+                    StatusCode::CONFLICT,
+                    "this server's address takes no security keys",
+                )));
+            };
+            if state.users.codes_spent(&user.username) {
+                return Err(Missed::Wrong(refused(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "too many wrong answers for this account; try again in a minute",
+                )));
+            }
+            let checked = koan_auth::second_factor::check_assertion(
+                &db.conn,
+                rp,
+                user.id,
+                &held.challenge,
+                &assertion,
+            );
+            judged(
+                state,
+                &user,
+                checked,
+                "that security key is not one of this account's",
+            )?;
+        }
+    }
+    Ok(user)
+}
+
+/// Sign in with a passkey alone, answering the challenge `ticket` holds: the
+/// passkey names its account and verifies the person, so nothing else is
+/// asked. A ticket that has lapsed is `GONE`.
+pub(crate) async fn passkey_sign_in(
+    state: &AuthRouteState,
+    ticket: String,
+    assertion: koan_auth::webauthn::Assertion,
+    rp: koan_auth::webauthn::RelyingParty,
+    from: IpAddr,
+) -> Result<(auth_queries::UserRow, String, String), Box<Response>> {
+    use koan_auth::second_factor::Purpose;
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || {
+        let tickets = state.users.passkeys();
+        // A challenge answers once, right or wrong: taken in one step, so
+        // that requests racing each other cannot both answer it.
+        let held = tickets
+            .take(&ticket, Purpose::Passkey)
+            .ok_or_else(|| refused(StatusCode::GONE, "try again"))?;
+        let db = state
+            .open_db()
+            .map_err(|(status, msg)| Box::new((status, msg).into_response()))?;
+        let user =
+            koan_auth::second_factor::passkey_sign_in(&db.conn, &rp, &held.challenge, &assertion)
+                .map_err(|e| internal("passkey sign-in", e))?
+                .map(|id| auth_queries::get_user_by_id(&db.conn, id))
+                .transpose()
+                .map_err(|e| internal("user lookup", e))?
+                .flatten()
+                .ok_or_else(|| {
+                    refused(
+                        StatusCode::UNAUTHORIZED,
+                        "that passkey does not sign in to this server",
+                    )
+                })?;
+        state.users.signed_in(&user.username, from);
+        let (access, refresh) = open_session(&state, &db.conn, &user)?;
+        Ok((user, access, refresh))
+    })
+    .await
+    .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())))
+}
+
+/// A fresh access token and a stored refresh token for `user`.
+pub(crate) fn open_session(
+    state: &AuthRouteState,
+    conn: &rusqlite::Connection,
+    user: &auth_queries::UserRow,
+) -> Result<(String, String), Box<Response>> {
+    let access_token = auth::mint_access_token(
         &state.private_pem,
         user.id,
         &user.username,
         user.role,
         state.access_ttl_secs,
-    ) {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("auth mint token error: {}", e);
-            return Err(Box::new(
-                (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response(),
-            ));
-        }
-    };
-
-    let refresh_token_id = match auth::random_token() {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("auth refresh token generation error: {}", e);
-            return Err(Box::new(
-                (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response(),
-            ));
-        }
-    };
+    )
+    .map_err(|e| internal("mint token", e))?;
+    let refresh_token_id = auth::random_token().map_err(|e| internal("refresh token", e))?;
     let refresh_expires = koan_core::clock::unix_secs() + state.refresh_ttl_secs as i64;
-    if let Err(e) =
-        auth_queries::store_refresh_token(&db.conn, &refresh_token_id, user.id, refresh_expires)
-    {
-        log::error!("auth store refresh token error: {}", e);
-        return Err(Box::new(
-            (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response(),
-        ));
-    }
-
+    auth_queries::store_refresh_token(conn, &refresh_token_id, user.id, refresh_expires)
+        .map_err(|e| internal("store refresh token", e))?;
     // Clear out expired tokens; a failure here does not fail the sign-in.
-    let _ = auth_queries::cleanup_expired_tokens(&db.conn);
+    let _ = auth_queries::cleanup_expired_tokens(conn);
+    Ok((access_token, refresh_token_id))
+}
 
-    Ok((user, access_token, refresh_token_id))
+/// A session for `user_id` opened on the blocking pool, for a browser that
+/// has just shown both factors: turning a second factor on ends every session
+/// the account had, the one doing it included.
+pub(crate) async fn session_for(state: &AuthRouteState, user_id: i64) -> Option<(String, String)> {
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || {
+        let db = state.open_db().ok()?;
+        let user = auth_queries::get_user_by_id(&db.conn, user_id).ok()??;
+        open_session(&state, &db.conn, &user).ok()
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// An access token for the account an authenticating proxy names, and no
@@ -505,11 +746,35 @@ async fn login(
     ClientIp(from): ClientIp,
     Json(req): Json<LoginRequest>,
 ) -> Response {
-    let (user, access_token, refresh_token_id) =
-        match authenticate(&state, &req.username, &req.password, from).await {
-            Ok(session) => session,
-            Err(resp) => return *resp,
-        };
+    let signed = authenticate(
+        &state,
+        &req.username,
+        &req.password,
+        req.code.as_deref(),
+        from,
+    )
+    .await;
+    let (user, access_token, refresh_token_id) = match signed {
+        Ok(SignedIn::Session(user, access, refresh)) => (user, access, refresh),
+        // Asked for with the password again: a client without a page keeps
+        // nothing between the two.
+        Ok(SignedIn::NeedsSecond { totp, .. }) => {
+            let message = if totp {
+                "this account needs a second factor: send `code` with a code from its authenticator app or a recovery code"
+            } else {
+                "this account's second factor is a security key, which only the web sign-in can use: sign in with an API key, or send a recovery code as `code`"
+            };
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "message": message,
+                    "second_factor": true,
+                })),
+            )
+                .into_response();
+        }
+        Err(resp) => return *resp,
+    };
 
     let cookies = state.session_cookies(&access_token, &refresh_token_id);
 

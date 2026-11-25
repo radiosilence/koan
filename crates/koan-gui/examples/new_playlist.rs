@@ -52,6 +52,7 @@ fn main() -> Result {
             url.ok_or("NEW_PLAYLIST_SERVER=url,user,password")?,
             user.ok_or("no user")?,
             pass.ok_or("no password")?,
+            None,
         ))?;
         let summary = futures::executor::block_on(engine.clone().sync_remote())?;
         println!("synced {} tracks", summary.tracks);

@@ -11,7 +11,10 @@ use serde::Deserialize;
 use koan_core::db::queries::auth as auth_queries;
 
 use super::{Logged, UiState, encode, html, pages, see_other};
-use crate::auth::routes::{ClientIp, authenticate, proxied_access, refresh_token_from, rotate};
+use crate::auth::routes::{
+    Answer, ClientIp, SignedIn, authenticate, finish_second, passkey_sign_in, proxied_access,
+    refresh_token_from, rotate,
+};
 
 /// An authenticating reverse proxy in front of the web UI, whose header names
 /// the account signed in to it: `koan_auth::net::ProxyAuth`, configured by
@@ -115,13 +118,23 @@ pub(super) async fn login(
     if vouched(&s, &headers, &ext) != Vouch::Absent {
         return see_other(&format!("{PROXY_RESUME}?next={}", encode(next)));
     }
-    match authenticate(&s.auth, &f.username, &f.password, from).await {
-        Ok((_, access, refresh)) => (
-            StatusCode::SEE_OTHER,
-            [(header::LOCATION, next.to_owned())],
-            s.auth.session_cookies(&access, &refresh),
-        )
-            .into_response(),
+    match authenticate(&s.auth, &f.username, &f.password, None, from).await {
+        Ok(SignedIn::Session(_, access, refresh)) => signed_in(&s, next, &access, &refresh),
+        Ok(SignedIn::NeedsSecond { user, .. }) => {
+            use koan_auth::second_factor::Purpose;
+            match s
+                .auth
+                .users
+                .tickets()
+                .open(user.id, &user.username, Purpose::SignIn)
+            {
+                Ok((ticket, held)) => second_step(&s, next, &ticket, &held, None).await,
+                Err(_) => html(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    pages::login(&s, next, Some("Signing in failed. Try again.")),
+                ),
+            }
+        }
         Err(resp) => {
             let status = resp.status();
             let message = match status {
@@ -132,6 +145,192 @@ pub(super) async fn login(
                 _ => "Signing in failed. Try again.",
             };
             html(status, pages::login(&s, next, Some(message)))
+        }
+    }
+}
+
+fn signed_in(s: &UiState, next: &str, access: &str, refresh: &str) -> Response {
+    (
+        StatusCode::SEE_OTHER,
+        [(header::LOCATION, next.to_owned())],
+        s.auth.session_cookies(access, refresh),
+    )
+        .into_response()
+}
+
+/// The page asking for the second factor, its password passed: `ticket`
+/// holds the sign-in, and with the account's security keys, the challenge
+/// they answer. A wrong answer draws the page again on the same ticket, so
+/// its tries and its lifetime run on.
+async fn second_step(
+    s: &UiState,
+    next: &str,
+    ticket: &str,
+    held: &koan_auth::second_factor::Ticket,
+    error: Option<&str>,
+) -> Response {
+    let (pool, user_id) = (s.pool.clone(), held.user_id);
+    let (totp, ids) = tokio::task::spawn_blocking(move || {
+        let db = super::open(&pool)?;
+        let factors = koan_auth::second_factor::factors(&db.conn, user_id).logged()?;
+        let ids = koan_auth::second_factor::key_ids(&db.conn, user_id).logged()?;
+        Some((factors.totp, ids))
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default();
+    let key_options = s
+        .relying_party()
+        .filter(|_| !ids.is_empty())
+        .map(|rp| koan_auth::webauthn::request_options(&rp, &held.challenge, &ids).to_string());
+    html(
+        if error.is_some() {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::OK
+        },
+        pages::second_step(s, next, ticket, totp, key_options.as_deref(), error),
+    )
+}
+
+#[derive(Deserialize)]
+pub(super) struct PasskeyForm {
+    ticket: String,
+    #[serde(default)]
+    next: String,
+    assertion: String,
+}
+
+/// A challenge for a passkey to sign in with on its own: the ticket that
+/// holds it and `navigator.credentials.get`'s options. Asked by the sign-in
+/// page's script, under a per-address limit, so that loading the page
+/// stores nothing and nobody can crowd out others' challenges by loading it.
+pub(super) async fn passkey_challenge(State(s): State<UiState>, headers: HeaderMap) -> Response {
+    use koan_auth::second_factor::Purpose;
+    if !same_origin(&headers) {
+        return cross_site();
+    }
+    let Some(rp) = s.relying_party().filter(|_| s.auth_enabled) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match s.auth.users.passkeys().open(0, "", Purpose::Passkey) {
+        Ok((ticket, held)) => (
+            [(header::CACHE_CONTROL, "no-store")],
+            axum::Json(serde_json::json!({
+                "ticket": ticket,
+                "options": koan_auth::webauthn::passkey_options(&rp, &held.challenge),
+            })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// A passkey signing in on its own, from the sign-in page.
+pub(super) async fn passkey(
+    State(s): State<UiState>,
+    ClientIp(from): ClientIp,
+    headers: HeaderMap,
+    Form(f): Form<PasskeyForm>,
+) -> Response {
+    if !same_origin(&headers) {
+        return cross_site();
+    }
+    let next = local_path(&f.next);
+    let (Some(rp), Ok(assertion)) = (s.relying_party(), serde_json::from_str(&f.assertion)) else {
+        return html(
+            StatusCode::BAD_REQUEST,
+            pages::login(&s, next, Some("Signing in failed. Try again.")),
+        );
+    };
+    match passkey_sign_in(&s.auth, f.ticket, assertion, rp, from).await {
+        Ok((_, access, refresh)) => signed_in(&s, next, &access, &refresh),
+        Err(resp) => {
+            let message = match resp.status() {
+                StatusCode::UNAUTHORIZED => {
+                    "That passkey does not sign in to this server, or did not check it was you."
+                }
+                StatusCode::GONE => "That took too long. Try again.",
+                _ => "Signing in failed. Try again.",
+            };
+            html(resp.status(), pages::login(&s, next, Some(message)))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct SecondForm {
+    ticket: String,
+    #[serde(default)]
+    next: String,
+    #[serde(default)]
+    code: String,
+    /// A security key's answer, as the sign-in page's script wrote it.
+    #[serde(default)]
+    assertion: String,
+}
+
+/// The second factor for a sign-in whose password passed.
+pub(super) async fn second(
+    State(s): State<UiState>,
+    ClientIp(from): ClientIp,
+    headers: HeaderMap,
+    Form(f): Form<SecondForm>,
+) -> Response {
+    if !same_origin(&headers) {
+        return cross_site();
+    }
+    let next = local_path(&f.next);
+    let answer = if f.assertion.is_empty() {
+        Answer::Code(f.code)
+    } else {
+        match serde_json::from_str(&f.assertion) {
+            Ok(assertion) => Answer::Key(assertion),
+            Err(_) => Answer::Code(String::new()),
+        }
+    };
+    let ticket = f.ticket.clone();
+    match finish_second(&s.auth, f.ticket, answer, s.relying_party(), from).await {
+        Ok((_, access, refresh)) => signed_in(&s, next, &access, &refresh),
+        Err(resp) => {
+            let status = resp.status();
+            let message = match status {
+                StatusCode::UNAUTHORIZED => "That was not right. Try again.",
+                StatusCode::TOO_MANY_REQUESTS => {
+                    "Too many wrong answers for this account. Try again in a minute."
+                }
+                StatusCode::LOCKED => {
+                    "Too many wrong codes in a row. Sign in with a passkey, or ask an admin to turn two-step sign-in off."
+                }
+                StatusCode::CONFLICT => "This server's address takes no security keys. Use a code.",
+                StatusCode::GONE => {
+                    return html(
+                        StatusCode::UNAUTHORIZED,
+                        pages::login(
+                            &s,
+                            next,
+                            Some("That took too long or too many tries. Sign in again."),
+                        ),
+                    );
+                }
+                _ => "Signing in failed. Try again.",
+            };
+            // Again on the same ticket, while it has tries left; once it
+            // has none, the password is asked again.
+            let held = s
+                .auth
+                .users
+                .tickets()
+                .get(&ticket, koan_auth::second_factor::Purpose::SignIn);
+            match held {
+                Some(held)
+                    if status != StatusCode::TOO_MANY_REQUESTS && status != StatusCode::LOCKED =>
+                {
+                    second_step(&s, next, &ticket, &held, Some(message)).await
+                }
+                _ => html(status, pages::login(&s, next, Some(message))),
+            }
         }
     }
 }

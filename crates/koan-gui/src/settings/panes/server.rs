@@ -40,6 +40,8 @@ pub struct ServerPane {
     url: Entity<InputState>,
     username: Entity<InputState>,
     secret: Entity<InputState>,
+    /// The second factor, asked for once the account has said it wants one.
+    code: Entity<InputState>,
     with_key: bool,
     cache_limit: Entity<InputState>,
     /// "Up to a limit" chosen and no limit typed yet: nothing is written,
@@ -100,6 +102,13 @@ impl ServerPane {
             window,
             cx,
         );
+        let code = field(
+            "Code from your authenticator app, or a recovery code",
+            TextContentType::Unspecified,
+            String::new(),
+            window,
+            cx,
+        );
         let cache_limit = field("50", TextContentType::Unspecified, limit_value, window, cx);
         let cache = cx.global::<Mirror>().cache.clone();
         let share = super::share::ShareForm::new(&ctx, window, cx);
@@ -113,6 +122,7 @@ impl ServerPane {
                     .is_some_and(|s| s.remote_signed_in);
                 if signed_in && !pane.secret.read(cx).value().is_empty() {
                     pane.secret.update(cx, |s, cx| s.set_value("", window, cx));
+                    pane.code.update(cx, |s, cx| s.set_value("", window, cx));
                 }
                 cx.notify();
             }),
@@ -148,6 +158,15 @@ impl ServerPane {
                 },
             ),
             cx.subscribe_in(
+                &code,
+                window,
+                |pane, _, event: &InputEvent, _, cx| match event {
+                    InputEvent::PressEnter { .. } => pane.sign_in(cx),
+                    InputEvent::Change => cx.notify(),
+                    _ => {}
+                },
+            ),
+            cx.subscribe_in(
                 &cache_limit,
                 window,
                 |pane, _, event: &InputEvent, window, cx| {
@@ -172,6 +191,7 @@ impl ServerPane {
             url,
             username,
             secret,
+            code,
             with_key: false,
             cache_limit,
             choosing_limit: false,
@@ -197,9 +217,12 @@ impl ServerPane {
             return;
         }
         let with_key = self.with_key;
-        self.ctx
-            .model
-            .update(cx, |m, cx| m.sign_in(url, username, secret, with_key, cx));
+        let code = (!with_key && self.ctx.model.read(cx).wants_code)
+            .then(|| self.code.read(cx).value().trim().to_owned())
+            .filter(|c| !c.is_empty());
+        self.ctx.model.update(cx, |m, cx| {
+            m.sign_in(url, username, secret, with_key, code, cx)
+        });
     }
 
     /// Signs in through an invite, once the person says so: the question
@@ -462,6 +485,26 @@ impl ServerPane {
                     .value(count(settings.remote_tracks))
                     .into_any_element(),
             ];
+            // A koan server's account page, where two-step sign-in is set up:
+            // a password alone is all a sign-in asks for until it is.
+            if connection
+                .as_ref()
+                .is_some_and(|c| c.server_kind.as_deref() == Some("koan"))
+            {
+                let account = format!(
+                    "{}/account#second-factor",
+                    settings.remote_url.trim_end_matches('/')
+                );
+                rows.push(
+                    Row::new("Two-step sign-in")
+                        .control(
+                            Button::new("two-step", ButtonKind::Link)
+                                .label("Set up on the web")
+                                .on_click(move |_, _, cx| cx.open_url(&account)),
+                        )
+                        .into_any_element(),
+                );
+            }
             if connection.as_ref().is_some_and(|c| c.sign_in_refused) {
                 rows.push(note(
                     "Your server refused kōan's sign-in. Sign in again in Settings → Server.",
@@ -543,6 +586,18 @@ impl ServerPane {
                     .stacked()
                     .control(div().w_full().child(TextField::new(&self.secret)))
                     .into_any_element(),
+            ];
+            let mut rows = rows;
+            // Two-step sign-in: the account said it wants a code too.
+            if model.wants_code && !self.with_key {
+                rows.push(
+                    Row::new("Code")
+                        .stacked()
+                        .control(div().w_full().child(TextField::new(&self.code)))
+                        .into_any_element(),
+                );
+            }
+            rows.extend([
                 buttons(
                     vec![
                         Button::new("sign-in", ButtonKind::Prominent)
@@ -587,7 +642,7 @@ impl ServerPane {
                     ],
                     look,
                 ),
-            ];
+            ]);
             sections.push(section(
                 Some("Subsonic or Navidrome"),
                 rows,

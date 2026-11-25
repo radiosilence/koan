@@ -1,5 +1,5 @@
-//! Accounts, for admins: create one, change its role or password, delete it,
-//! and produce an invite for it — the link and the email to send it in. The
+//! Accounts, for admins: create one, change its role or password, turn off
+//! its two-step sign-in, delete it, and produce an invite for it — the link and the email to send it in. The
 //! server sends nothing itself; the admin sends the email from their own
 //! client.
 
@@ -29,15 +29,28 @@ pub(super) const ROLES: [(Role, &str); 3] = [
     (Role::Admin, "Admin"),
 ];
 
+/// Every account, and which have a second factor.
+#[derive(Default)]
+struct Listing {
+    rows: Vec<UserRow>,
+    two_step: std::collections::HashSet<i64>,
+}
+
 #[derive(Template)]
 #[template(path = "users/list.html")]
 struct UserList<'a> {
     rows: &'a [UserRow],
+    two_step: &'a std::collections::HashSet<i64>,
     me: i64,
 }
 
-fn user_list(rows: &[UserRow], me: i64) -> Html {
-    UserList { rows, me }.html()
+fn user_list(listing: &Listing, me: i64) -> Html {
+    UserList {
+        rows: &listing.rows,
+        two_step: &listing.two_step,
+        me,
+    }
+    .html()
 }
 
 /// What the result area under the form shows.
@@ -133,9 +146,14 @@ fn usable(s: &UiState, user: &AuthUser) -> bool {
     s.auth_enabled && user.role == Role::Admin
 }
 
-fn list(s: &UiState) -> Vec<UserRow> {
+fn list(s: &UiState) -> Listing {
     open(&s.pool)
-        .and_then(|db| users::list_users(&db.conn).ok())
+        .and_then(|db| {
+            Some(Listing {
+                rows: users::list_users(&db.conn).logged()?,
+                two_step: koan_auth::second_factor::enabled_users(&db.conn).logged()?,
+            })
+        })
         .unwrap_or_default()
 }
 
@@ -391,6 +409,37 @@ pub(super) async fn delete(
     match done {
         Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me)), result(&NOTHING)]),
         Some((Err(e), _)) => events(vec![failure(&e.to_string())]),
+        None => events(vec![failure("No such account.")]),
+    }
+}
+
+/// Turn an account's two-step sign-in off, for someone who lost their app and
+/// keys: their factors and recovery codes go, and so do their browsers'
+/// sessions. Their apps, signed in with keys, stay signed in.
+pub(super) async fn remove_second_factor(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+) -> Response {
+    if !usable(&s, &user) {
+        return forbidden();
+    }
+    let me = user.user_id;
+    let done = blocking(move || {
+        let db = open(&s.pool)?;
+        let row = users::get_user_by_id(&db.conn, id).logged()??;
+        koan_auth::second_factor::turn_off(&db.conn, row.id).logged()?;
+        Some((row, list(&s)))
+    })
+    .await;
+    match done {
+        Some((row, rows)) => events(vec![
+            patch(&user_list(&rows, me)),
+            show(Shown::Message(&format!(
+                "{} signs in with a password alone again, and their browsers are signed out.",
+                row.username
+            ))),
+        ]),
         None => events(vec![failure("No such account.")]),
     }
 }

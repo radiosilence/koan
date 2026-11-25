@@ -16,8 +16,18 @@ pub fn cmd_remote_login(url: &str, username: &str) {
         std::process::exit(1);
     });
 
-    // Checks, then writes the credentials to config.local.toml.
-    if let Err(e) = koan_core::helpers::set_remote_credentials(url, username, &password) {
+    // Checks, then writes the credentials to config.local.toml. An account
+    // with two-step sign-in is asked again with a code.
+    let mut signed = koan_core::helpers::set_remote_credentials(url, username, &password, None);
+    if let Err(koan_core::helpers::SignInError::NeedsSecondFactor { .. }) = signed {
+        print!("code from your authenticator app, or a recovery code: ");
+        std::io::stdout().flush().ok();
+        let mut code = String::new();
+        std::io::stdin().read_line(&mut code).ok();
+        signed =
+            koan_core::helpers::set_remote_credentials(url, username, &password, Some(code.trim()));
+    }
+    if let Err(e) = signed {
         eprintln!("{} {}", "sign-in failed:".red().bold(), e);
         std::process::exit(1);
     }

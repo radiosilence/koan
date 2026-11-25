@@ -16,6 +16,9 @@
 //!   the account's password.
 //! - [`password`]: argon2id, and the [`password::Verifier`] every door that
 //!   takes a password goes through.
+//! - [`second_factor`], [`totp`] and [`webauthn`]: what a password sign-in
+//!   asks for besides, once an account turns it on: a code from an
+//!   authenticator app, a security key or passkey, or a recovery code.
 //! - [`keys`], [`token`] and [`invite`]: the Ed25519 key a server signs with,
 //!   and the access and invite tokens it signs.
 //! - [`changes`]: changes to accounts, for what outlives the request that
@@ -33,6 +36,7 @@
 pub mod accounts;
 pub mod api_keys;
 pub mod app_passwords;
+mod cbor;
 pub mod changes;
 mod clock;
 pub mod invite;
@@ -43,13 +47,16 @@ pub mod oauth;
 pub mod pair;
 pub mod password;
 pub mod schema;
+pub mod second_factor;
 pub mod secret;
 pub mod sessions;
 pub mod setup;
 mod sql;
 pub mod token;
+pub mod totp;
 pub mod users;
 pub mod web;
+pub mod webauthn;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

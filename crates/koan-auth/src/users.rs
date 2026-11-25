@@ -73,7 +73,8 @@ pub fn list_users(conn: &Connection) -> Result<Vec<UserRow>, rusqlite::Error> {
         .collect()
 }
 
-/// Delete an account by id, with its sessions, keys and app passwords.
+/// Delete an account by id, with its sessions, keys, app passwords and second
+/// factor.
 /// Whether there was one.
 ///
 /// They are deleted here rather than left to the tables' `ON DELETE
@@ -82,7 +83,15 @@ pub fn list_users(conn: &Connection) -> Result<Vec<UserRow>, rusqlite::Error> {
 /// sessions, some of which are read without the account.
 pub fn delete_user(conn: &Connection, user_id: i64) -> Result<bool, rusqlite::Error> {
     let count = crate::sql::atomically(conn, || {
-        for table in ["refresh_tokens", "api_keys", "app_passwords"] {
+        for table in [
+            "refresh_tokens",
+            "api_keys",
+            "app_passwords",
+            "totp",
+            "security_keys",
+            "recovery_codes",
+            "second_factor_misses",
+        ] {
             conn.execute(
                 &format!("DELETE FROM {table} WHERE user_id = ?1"),
                 params![user_id],

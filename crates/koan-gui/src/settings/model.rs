@@ -177,6 +177,9 @@ pub struct SettingsModel {
     write_failed: bool,
     pub last_error: Option<SharedString>,
     pub last_result: Option<SharedString>,
+    /// The last sign-in's account has two-step sign-in: the form asks for a
+    /// code beside the password.
+    pub wants_code: bool,
     dismissal: Option<Task<()>>,
     reading: Option<Task<()>>,
     /// The tasks Settings started: what each holds, and what it is doing,
@@ -213,6 +216,7 @@ impl SettingsModel {
             written: Vec::new(),
             write_failed: false,
             last_error: None,
+            wants_code: false,
             last_result: None,
             dismissal: None,
             reading: None,
@@ -578,12 +582,14 @@ impl SettingsModel {
     }
 
     /// Signs in with a password or an API key, then loads the library.
+    /// `code` is the second factor, for an account that has asked for one.
     pub fn sign_in(
         &mut self,
         url: String,
         username: String,
         secret: String,
         with_key: bool,
+        code: Option<String>,
         cx: &mut Context<Self>,
     ) {
         let shown = url.clone();
@@ -595,18 +601,22 @@ impl SettingsModel {
                 if with_key {
                     engine.sign_in_remote_with_key(url, username, secret).await
                 } else {
-                    engine.sign_in_remote(url, username, secret).await
+                    engine.sign_in_remote(url, username, secret, code).await
                 }
             },
             move |model, result, cx| match result {
                 Ok(()) => {
+                    model.wants_code = false;
                     // Another server's library replaces the one before, and
                     // takes its album ids.
                     crate::covers::Covers::purge(cx);
                     model.done(format!("Signed in to {shown}"), cx);
                     model.load_library(cx);
                 }
-                Err(e) => model.report(describe(&e), cx),
+                Err(e) => {
+                    model.wants_code = matches!(e, KoanError::NeedsSecondFactor { .. });
+                    model.report(describe(&e), cx)
+                }
             },
         );
     }
@@ -622,7 +632,14 @@ impl SettingsModel {
             return;
         }
         let (url, username, password) = DEMO;
-        self.sign_in(url.into(), username.into(), password.into(), false, cx);
+        self.sign_in(
+            url.into(),
+            username.into(),
+            password.into(),
+            false,
+            None,
+            cx,
+        );
     }
 
     /// Signs in through an invite, then loads the library.
@@ -867,7 +884,8 @@ pub fn describe(error: &KoanError) -> String {
         | KoanError::Audio { message }
         | KoanError::Player { message }
         | KoanError::Remote { message }
-        | KoanError::Refused { message } => message.clone(),
+        | KoanError::Refused { message }
+        | KoanError::NeedsSecondFactor { message } => message.clone(),
         other => other.to_string(),
     }
 }

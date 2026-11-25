@@ -34,7 +34,9 @@ use parking_lot::{Condvar, Mutex};
 use sha2::{Digest, Sha256};
 
 use crate::AuthError;
-use crate::limit::{FAILURES_PER_USERNAME_PER_MINUTE, FailureLimiter, network};
+use crate::limit::{
+    CODE_FAILURES_PER_MINUTE, FAILURES_PER_USERNAME_PER_MINUTE, FailureLimiter, network,
+};
 use crate::users::UserRow;
 
 /// Hash a password with argon2id and a random salt.
@@ -108,6 +110,9 @@ pub struct Verifier {
     /// secrets are not worth guessing, so a flood of wrong passwords for an
     /// account never locks out the clients signed in with one.
     failures: FailureLimiter<String>,
+    /// Wrong second-factor codes by username, on a tighter budget than
+    /// passwords; each also counts in `failures`.
+    codes: FailureLimiter<String>,
     /// When each username last signed in from each network.
     known: Mutex<LruCache<(String, IpAddr), Instant>>,
     /// Credentials that just signed in, for a throttle outside the handler to
@@ -128,6 +133,7 @@ impl Verifier {
             checking: Mutex::new(HashMap::new()),
             max_checks: max_checks(),
             failures: FailureLimiter::new(FAILURES_PER_USERNAME_PER_MINUTE),
+            codes: FailureLimiter::new(CODE_FAILURES_PER_MINUTE),
             known: Mutex::new(LruCache::new(NonZeroUsize::new(4096).expect("non-zero"))),
             passes: Mutex::new(LruCache::new(NonZeroUsize::new(256).expect("non-zero"))),
         }
@@ -155,6 +161,20 @@ impl Verifier {
 
     /// Count a failed sign-in for `username`.
     pub fn failed(&self, username: &str) {
+        self.failures.record(username.to_owned());
+    }
+
+    /// Whether `username` has spent its wrong second-factor codes for the
+    /// minute. From every network: the code is checked only after the
+    /// password passed, so whoever is guessing has it.
+    pub fn codes_spent(&self, username: &str) -> bool {
+        self.codes.exhausted(&username.to_owned())
+    }
+
+    /// Count a wrong second-factor code for `username`, against both its
+    /// code budget and its sign-in budget.
+    pub fn code_failed(&self, username: &str) {
+        self.codes.record(username.to_owned());
         self.failures.record(username.to_owned());
     }
 
@@ -395,5 +415,16 @@ mod tests {
         assert!(!v.spent("mate", home));
         assert!(v.exhausted("mate"));
         assert!(!v.spent("someone else", away));
+    }
+
+    #[test]
+    fn wrong_codes_have_a_budget_of_their_own() {
+        let v = Verifier::new();
+        for _ in 0..CODE_FAILURES_PER_MINUTE {
+            assert!(!v.codes_spent("mate"));
+            v.code_failed("mate");
+        }
+        assert!(v.codes_spent("mate"));
+        assert!(!v.exhausted("mate"));
     }
 }

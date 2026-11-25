@@ -2,7 +2,8 @@
 //! credentials Subsonic clients sign in with — API keys and app passwords, each
 //! shown once when made, listed with when it was last used, revocable. Above
 //! them, a QR code that signs another device in as this account, minted on
-//! every load.
+//! every load, and two-step sign-in (`super::second_factor`), suggested at the
+//! top while it is off.
 
 use askama::Template;
 use axum::Extension;
@@ -100,6 +101,8 @@ struct AccountPage<'a> {
     admin: bool,
     link: Option<LinkDevice>,
     credentials: Option<(Html, Html)>,
+    /// The two-step section, and whether to suggest turning it on.
+    two_step: Option<(Html, bool)>,
 }
 
 fn link_device(conn: &rusqlite::Connection, server: &str, user: &AuthUser) -> Option<LinkDevice> {
@@ -118,30 +121,46 @@ pub(super) async fn page(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let (link, credentials) = if s.auth_enabled {
+    let (link, credentials, two_step) = if s.auth_enabled {
         let st = s.clone();
         let u = user.clone();
-        let (link, keys, passwords) = blocking(move || {
+        let (link, keys, passwords, two_step) = blocking(move || {
             let db = open(&st.pool)?;
+            let demo = crate::demo::enabled() && u.username == crate::demo::USERNAME;
+            let two_step = (!demo)
+                .then(|| {
+                    let on = koan_auth::second_factor::enabled(&db.conn, u.user_id).logged()?;
+                    Some((
+                        super::second_factor::for_page(&st, &db.conn, u.user_id)?,
+                        !on,
+                    ))
+                })
+                .flatten();
             Some((
                 st.server_url
                     .as_deref()
                     .and_then(|server| link_device(&db.conn, server, &u)),
                 api_keys::list_api_keys(&db.conn, Some(u.user_id)).logged()?,
                 app_passwords::list_app_passwords(&db.conn, u.user_id).logged()?,
+                two_step,
             ))
         })
         .await
         .unwrap_or_default();
-        (link, Some((key_list(&keys), app_password_list(&passwords))))
+        (
+            link,
+            Some((key_list(&keys), app_password_list(&passwords))),
+            two_step,
+        )
     } else {
-        (None, None)
+        (None, None, None)
     };
     let inner = AccountPage {
         username: &user.username,
         admin: user.role == Role::Admin,
         link,
         credentials,
+        two_step,
     }
     .html();
     respond(&s, &headers, &user, "Account", &inner)

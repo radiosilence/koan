@@ -32,6 +32,11 @@ pub enum SignInError {
         "this server needs an app password or API key: make one in the server's web UI and sign in with it"
     )]
     NeedsKey,
+    /// koan's error 45: the account has two-step sign-in, and the sign-in
+    /// wants a code from its authenticator app or a recovery code. `message`
+    /// is the server's, which says when a code given was wrong.
+    #[error("{message}")]
+    NeedsSecondFactor { message: String },
     #[error("could not write the configuration: {0}")]
     Config(#[from] crate::config::ConfigError),
 }
@@ -245,6 +250,7 @@ pub fn set_remote_credentials(
     url: &str,
     username: &str,
     password: &str,
+    code: Option<&str>,
 ) -> Result<(), SignInError> {
     use crate::remote::client::{koan_sign_in, offers_unsigned};
     let url = url.trim_end_matches('/');
@@ -252,7 +258,7 @@ pub fn set_remote_credentials(
     // a server that will trade it for a key.
     if offers_unsigned(url, crate::remote::profile::SIGN_IN).unwrap_or(false) {
         let device = crate::remote::link::LinkIdentity::current().name;
-        match koan_sign_in(url, username, password, &device) {
+        match koan_sign_in(url, username, password, code, &device) {
             Ok(joined) => return adopt_api_key(url, &joined.username, &joined.api_key),
             // Error 50: what was typed is a credential of its own, an app
             // password or the shared secret, which the server will not trade
@@ -290,10 +296,12 @@ pub fn change_own_password(current: &str, password: &str) -> Result<(), SignInEr
     adopt_api_key(&cfg.remote.url, &joined.username, &joined.api_key)
 }
 
-/// A server's refusal, with error 41 told apart: see `SignInError::NeedsKey`.
+/// A server's refusal, with errors 41 and 45 told apart: see
+/// `SignInError::NeedsKey` and `SignInError::NeedsSecondFactor`.
 fn rejected(e: SubsonicError) -> SignInError {
     match e {
         SubsonicError::Api { code: 41, .. } => SignInError::NeedsKey,
+        SubsonicError::Api { code: 45, message } => SignInError::NeedsSecondFactor { message },
         e => e.into(),
     }
 }
@@ -336,7 +344,7 @@ pub fn join_with_invite(invite: &crate::invite::Invite) -> Result<(), SignInErro
             let joined = crate::remote::client::redeem_invite(url, token, &device)?;
             adopt_api_key(url, &joined.username, &joined.api_key)
         }
-        (None, Some(password)) => set_remote_credentials(url, &invite.username, password),
+        (None, Some(password)) => set_remote_credentials(url, &invite.username, password, None),
         (None, None) => Err(SignInError::Rejected(SubsonicError::BadResponse)),
     }
 }
@@ -721,17 +729,17 @@ mod sign_in_tests {
             (remote.username, remote.password, remote.api_key)
         };
 
-        set_remote_credentials(&url, "mate", "hunter22").unwrap();
+        set_remote_credentials(&url, "mate", "hunter22", None).unwrap();
         assert_eq!(kept(), ("mate".into(), String::new(), "minted".into()));
 
-        set_remote_credentials(&url, "mate", "app-secret").unwrap();
+        set_remote_credentials(&url, "mate", "app-secret", None).unwrap();
         assert_eq!(
             kept(),
             ("mate".into(), "app-secret".into(), String::new()),
             "an app password is refused a key and kept"
         );
 
-        set_remote_credentials(&url, "testuser", "shared-secret").unwrap();
+        set_remote_credentials(&url, "testuser", "shared-secret", None).unwrap();
         assert_eq!(
             kept(),
             ("testuser".into(), "shared-secret".into(), String::new()),
@@ -739,7 +747,7 @@ mod sign_in_tests {
         );
 
         assert!(matches!(
-            set_remote_credentials(&url, "mate", "wrong"),
+            set_remote_credentials(&url, "mate", "wrong", None),
             Err(SignInError::Rejected(SubsonicError::Api { code: 40, .. }))
         ));
         assert_eq!(
@@ -1109,7 +1117,7 @@ mod refusal_tests {
         assert_eq!(remote_problem(&cfg).as_deref(), Some(SIGN_IN_REFUSED));
         assert!(sign_in_refused(&cfg));
 
-        set_remote_credentials(&url, "mate", "hunter22").unwrap();
+        set_remote_credentials(&url, "mate", "hunter22", None).unwrap();
         let cfg = Config::load().unwrap();
         assert_eq!(cfg.remote.api_key, "second");
         assert_eq!(remote_problem(&cfg), None, "a new credential starts clean");
@@ -1188,7 +1196,7 @@ mod unreachable_tests {
             .unwrap()
             .port();
         let url = format!("http://127.0.0.1:{port}");
-        let err = set_remote_credentials(&url, "mate", "secret").unwrap_err();
+        let err = set_remote_credentials(&url, "mate", "secret", None).unwrap_err();
         match &err {
             SignInError::Unreachable { address, .. } => assert_eq!(address, &url),
             other => panic!("expected unreachable, got {other:?}"),

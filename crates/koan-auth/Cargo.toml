@@ -7,8 +7,8 @@ edition.workspace = true
 license = "MIT"
 repository.workspace = true
 homepage.workspace = true
-description = "Accounts and signing in for koan and the services beside it: passwords, sessions, API keys, invites, sign-in limits and an OAuth 2.1 authorization server, over SQLite."
-keywords = ["auth", "argon2", "jwt", "oauth", "sqlite"]
+description = "Accounts and signing in for koan and the services beside it: passwords, two-step sign-in (TOTP, passkeys), sessions, API keys, invites, sign-in limits and an OAuth 2.1 authorization server, over SQLite."
+keywords = ["auth", "argon2", "totp", "webauthn", "sqlite"]
 categories = ["authentication", "web-programming"]
 
 [dependencies]

@@ -628,6 +628,10 @@ enum AuthCommands {
         /// Save the new credentials to 1Password without asking
         #[arg(long)]
         save_to_1password: bool,
+        /// Also turn off the account's two-step sign-in, for someone who has
+        /// lost their authenticator app, keys and recovery codes
+        #[arg(long)]
+        remove_second_factor: bool,
     },
     /// Change a user's role
     SetRole {
@@ -829,7 +833,13 @@ fn main() {
                 AuthCommands::ResetPassword {
                     username,
                     save_to_1password,
-                } => commands::cmd_auth_reset_password(tty, &username, save_to_1password),
+                    remove_second_factor,
+                } => commands::cmd_auth_reset_password(
+                    tty,
+                    &username,
+                    save_to_1password,
+                    remove_second_factor,
+                ),
                 AuthCommands::SetRole { username, role } => {
                     commands::cmd_auth_set_role(&username, &role);
                 }

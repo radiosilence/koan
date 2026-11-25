@@ -58,7 +58,8 @@ koan auth delete-user alice --yes
 ## CLI authentication
 
 ```bash
-# Sign in to a kōan server; asks for the password (or reads KOAN_PASSWORD) and keeps the refresh token in config.local.toml
+# Sign in to a kōan server; asks for the password (or reads KOAN_PASSWORD), and with
+# two-step sign-in a code (or reads KOAN_CODE), and keeps the refresh token in config.local.toml
 koan auth login --server http://localhost:4000 --username admin
 ```
 
@@ -95,7 +96,8 @@ traded for a key: an app password or the shared secret is refused there (error
 as before. Against any other Subsonic server the password
 is kept as before, and sent as a salted token over plain HTTP. A server that
 refuses token sign-in (error 41) is reported as needing an app password or API
-key.
+key. An account with [two-step sign-in](#two-step-sign-in) answers error 45,
+and the client asks for a code and signs in again with it.
 
 ### Invites
 
@@ -238,6 +240,52 @@ koan auth invite alice --server https://music.example.com
 koan auth delete-user alice
 ```
 
+## Two-step sign-in
+
+An account can ask for more than its password: a code from an authenticator app, a passkey or a security key. It is set up on the web UI's Account page, which suggests it while it is off; the apps' Settings link there. It needs nothing on the server: `server.url` is only needed for passkeys and security keys, below.
+
+Turning it on ends every session, API key and app password the account had, as a new password does, so nothing signed in with the password alone stays signed in. The browser that turned it on is signed in again, having just shown both. Adding a second app or key later ends nothing.
+
+### What signing in asks for
+
+| Door | With two-step sign-in |
+| --- | --- |
+| Web UI sign-in | The password, then a code, a security key or a recovery code. A passkey signs in on its own, with no username or password. |
+| The apps and the terminal UI (`koanSignIn`) | The password, then a code or a recovery code; the app asks for one when the server says so. The device keeps the API key it is given, as before. An account whose only second factor is a passkey or security key, which apps cannot use, signs its apps in with an invite or pairing from a signed-in device, or an API key, rather than spending recovery codes. |
+| `koan auth login`, `POST /auth/login` | The password and `code`. Without one, `/auth/login` answers 401 with `"second_factor": true`, and the CLI asks (or reads `KOAN_CODE`). |
+| Subsonic `p=` | Refused with error 45. A Subsonic client signs in with an API key or an app password instead. |
+| API keys, app passwords, invites, pairing, refresh tokens, OAuth | Unchanged: each already proves possession of something handed out. OAuth signs in through the web UI, so it asks there. |
+
+### Authenticator apps
+
+Any app that implements TOTP (RFC 6238), such as 1Password, Google Authenticator or Aegis: HMAC-SHA-1, six digits, a 30-second step, which every app accepts. The Account page shows the secret as an `otpauth://` QR code and as base32 to type, and turns it on once a code from the app is entered. A code is accepted one step either side of now, for a clock that drifts, and a step already used is refused, as RFC 6238 §5.2 requires, so a code read over someone's shoulder cannot be used again.
+
+### Passkeys and security keys
+
+WebAuthn (W3C Level 2): a passkey kept by a phone, a computer or a password manager, or a hardware key such as a YubiKey. ES256, EdDSA and RS256 keys are accepted. Attestation is not asked for, since the account's owner chooses the authenticator. Browsers allow WebAuthn only on HTTPS and `localhost`, and scope a key to the server's host, so the server offers keys only when `server.url` is such an address, and they work only on pages served from it.
+
+A passkey signs in on its own. The sign-in page asks the browser for one as it loads, and the browser offers the account's passkeys among the username field's suggestions where it can, or behind **Sign in with a passkey**. That sign-in requires the authenticator to verify the person, by biometrics or PIN, so the passkey stands for both factors: the device, and whoever unlocked it. A key that cannot verify the person is the second step after the password instead. A key's signature counter that goes backwards, as a cloned key's would, is refused.
+
+### Recovery codes
+
+Turning two-step sign-in on makes ten recovery codes, shown once: keep them in a password manager or on paper, apart from the phone and keys. Each signs in once in place of a code, wherever a code is asked for. The Account page counts those left, and **Make new codes** replaces the set. Only their SHA-256 is kept.
+
+### Turning it off, and a lost device
+
+Removing the last app or key turns two-step sign-in off, drops the recovery codes and ends the account's sessions. Someone who has lost their app, keys and codes asks an admin, who turns it off on the Users page (**Two-step off**), or at the server:
+
+```bash
+koan auth reset-password alice --remove-second-factor
+```
+
+Either ends the account's browser sessions. The demo server's shared account cannot turn it on, since a visitor would lock everyone else out.
+
+### Limits
+
+A code is checked only after the password has passed. Each username gets five wrong codes a minute, from every network, the account's own included: whoever is guessing already has the password. Wrong codes count against the account's password budget too. A sign-in waiting on its second step lasts five minutes and five wrong answers, after which the password is asked again.
+
+A per-minute budget alone would let someone with the password guess for ever, so wrong codes and keys are also counted in a row, per account, in the database. After 100 (NIST SP 800-63B §5.2.2's ceiling, against which a guesser's odds are about one in 3,000), codes and keys are refused until the owner signs in with a passkey, which clears the count, or an admin turns two-step sign-in off. A right answer before then clears it too.
+
 ## Sharing devices between accounts
 
 An account's devices are its own. To let someone with another account on the
@@ -268,6 +316,9 @@ Accounts and sign-in are the `koan-auth` crate's. A copy of the database alone s
 | Session and refresh token | SHA-256 of 256 random bits | A secret that long cannot be guessed, so a fast hash is enough. |
 | API key | SHA-256 of 256 random bits | As above. A key is looked up by its digest, whose timing says nothing that helps find a key. |
 | App password | ChaCha20-Poly1305, under a key derived (HKDF-SHA256) from the server's signing key, bound to its account | Subsonic's token sign-in needs the plaintext, so it cannot be hashed. A copy of the database without the key does not open it. |
+| Authenticator app secret | As an app password, under a key of its own | Checking a code needs the secret. |
+| Passkey or security key | Its public key and signature counter | Nothing secret is held: a key proves itself by signing. |
+| Recovery code | SHA-256 of about 74 random bits | Random and used once, so a fast hash is enough. |
 | Access, invite and OAuth client tokens | Not stored: Ed25519-signed JWTs, with only EdDSA accepted | They are checked by signature. A token never grants more than the account has now, because the account's role is read again on every request. |
 
 Changing an account's password ends every session, API key and app password it has, and makes every invite sent for it useless. A role change, a revocation or a deletion also closes the sockets the account holds open, so a connection keeps no more than its credentials now give it.
@@ -279,7 +330,7 @@ Signing in is guarded against guessing and against timing:
 - Behind a reverse proxy, the client's address is the last `X-Forwarded-For` entry. The header is believed only from a proxy the server trusts, and if that entry is not an address, the request counts as coming from an unknown address, never from one the client wrote.
 - Sign-in forms refuse cross-site posts (`Sec-Fetch-Site`, `Origin`), and an address to return to after signing in must be a path on this server.
 
-Passwords follow NIST SP 800-63B: at least eight characters, no composition rules, and no forced expiry. Generated passwords carry about 116 bits. OAuth follows OAuth 2.1, with PKCE (S256 only), RFC 8414 metadata, RFC 7591 registration, RFC 9728 resource metadata and the RFC 9207 `iss` parameter; a code works once and expires after a minute. Pairing follows the shape of the device authorization grant in RFC 8628. kōan has no second factor yet.
+Passwords follow NIST SP 800-63B: at least eight characters, no composition rules, and no forced expiry. Generated passwords carry about 116 bits. OAuth follows OAuth 2.1, with PKCE (S256 only), RFC 8414 metadata, RFC 7591 registration, RFC 9728 resource metadata and the RFC 9207 `iss` parameter; a code works once and expires after a minute. Pairing follows the shape of the device authorization grant in RFC 8628. [Two-step sign-in](#two-step-sign-in) follows RFC 6238 for codes and WebAuthn for passkeys and security keys, which with the password brings password sign-in to NIST SP 800-63B AAL2.
 
 ## GraphQL
 
@@ -360,11 +411,15 @@ kubectl -n koan exec deploy/koan -- env KOAN_PASSWORD='…' koan auth reset-pass
 
 `koan auth list-users`, run the same way, shows the usernames and roles when the admin's name is forgotten too. A reset signs the account out everywhere: it ends its sessions and revokes its API keys and app passwords, so its apps and scripts need signing in again.
 
+An admin who has also lost their [two-step sign-in](#two-step-sign-in) adds `--remove-second-factor`, which turns it off so the new password alone signs in.
+
 **Regenerate keypair:**
 ```bash
 koan auth regenerate-keys
 # Generates new Ed25519 keypair. All existing tokens are invalidated.
-# Users keep their passwords but must re-login.
+# Users keep their passwords but must re-login. Authenticator apps are sealed
+# under the key, so they are turned off and named: those accounts set one up
+# again. Passkeys and security keys are unaffected.
 ```
 
 **Disable auth entirely:**
@@ -423,7 +478,7 @@ Signing out does not: no socket rests on a refresh token, so the account's other
 `/rest/*` is kōan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`), and koan's own. Clients sign in with one of:
 
 - **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
-- **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. argon2 is expensive by design, so at most one check per core (2 to 8) runs at once and a request arriving when all are busy gets error 0, "server busy", rather than waiting. The protocol sends the password with every request, so use it only over HTTPS.
+- **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. An account with two-step sign-in is refused (error 45): Subsonic has nowhere to carry a second factor. argon2 is expensive by design, so at most one check per core (2 to 8) runs at once and a request arriving when all are busy gets error 0, "server busy", rather than waiting. The protocol sends the password with every request, so use it only over HTTPS.
 - **App password** (`u` + `t` + `s`, or `p=`) — for clients that only sign in with Subsonic token auth. Made per app on the web UI's Account page or in the apps under Settings → Account → App passwords, shown once, and usable until revoked; changing the account's password revokes them all.
 - **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret and its username, acting as `user`, for clients that have no account.
 
