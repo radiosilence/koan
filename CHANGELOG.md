@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.75.1
+
+### Changed
+
+- **Lighter panels.** The web UI's panels are the kit's lighter ground rather than hairline boxes.
+
+### Fixed
+
+- **Page headers stay on their rows.** Scrolling past the top of the albums, artists or tracks list with a mouse wheel or a trackpad no longer leaves the page's title and count drawn over the first row until the page next redraws.
+
 ## 0.75.0
 
 ### Added
