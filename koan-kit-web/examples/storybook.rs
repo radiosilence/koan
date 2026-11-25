@@ -9,6 +9,7 @@
 //! talks to the stub handlers here, which wait a moment so a busy button, a question, a preview and a live search can
 //! be watched. Serving reads the compiled stylesheet, `storybook/out.css`, which `mise run storybook` makes.
 
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use askama_datastar::{Html, events, require_datastar_on_post, script};
@@ -74,12 +75,10 @@ async fn slow() -> Response {
     ])
 }
 
-#[expect(clippy::unused_async, reason = "axum takes a handler as an async fn")]
 async fn flash() -> Response {
     events([kit::Flash::ok("Saved.").patch().into()])
 }
 
-#[expect(clippy::unused_async, reason = "axum takes a handler as an async fn")]
 async fn failed() -> Response {
     events([kit::Flash::bad("The server refused the token: 401.")
         .dismiss("dismiss")
@@ -120,7 +119,6 @@ async fn files() -> Response {
 }
 
 /// A live search's answer: the albums whose name holds the query.
-#[expect(clippy::unused_async, reason = "axum takes a handler as an async fn")]
 async fn search(Query(query): Query<serde_json::Map<String, Value>>) -> Response {
     let words = query
         .get("q")
@@ -133,11 +131,14 @@ async fn search(Query(query): Query<serde_json::Map<String, Value>>) -> Response
         "Phace — Impulse",
         "Burial — Untrue",
     ];
-    let rows: String = albums
+    let mut rows = String::new();
+    for album in albums
         .iter()
         .filter(|album| !words.is_empty() && album.to_lowercase().contains(&words))
-        .map(|album| format!("<li>{}</li>", kit::Text::from(*album)))
-        .collect();
+    {
+        // Content escapes words as it writes them.
+        let _ = write!(rows, "<li>{}</li>", kit::Content::from(*album));
+    }
     events([Html::trusted(format!(
         "<ul id=\"story-results\" class=\"rows\">{rows}</ul>"
     ))

@@ -1,1 +1,1 @@
-- **The web kit lives in this repository.** `@radiosilence/theme` becomes `@radiosilence/koan-kit-web` in `koan-kit-web/`, beside its specification, published on its own from `koan-kit-web.yml`; ui.koan.rocks shows every control. A change to `koan-kit-web/` or `site/` alone skips `ci-cd.yml`.
+- **The web kit lives in this repository.** `@radiosilence/theme` becomes `@radiosilence/koan-kit-web` in `koan-kit-web/`, beside its specification, published on its own from `koan-kit-web.yml`; ui.koan.rocks shows every control.
