@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.1
+
+### Fixed
+
+- **The search box keeps its ground on macOS.** Its fill no longer goes missing over pages showing text or sleeves under a frosted bar, which left the page visible through the box.
+
 ## 0.76.0
 
 ### Added
