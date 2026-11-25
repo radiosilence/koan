@@ -8,7 +8,7 @@
 {%- else %}
 <p class="{{ sub }}">Off: your password alone signs you in. Add an authenticator app, a passkey or a security key and signing in will ask for it too; a passkey can sign you in on its own. Turning it on signs out every device, key and app password you have, so nothing signed in with the password alone stays signed in.</p>
 {%- endif %}
-{%- if let Some(e) = error %}<p class="{{ crate::ui::pages::COPY_ERROR }}" id="second-factor-error" role="alert">{{ e }}</p>{% endif %}
+<div id="second-factor-error">{% if let Some(e) = error %}<p class="{{ crate::ui::pages::COPY_ERROR }}" role="alert">{{ e }}</p>{% endif %}</div>
 
 {%- if let Some(codes) = codes %}
 <div class="panel mt-3 mb-4 max-w-panel"><h3 class="mt-0">Recovery codes</h3>

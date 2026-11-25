@@ -941,7 +941,8 @@ pub fn describe(e: &KoanError) -> SharedString {
         | KoanError::BadArgument { message }
         | KoanError::Remote { message }
         | KoanError::Refused { message }
-        | KoanError::NeedsSampleRate { message } => message.clone().into(),
+        | KoanError::NeedsSampleRate { message }
+        | KoanError::NeedsSecondFactor { message } => message.clone().into(),
     }
 }
 

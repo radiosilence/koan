@@ -114,6 +114,8 @@ pub(crate) enum Field {
     Url,
     Username,
     Secret,
+    /// The second factor, once the server has asked for one.
+    Code,
     Folder,
     CacheLimit,
     CurrentPassword,
@@ -140,6 +142,7 @@ impl Field {
             Field::Url => "https://music.example.com, or an invite link",
             Field::Username | Field::PersonName => "username",
             Field::Secret => "the account's password or API key",
+            Field::Code => "from your authenticator app, or a recovery code",
             Field::Folder => "the path of a folder of music",
             Field::CacheLimit => "e.g. 50GB, 0 for no cache, blank for no limit",
             Field::CurrentPassword => "current password",
@@ -353,6 +356,8 @@ pub struct SettingsPage {
     /// The field being typed into.
     editing: Option<Field>,
     sign_in_with_key: bool,
+    /// The last sign-in's account has two-step sign-in: a code is asked for.
+    wants_code: bool,
     new_role: &'static str,
     dialog: Option<Dialog>,
     /// Jobs started and not yet landed.
@@ -395,6 +400,7 @@ impl SettingsPage {
             fields: HashMap::new(),
             editing: None,
             sign_in_with_key: false,
+            wants_code: false,
             new_role: ROLES[0].0,
             dialog: None,
             busy: 0,

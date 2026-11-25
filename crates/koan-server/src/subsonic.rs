@@ -235,13 +235,19 @@ impl SubsonicError {
     }
 
     /// The password was right, and the account wants its second factor too.
-    fn second_factor(code_given: bool) -> Self {
+    /// `code` is what `koanSignIn` was given, if the request was one: empty
+    /// when it was given none.
+    fn second_factor(code: Option<&str>) -> Self {
         Self::auth(
             SubsonicErrorCode::SecondFactor,
-            if code_given {
-                "Wrong code"
-            } else {
-                "This account uses two-step sign-in, so its password alone does not sign in: sign in with an API key or an app password from the Account page of kōan's web UI"
+            match code.map(str::trim) {
+                Some("") => {
+                    "This account uses two-step sign-in: give a code from your authenticator app, or a recovery code"
+                }
+                Some(_) => "Wrong code",
+                None => {
+                    "This account uses two-step sign-in, so its password alone does not sign in: sign in with an API key or an app password from the Account page of kōan's web UI"
+                }
             },
         )
     }
@@ -1090,8 +1096,8 @@ fn second_factor(
     if !on {
         return Ok(());
     }
-    let Some(code) = code.filter(|c| !c.trim().is_empty()) else {
-        return Err(SubsonicError::second_factor(false));
+    let Some(given) = code.filter(|c| !c.trim().is_empty()) else {
+        return Err(SubsonicError::second_factor(code));
     };
     if state.users.codes_spent(&account.username) {
         return Err(SubsonicError::generic(
@@ -1101,12 +1107,12 @@ fn second_factor(
     let key = state
         .totp_key
         .as_ref()
-        .ok_or_else(|| SubsonicError::second_factor(true))?;
-    let right = koan_auth::second_factor::check_code(&db.conn, key, account.id, code)
+        .ok_or_else(|| SubsonicError::second_factor(code))?;
+    let right = koan_auth::second_factor::check_code(&db.conn, key, account.id, given)
         .map_err(|e| SubsonicError::internal(e.to_string()))?;
     if !right {
         state.users.code_failed(&account.username);
-        return Err(SubsonicError::second_factor(true));
+        return Err(SubsonicError::second_factor(code));
     }
     Ok(())
 }
@@ -5971,7 +5977,8 @@ async fn koan_sign_in(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let mut auth = params.auth();
-        auth.code = params.get("code").map(String::from);
+        // Present, if empty, so that error 45 asks for a code rather than a key.
+        auth.code = Some(params.get("code").unwrap_or_default().to_owned());
         respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
             if caller.via != Via::Password {
                 return Err(SubsonicError::new(

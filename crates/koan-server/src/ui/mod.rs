@@ -329,6 +329,13 @@ pub(crate) fn router(
             "/login/passkey",
             post(session::passkey).layer(from_fn_with_state(state.auth.clone(), login_rate_limit)),
         )
+        .route(
+            "/login/passkey/challenge",
+            post(session::passkey_challenge).layer(from_fn_with_state(
+                Arc::new(RateLimiter::new(60, 30)),
+                rate_limit,
+            )),
+        )
         .route("/setup", setup)
         .route("/auth/resume", get(session::resume))
         .route(session::PROXY_RESUME, get(session::proxy_resume))

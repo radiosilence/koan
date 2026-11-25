@@ -120,7 +120,21 @@ pub(super) async fn login(
     }
     match authenticate(&s.auth, &f.username, &f.password, None, from).await {
         Ok(SignedIn::Session(_, access, refresh)) => signed_in(&s, next, &access, &refresh),
-        Ok(SignedIn::NeedsSecond(user)) => second_step(&s, next, &user, None).await,
+        Ok(SignedIn::NeedsSecond(user)) => {
+            use koan_auth::second_factor::Purpose;
+            match s
+                .auth
+                .users
+                .tickets()
+                .open(user.id, &user.username, Purpose::SignIn)
+            {
+                Ok((ticket, held)) => second_step(&s, next, &ticket, &held, None).await,
+                Err(_) => html(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    pages::login(&s, next, Some("Signing in failed. Try again.")),
+                ),
+            }
+        }
         Err(resp) => {
             let status = resp.status();
             let message = match status {
@@ -144,28 +158,18 @@ fn signed_in(s: &UiState, next: &str, access: &str, refresh: &str) -> Response {
         .into_response()
 }
 
-/// The page asking for the second factor, its password passed: a ticket
+/// The page asking for the second factor, its password passed: `ticket`
 /// holds the sign-in, and with the account's security keys, the challenge
-/// they answer.
+/// they answer. A wrong answer draws the page again on the same ticket, so
+/// its tries and its lifetime run on.
 async fn second_step(
     s: &UiState,
     next: &str,
-    user: &auth_queries::UserRow,
+    ticket: &str,
+    held: &koan_auth::second_factor::Ticket,
     error: Option<&str>,
 ) -> Response {
-    use koan_auth::second_factor::Purpose;
-    let Ok((ticket, held)) = s
-        .auth
-        .users
-        .tickets()
-        .open(user.id, &user.username, Purpose::SignIn)
-    else {
-        return html(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            pages::login(s, next, Some("Signing in failed. Try again.")),
-        );
-    };
-    let (pool, user_id) = (s.pool.clone(), user.id);
+    let (pool, user_id) = (s.pool.clone(), held.user_id);
     let (totp, ids) = tokio::task::spawn_blocking(move || {
         let db = super::open(&pool)?;
         let factors = koan_auth::second_factor::factors(&db.conn, user_id).logged()?;
@@ -186,7 +190,7 @@ async fn second_step(
         } else {
             StatusCode::OK
         },
-        pages::second_step(s, next, &ticket, totp, key_options.as_deref(), error),
+        pages::second_step(s, next, ticket, totp, key_options.as_deref(), error),
     )
 }
 
@@ -196,6 +200,31 @@ pub(super) struct PasskeyForm {
     #[serde(default)]
     next: String,
     assertion: String,
+}
+
+/// A challenge for a passkey to sign in with on its own: the ticket that
+/// holds it and `navigator.credentials.get`'s options. Asked by the sign-in
+/// page's script, under a per-address limit, so that loading the page
+/// stores nothing and nobody can crowd out others' challenges by loading it.
+pub(super) async fn passkey_challenge(State(s): State<UiState>, headers: HeaderMap) -> Response {
+    use koan_auth::second_factor::Purpose;
+    if !same_origin(&headers) {
+        return cross_site();
+    }
+    let Some(rp) = s.relying_party().filter(|_| s.auth_enabled) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match s.auth.users.passkeys().open(0, "", Purpose::Passkey) {
+        Ok((ticket, held)) => (
+            [(header::CACHE_CONTROL, "no-store")],
+            axum::Json(serde_json::json!({
+                "ticket": ticket,
+                "options": koan_auth::webauthn::passkey_options(&rp, &held.challenge),
+            })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// A passkey signing in on its own, from the sign-in page.
@@ -261,11 +290,7 @@ pub(super) async fn second(
             Err(_) => Answer::Code(String::new()),
         }
     };
-    let held = s
-        .auth
-        .users
-        .tickets()
-        .get(&f.ticket, koan_auth::second_factor::Purpose::SignIn);
+    let ticket = f.ticket.clone();
     match finish_second(&s.auth, f.ticket, answer, s.relying_party(), from).await {
         Ok((_, access, refresh)) => signed_in(&s, next, &access, &refresh),
         Err(resp) => {
@@ -287,19 +312,16 @@ pub(super) async fn second(
                 }
                 _ => "Signing in failed. Try again.",
             };
-            // A fresh ticket and challenge, since a security key's answer is
-            // for one challenge only; the password stays passed.
-            let pool = s.pool.clone();
-            let user = tokio::task::spawn_blocking(move || {
-                let db = super::open(&pool)?;
-                auth_queries::get_user_by_id(&db.conn, held?.user_id).logged()?
-            })
-            .await
-            .ok()
-            .flatten();
-            match user {
-                Some(user) if status != StatusCode::TOO_MANY_REQUESTS => {
-                    second_step(&s, next, &user, Some(message)).await
+            // Again on the same ticket, while it has tries left; once it
+            // has none, the password is asked again.
+            let held = s
+                .auth
+                .users
+                .tickets()
+                .get(&ticket, koan_auth::second_factor::Purpose::SignIn);
+            match held {
+                Some(held) if status != StatusCode::TOO_MANY_REQUESTS => {
+                    second_step(&s, next, &ticket, &held, Some(message)).await
                 }
                 _ => html(status, pages::login(&s, next, Some(message))),
             }

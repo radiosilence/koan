@@ -249,17 +249,32 @@ impl SettingsPage {
                     return say("type the server's address, a username and a password");
                 }
                 let with_key = self.sign_in_with_key;
+                let code = (self.wants_code && !with_key)
+                    .then(|| self.take_field(Field::Code))
+                    .filter(|c| !c.trim().is_empty());
                 self.spawn(move || {
                     let signed = if with_key {
                         helpers::set_remote_api_key(&url, &username, &secret)
                     } else {
-                        helpers::set_remote_credentials(&url, &username, &secret, None)
+                        helpers::set_remote_credentials(&url, &username, &secret, code.as_deref())
                     };
                     done(move |page| {
-                        page.fields.remove(&Field::Secret);
+                        // Two-step sign-in: the password stays for the try
+                        // with a code.
+                        let wants_code =
+                            matches!(signed, Err(helpers::SignInError::NeedsSecondFactor { .. }));
+                        page.wants_code = wants_code;
+                        if wants_code {
+                            page.editing = Some(Field::Code);
+                        } else {
+                            page.fields.remove(&Field::Secret);
+                        }
                         page.reload();
                         Some(match signed {
                             Ok(()) => format!("signed in to {url}"),
+                            Err(helpers::SignInError::NeedsSecondFactor { message }) => {
+                                format!("{message}: type a code and sign in again")
+                            }
                             Err(e) => format!("could not sign in: {e}"),
                         })
                     })

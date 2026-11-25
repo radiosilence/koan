@@ -167,19 +167,13 @@ struct Login<'a> {
     error: Option<&'a str>,
     /// On a demo server, the shared account, filled in.
     demo: Option<(&'a str, &'a str)>,
-    /// A challenge for a passkey to sign in with alone, and
-    /// `navigator.credentials.get`'s options as JSON: absent where the
-    /// server's address allows no passkeys.
-    passkey: Option<(String, String)>,
+    /// Whether a passkey can sign in here: not where the server's address
+    /// allows none. The page's script asks for a challenge as it loads.
+    passkey: bool,
 }
 
 pub(super) fn login(s: &UiState, next: &str, error: Option<&str>) -> Html {
-    use koan_auth::second_factor::Purpose;
-    let passkey = s.relying_party().and_then(|rp| {
-        let (ticket, held) = s.auth.users.passkeys().open(0, "", Purpose::Passkey).ok()?;
-        let options = koan_auth::webauthn::passkey_options(&rp, &held.challenge).to_string();
-        Some((ticket, options))
-    });
+    let passkey = s.relying_party().is_some();
     Login {
         base: s.base(),
         title: "Sign in",

@@ -175,7 +175,7 @@ fn refused(s: &UiState, user: &AuthUser) -> Option<&'static str> {
 async fn answer(s: &UiState, user: &AuthUser, html: Option<Html>, resign: bool) -> Response {
     let Some(html) = html else {
         return events(vec![patch(
-            r#"<p id="second-factor-error" role="alert">That did not work.</p>"#,
+            r#"<div id="second-factor-error"><p role="alert">That did not work. Reload the page and try again.</p></div>"#,
         )]);
     };
     let events = events(vec![patch(&html)]);
@@ -289,8 +289,9 @@ pub(super) async fn remove_totp(
     let (st, id) = (s.clone(), user.user_id);
     let done = blocking(move || {
         let db = open(&st.pool)?;
+        let was = factor::enabled(&db.conn, id).logged()?;
         factor::remove_totp(&db.conn, id).logged()?;
-        let off = !factor::enabled(&db.conn, id).logged()?;
+        let off = was && !factor::enabled(&db.conn, id).logged()?;
         Some((section(&st, &db.conn, id, None, None), off))
     })
     .await;

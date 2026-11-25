@@ -3274,6 +3274,8 @@ async fn two_step_sign_in_asks_for_a_code_after_the_password() {
     .await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
     assert!(r.cookies().is_empty());
+    // The same ticket again, its tries running on.
+    assert!(r.body.contains(&format!("value=\"{ticket}\"")));
     let ticket = r
         .body
         .split("name=\"ticket\" value=\"")
@@ -3304,17 +3306,19 @@ async fn two_step_sign_in_asks_for_a_code_after_the_password() {
 
 #[tokio::test]
 async fn the_sign_in_page_offers_passkeys_only_where_browsers_allow_them() {
-    let r = send(
-        &setup_at(true, Some("https://music.example.org")).app,
-        get("/login").body(Body::empty()).unwrap(),
-    )
-    .await;
+    let f = setup_at(true, Some("https://music.example.org"));
+    let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
     assert!(r.body.contains("data-passkey-login"), "{}", r.body);
     assert!(r.body.contains("username webauthn"));
-    assert!(
-        r.body
-            .contains("&quot;userVerification&quot;:&quot;required&quot;")
-    );
-    let r = send(&setup(true).app, get("/login").body(Body::empty()).unwrap()).await;
+    let r = send(&f.app, form("/login/passkey/challenge", "")).await;
+    let v: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(v["options"]["userVerification"], "required", "{}", r.body);
+    assert_eq!(v["options"]["rpId"], "music.example.org");
+    assert!(v["ticket"].as_str().is_some_and(|t| !t.is_empty()));
+
+    let f = setup(true);
+    let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
     assert!(!r.body.contains("data-passkey-login"));
+    let r = send(&f.app, form("/login/passkey/challenge", "")).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
 }

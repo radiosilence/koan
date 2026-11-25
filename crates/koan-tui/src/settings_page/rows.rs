@@ -329,6 +329,9 @@ fn server(page: &SettingsPage, rows: &mut Rows) {
             "password"
         };
         rows.field(Field::Secret, label, Some(Op::SignIn));
+        if page.wants_code && !page.sign_in_with_key {
+            rows.field(Field::Code, "code", Some(Op::SignIn));
+        }
         rows.button("sign in", "", Op::SignIn);
         rows.note(
             "Paste an invite into server url and kōan fills in the rest. The account is \

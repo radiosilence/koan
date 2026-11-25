@@ -48,9 +48,17 @@ function say(form: HTMLElement, message: string) {
 let offered: AbortController | null = null;
 
 // Answer the form's challenge and send the answer. `conditional` offers the
-// passkeys in the username field's suggestions rather than in a prompt.
+// passkeys in the username field's suggestions rather than in a prompt. The
+// sign-in page's form asks the server for its challenge first.
 async function signIn(form: HTMLFormElement, conditional = false) {
-  const options: Options = JSON.parse(form.dataset["options"] ?? "{}");
+  let options: Options;
+  if (form.dataset["challenge"]) {
+    const asked = (await post(form.dataset["challenge"], {})) as { ticket: string; options: Options };
+    form.querySelector<HTMLInputElement>("input[name=ticket]")!.value = asked.ticket;
+    options = asked.options;
+  } else {
+    options = JSON.parse(form.dataset["options"] ?? "{}");
+  }
   offered?.abort();
   offered = conditional ? new AbortController() : null;
   const credential = (await navigator.credentials.get({
@@ -89,7 +97,9 @@ if (login && window.PublicKeyCredential?.isConditionalMediationAvailable) {
 async function post(url: string, body: unknown) {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    // The Account page's routes take only the page's own posts, which say
+    // so with Datastar's header.
+    headers: { "content-type": "application/json", "datastar-request": "true" },
     body: JSON.stringify(body),
   });
   if (res.headers.get("content-type")?.startsWith("application/json")) {
