@@ -176,9 +176,15 @@ impl Server {
     }
 
     /// An authorization request this server will answer: a client it
-    /// registered, and one of that client's own redirect URIs. Until both
-    /// hold, a failure is a page on this server, never a redirect, or it
-    /// would bounce people to any address; the error says why, for that page.
+    /// registered, and one of that client's own redirect URIs that this
+    /// server still allows. Until both hold, a failure is a page on this
+    /// server, never a redirect, or it would bounce people to any address; the
+    /// error says why, for that page.
+    ///
+    /// The redirect is checked against the hosts allowed now, not only when
+    /// the client registered: a client id never expires, so limiting the
+    /// hosts would otherwise leave every client registered before free to
+    /// return anywhere.
     pub fn check(
         &self,
         public_pem: &[u8],
@@ -194,6 +200,9 @@ impl Server {
         };
         if !client.redirect_uris.contains(&uri) {
             return Err("This app asked to return to an address it did not register.");
+        }
+        if !self.allowed_redirect(&uri) {
+            return Err("This server no longer lets apps return to this app's address.");
         }
         let to = Url::parse(&uri).map_err(|_| "This app's return address is not valid.")?;
         Ok(Authorizing {
@@ -579,6 +588,22 @@ mod tests {
             codes.exchange(&token("verifier")),
             Exchange::Replayed(grant.id)
         );
+    }
+
+    #[test]
+    fn limiting_the_hosts_reaches_clients_registered_before() {
+        let (private, public) = crate::keys::generate_pem().unwrap();
+        let id = registered(&private);
+        let q = request(&id, "verifier");
+        assert!(server().check(public.as_bytes(), &q).is_ok());
+        let limited = Server::new(
+            "https://music.example/",
+            "/mcp",
+            "kōan",
+            vec!["claude.ai".into()],
+        )
+        .unwrap();
+        assert!(limited.check(public.as_bytes(), &q).is_err());
     }
 
     #[test]

@@ -57,7 +57,7 @@ services:
       - /mnt/music:/music:ro
 ```
 
-with `koan-config` declared under `volumes:`. As in Navidrome, the first visit to the web UI makes the admin: until an account exists it shows a setup page instead of sign-in. To keep that window shut, set `KOAN_GRAPHQL__SETUP_WIZARD: "false"` and create the admin from a shell in the container (see [The first account](headless-server.md#the-first-account)):
+with `koan-config` declared under `volumes:`. As in Navidrome, the web UI makes the admin: until an account exists it shows a setup page instead of sign-in. Unlike Navidrome's, the page asks for a setup code the server writes to its log (`docker compose logs koan`), so reaching it first is not enough. To make the admin from a shell in the container instead, set `KOAN_GRAPHQL__SETUP_WIZARD: "false"` (see [The first account](headless-server.md#the-first-account)):
 
 ```bash
 docker compose exec koan koan auth setup

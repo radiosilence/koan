@@ -94,7 +94,7 @@ pub(super) async fn login_form(
         return see_other(&format!("{PROXY_RESUME}?next={}", encode(next)));
     }
     // Nobody to sign in as yet: make the admin first.
-    if super::setup::open_for_setup(&s).await {
+    if super::setup::open_for_setup(&s).await.is_some() {
         return see_other("/setup");
     }
     html(StatusCode::OK, pages::login(&s, next, None))

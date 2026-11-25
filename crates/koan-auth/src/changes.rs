@@ -8,6 +8,10 @@
 //! the function in this crate that makes it, and a connection held under a
 //! [`Lease`] ends when its account changes. The client reconnects and is
 //! authenticated as things now stand.
+//!
+//! A change made in a transaction is announced again once it commits. The
+//! first announcement comes as the row is written, and a connection it ended
+//! could authenticate again before the commit, against the account as it was.
 
 /// Changes to accounts, as a running count, and the count at each account's
 /// latest change.

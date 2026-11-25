@@ -52,7 +52,9 @@ pub fn mint_scoped_token(
         username: username.to_string(),
         role: role.as_str().to_string(),
         iat: now,
-        exp: now + ttl_secs,
+        // A lifetime set near `u64::MAX` would otherwise wrap round to a
+        // token that is born expired, or panic in a debug build.
+        exp: now.saturating_add(ttl_secs),
         scope: scope.map(str::to_owned),
     };
     let key = EncodingKey::from_ed_pem(private_pem)?;
@@ -158,6 +160,18 @@ mod tests {
         let key = EncodingKey::from_ed_pem(private.as_bytes()).unwrap();
         let token = jsonwebtoken::encode(&Header::new(Algorithm::EdDSA), &claims, &key).unwrap();
         assert!(validate_access_token(public.as_bytes(), &token).is_err());
+    }
+
+    #[test]
+    fn a_lifetime_too_long_to_count_still_makes_a_live_token() {
+        let (private, public) = generate_pem().unwrap();
+        let token = mint_access_token(private.as_bytes(), 1, "user", Role::User, u64::MAX).unwrap();
+        assert_eq!(
+            validate_access_token(public.as_bytes(), &token)
+                .unwrap()
+                .exp,
+            u64::MAX
+        );
     }
 
     #[test]

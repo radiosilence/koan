@@ -26,10 +26,12 @@ pub enum ForwardedFrom {
 /// limit keyed on it is one bucket for everyone. When the peer is one `trust`
 /// believes (a proxy in the cluster, or a tunnel on the host), the last
 /// `X-Forwarded-For` entry is the one that proxy appended, and is the client.
-/// Earlier entries are whatever the client sent, and are ignored. Any other
-/// peer is the client, and its header is not believed. Nor is it when the peer
-/// is unknown (`None`): a listener served without its connection info would
-/// otherwise let every client pick its own address.
+/// Earlier entries are whatever the client sent, and are ignored, even when
+/// the last entry is not an address: a proxy that appends `unknown` would
+/// otherwise hand the choice to the client. Any other peer is the client, and
+/// its header is not believed. Nor is it when the peer is unknown (`None`): a
+/// listener served without its connection info would otherwise let every
+/// client pick its own address.
 ///
 /// IPv4-mapped IPv6 addresses come back as IPv4, so one client is one address
 /// whichever way a dual-stack listener or a proxy spelled it.
@@ -53,16 +55,27 @@ pub fn client_address(
     let forwarded = headers
         .get_all("x-forwarded-for")
         .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(','))
-        .filter_map(|ip| ip.trim().parse::<IpAddr>().ok())
         .next_back()
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').next())
+        .and_then(forwarded_entry)
         .map(|ip| ip.to_canonical());
     match (forwarded, trust) {
         (Some(ip), _) => ip,
         (None, ForwardedFrom::Private) => peer,
         (None, ForwardedFrom::Loopback) => unknown,
     }
+}
+
+/// An `X-Forwarded-For` entry as an address: bare, or with the port some
+/// proxies add (`203.0.113.9:51234`, `[2001:db8::1]:443`).
+fn forwarded_entry(entry: &str) -> Option<IpAddr> {
+    let entry = entry.trim();
+    entry
+        .parse::<IpAddr>()
+        .ok()
+        .or_else(|| entry.parse::<SocketAddr>().ok().map(|s| s.ip()))
+        .or_else(|| entry.strip_prefix('[')?.strip_suffix(']')?.parse().ok())
 }
 
 fn is_internal(ip: IpAddr) -> bool {
@@ -244,6 +257,57 @@ mod tests {
                 &forwarded("::ffff:203.0.113.9")
             ),
             "203.0.113.9".parse::<IpAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn only_the_proxys_own_entry_is_believed_whatever_it_looks_like() {
+        let at = |value: &str, trust| client_address(peer("10.0.0.2"), trust, &forwarded(value));
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        // A port, as some proxies append one.
+        assert_eq!(
+            at("6.6.6.6, 203.0.113.9:51234", ForwardedFrom::Private),
+            ip("203.0.113.9")
+        );
+        assert_eq!(
+            at("6.6.6.6, [2001:db8::1]:443", ForwardedFrom::Private),
+            ip("2001:db8::1")
+        );
+        assert_eq!(
+            at("6.6.6.6, [2001:db8::1]", ForwardedFrom::Private),
+            ip("2001:db8::1")
+        );
+        // An entry that is no address never hands the choice to the client's
+        // own entries before it.
+        for last in ["unknown", "", "_hidden"] {
+            let value = format!("6.6.6.6, {last}");
+            assert_eq!(
+                at(&value, ForwardedFrom::Private),
+                ip("10.0.0.2"),
+                "{value}"
+            );
+            assert_eq!(
+                client_address(
+                    peer("127.0.0.1"),
+                    ForwardedFrom::Loopback,
+                    &forwarded(&value)
+                ),
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                "{value}"
+            );
+        }
+        // A proxy that adds a header of its own rather than appending: its
+        // line is the last.
+        let mut h = forwarded("6.6.6.6");
+        h.append("x-forwarded-for", "203.0.113.9".parse().unwrap());
+        assert_eq!(
+            client_address(peer("10.0.0.2"), ForwardedFrom::Private, &h),
+            ip("203.0.113.9")
+        );
+        h.append("x-forwarded-for", "unknown".parse().unwrap());
+        assert_eq!(
+            client_address(peer("10.0.0.2"), ForwardedFrom::Private, &h),
+            ip("10.0.0.2")
         );
     }
 

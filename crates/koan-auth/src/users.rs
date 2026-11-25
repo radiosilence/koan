@@ -73,10 +73,23 @@ pub fn list_users(conn: &Connection) -> Result<Vec<UserRow>, rusqlite::Error> {
         .collect()
 }
 
-/// Delete an account by id. Its sessions, keys and app passwords go with it.
+/// Delete an account by id, with its sessions, keys and app passwords.
 /// Whether there was one.
+///
+/// They are deleted here rather than left to the tables' `ON DELETE
+/// CASCADE`, which SQLite applies only on a connection with `foreign_keys`
+/// on: a service that leaves it off would otherwise keep a deleted account's
+/// sessions, some of which are read without the account.
 pub fn delete_user(conn: &Connection, user_id: i64) -> Result<bool, rusqlite::Error> {
-    let count = conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])?;
+    let count = crate::sql::atomically(conn, || {
+        for table in ["refresh_tokens", "api_keys", "app_passwords"] {
+            conn.execute(
+                &format!("DELETE FROM {table} WHERE user_id = ?1"),
+                params![user_id],
+            )?;
+        }
+        conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])
+    })?;
     if count > 0 {
         account_changed(user_id);
     }
@@ -86,23 +99,32 @@ pub fn delete_user(conn: &Connection, user_id: i64) -> Result<bool, rusqlite::Er
 /// Give an account a new password, and end every session, API key and app
 /// password it has: a reset is how an admin shuts out whoever else had the
 /// password, and a credential made with it would otherwise outlast it.
+///
+/// One transaction: a reset that fails part way leaves the old password and
+/// everything it signed in, not a new password beside credentials it was
+/// meant to end.
 pub fn update_password(
     conn: &Connection,
     username: &str,
     new_password: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let hash = crate::password::hash_password(new_password)?;
-    let updated: Option<i64> = conn
-        .query_row(
-            "UPDATE users SET password_hash = ?1 WHERE username = ?2 RETURNING id",
-            params![hash, username],
-            |row| row.get(0),
-        )
-        .optional()?;
+    let updated = crate::sql::atomically(conn, || {
+        let updated: Option<i64> = conn
+            .query_row(
+                "UPDATE users SET password_hash = ?1 WHERE username = ?2 RETURNING id",
+                params![hash, username],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = updated {
+            crate::sessions::revoke_all_user_tokens(conn, id)?;
+            crate::api_keys::revoke_user_api_keys(conn, id)?;
+            crate::app_passwords::revoke_user_app_passwords(conn, id)?;
+        }
+        Ok::<_, rusqlite::Error>(updated)
+    })?;
     if let Some(id) = updated {
-        crate::sessions::revoke_all_user_tokens(conn, id)?;
-        crate::api_keys::revoke_user_api_keys(conn, id)?;
-        crate::app_passwords::revoke_user_app_passwords(conn, id)?;
         account_changed(id);
     }
     Ok(updated.is_some())
@@ -203,5 +225,69 @@ mod tests {
                 .is_none()
         );
         assert!(!update_password(&conn, "nobody", "new password").unwrap());
+    }
+
+    #[test]
+    fn a_reset_that_fails_part_way_changes_nothing() {
+        let conn = test_db();
+        let id = create_user(&conn, "ann", "old password", Role::User).unwrap();
+        let future = crate::clock::unix_secs() + 3600;
+        crate::sessions::store_refresh_token(&conn, "browser", id, future).unwrap();
+        let (_, key) = crate::api_keys::create_api_key(&conn, id, "phone").unwrap();
+        // A write that fails after the password's, as one held up by another
+        // connection's lock would.
+        conn.execute_batch(
+            "CREATE TRIGGER keep_keys BEFORE DELETE ON api_keys
+             BEGIN SELECT RAISE(ABORT, 'held'); END;",
+        )
+        .unwrap();
+        assert!(update_password(&conn, "ann", "new password").is_err());
+        let ann = get_user_by_username(&conn, "ann").unwrap().unwrap();
+        crate::password::verify_password("old password", &ann.password_hash).unwrap();
+        assert!(
+            crate::sessions::get_valid_refresh_token(&conn, "browser")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            crate::api_keys::authenticate_api_key(&conn, &key)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_deleted_account_takes_its_credentials_without_foreign_keys() {
+        // As SQLite opens a connection unless told otherwise: no cascades.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::schema::migrate(&conn).unwrap();
+        let id = create_user(&conn, "ann", "password", Role::User).unwrap();
+        let future = crate::clock::unix_secs() + 3600;
+        crate::sessions::store_refresh_token(&conn, "browser", id, future).unwrap();
+        let (_, key) = crate::api_keys::create_api_key(&conn, id, "phone").unwrap();
+        let sealing = crate::app_passwords::app_password_key(b"a signing key");
+        crate::app_passwords::create_app_password(&conn, &sealing, id, "app").unwrap();
+
+        assert!(delete_user(&conn, id).unwrap());
+        // Read without the account, so a row left behind would still spend.
+        assert!(
+            crate::sessions::consume_refresh_token(&conn, "browser")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            crate::api_keys::authenticate_api_key(&conn, &key)
+                .unwrap()
+                .is_none()
+        );
+        let left: i64 = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM refresh_tokens) + (SELECT COUNT(*) FROM api_keys)
+                      + (SELECT COUNT(*) FROM app_passwords)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0);
     }
 }

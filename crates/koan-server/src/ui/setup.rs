@@ -1,13 +1,19 @@
 //! The first admin, made in the browser: a server with auth on and no account
 //! yet answers `/setup` with a form, so one in Docker needs no shell to
-//! become usable. Whoever reaches it first becomes the admin, which is why it
-//! closes for good the moment any account exists, and why `graphql.setup_wizard`
-//! turns it off for anyone who would rather not have that window at all.
+//! become usable. The form asks for a code the server writes to its log, so
+//! the admin is whoever runs the server rather than whoever reaches the page
+//! first: a database can be empty because a volume did not mount, not only on
+//! a new install. The page closes for good the moment any account exists, and
+//! `graphql.setup_wizard` turns it off for anyone who would rather make the
+//! admin with `koan auth setup`.
+
+use std::sync::{Arc, Mutex};
 
 use axum::Form;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use koan_auth::setup::SetupCode;
 use serde::Deserialize;
 
 use koan_core::db::queries::auth as auth_queries;
@@ -17,33 +23,59 @@ use super::{UiState, html, open, pages, see_other};
 use crate::auth::routes::{ClientIp, authenticate};
 use crate::share::blocking;
 
-/// Whether the setup page is open: auth on, the wizard allowed, and no account.
-/// A database that cannot be read is not an empty one.
-pub(super) async fn open_for_setup(s: &UiState) -> bool {
-    if !s.auth_enabled || !s.setup_wizard {
-        return false;
+/// The code `/setup` asks for: made the first time it is needed, and written
+/// to the log, where only the server's operator looks.
+#[derive(Clone, Default)]
+pub struct SetupGate(Arc<Mutex<Option<SetupCode>>>);
+
+impl SetupGate {
+    /// The code, made and logged the first time it is asked for.
+    pub fn code(&self) -> Option<SetupCode> {
+        let mut code = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if code.is_none() {
+            let made = SetupCode::new()
+                .map_err(|e| log::error!("the setup code could not be made: {e}"))
+                .ok()?;
+            log::warn!(
+                "No accounts yet: open /setup and enter the setup code {} to make the first \
+                 admin. Set graphql.setup_wizard = false to make it with `koan auth setup` instead.",
+                made.as_str()
+            );
+            *code = Some(made);
+        }
+        code.clone()
     }
+}
+
+/// The code the setup page asks for, while the page is open: auth on, the
+/// wizard allowed, and no account. A database that cannot be read is not an
+/// empty one.
+pub(super) async fn open_for_setup(s: &UiState) -> Option<SetupCode> {
+    let gate = s.setup.clone().filter(|_| s.auth_enabled)?;
     let pool = s.pool.clone();
-    blocking(move || {
+    let empty = blocking(move || {
         let db = open(&pool)?;
         auth_queries::has_users(&db.conn).ok().map(|has| !has)
     })
     .await
-    .unwrap_or(false)
+    .unwrap_or(false);
+    empty.then(|| gate.code()).flatten()
 }
 
 #[derive(Deserialize)]
 pub(super) struct SetupForm {
+    #[serde(default)]
+    code: String,
     username: String,
     password: String,
     confirm: String,
 }
 
 pub(super) async fn form(State(s): State<UiState>) -> Response {
-    if !open_for_setup(&s).await {
+    if open_for_setup(&s).await.is_none() {
         return see_other("/login");
     }
-    html(StatusCode::OK, pages::setup(&s, "", None))
+    html(StatusCode::OK, pages::setup(&s, "", "", None))
 }
 
 pub(super) async fn create(
@@ -55,14 +87,19 @@ pub(super) async fn create(
     if !super::session::same_origin(&headers) {
         return (StatusCode::FORBIDDEN, "cross-site request refused").into_response();
     }
-    if !open_for_setup(&s).await {
+    let Some(code) = open_for_setup(&s).await else {
         return see_other("/login");
+    };
+    let again = |status, why: &str| html(status, pages::setup(&s, &f.username, &f.code, Some(why)));
+    if !code.matches(&f.code) {
+        log::warn!("web UI: a wrong setup code was entered at /setup, from {from}");
+        return again(
+            StatusCode::FORBIDDEN,
+            "That is not the setup code. The server writes it to its log while it has no accounts.",
+        );
     }
     if f.password != f.confirm {
-        return html(
-            StatusCode::BAD_REQUEST,
-            pages::setup(&s, &f.username, Some("The passwords do not match.")),
-        );
+        return again(StatusCode::BAD_REQUEST, "The passwords do not match.");
     }
     let pool = s.pool.clone();
     let (username, password) = (f.username.clone(), f.password.clone());
@@ -75,16 +112,11 @@ pub(super) async fn create(
         Some(Ok(_)) => f.username.trim(),
         // Someone else finished first: theirs is the server now.
         Some(Err(AccountError::AlreadySetUp)) => return see_other("/login"),
-        Some(Err(e)) => {
-            return html(
-                StatusCode::BAD_REQUEST,
-                pages::setup(&s, &f.username, Some(&capitalised(&e.to_string()))),
-            );
-        }
+        Some(Err(e)) => return again(StatusCode::BAD_REQUEST, &capitalised(&e.to_string())),
         None => {
-            return html(
+            return again(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                pages::setup(&s, &f.username, Some("The account could not be made.")),
+                "The account could not be made.",
             );
         }
     };

@@ -63,7 +63,7 @@ pub fn mint_token(
         username: user.username,
         pwd: password_mark(&user.password_hash),
         iat: now,
-        exp: now + ttl_secs,
+        exp: now.saturating_add(ttl_secs),
     };
     let key = EncodingKey::from_ed_pem(private_pem).map_err(other)?;
     jsonwebtoken::encode(&Header::new(Algorithm::EdDSA), &claims, &key).map_err(other)

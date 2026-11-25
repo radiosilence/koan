@@ -232,14 +232,33 @@ impl Verifier {
             while outcome.is_none() && !check.done.wait_until(&mut outcome, deadline).timed_out() {}
             return outcome.ok_or(Refused::Busy);
         }
+        let _slot = Slot {
+            checking: &self.checking,
+            key,
+            check: check.clone(),
+        };
         let ok = verify_password(password, hash).is_ok();
         if ok {
             self.verified.lock().put(key, Instant::now());
         }
         *check.outcome.lock() = Some(ok);
-        check.done.notify_all();
-        self.checking.lock().remove(&key);
         Ok(ok)
+    }
+}
+
+/// A running check's place among those allowed at once, given back however
+/// the check ends. A check that panicked and kept its place would hold it for
+/// good, and enough of them would refuse every password as busy.
+struct Slot<'a> {
+    checking: &'a Mutex<HashMap<[u8; 32], Arc<Check>>>,
+    key: [u8; 32],
+    check: Arc<Check>,
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.checking.lock().remove(&self.key);
+        self.check.done.notify_all();
     }
 }
 

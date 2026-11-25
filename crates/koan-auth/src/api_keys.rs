@@ -5,7 +5,6 @@
 //! itself is shown once, when it is made.
 
 use rusqlite::{Connection, OptionalExtension, params};
-use subtle::ConstantTimeEq;
 
 use crate::Role;
 use crate::changes::account_changed;
@@ -158,31 +157,21 @@ pub fn revoke_user_api_keys(conn: &Connection, user_id: i64) -> Result<usize, ru
 
 /// The user a key belongs to, if it is a live key.
 ///
-/// Every stored hash is compared, in constant time, rather than looking the
-/// hash up by index: an index lookup takes longer the more of the hash it
-/// matched. The table holds a handful of rows per user.
+/// Looked up by its digest's index. What the lookup's timing could reveal is
+/// how much of a stored digest a guess's digest matched, which brings no one
+/// nearer a key that hashes to it. Comparing every stored digest instead
+/// would make each sign-in cost as much as every key on the server, and any
+/// account may make keys.
 pub fn authenticate_api_key(
     conn: &Connection,
     key: &str,
 ) -> Result<Option<UserRow>, rusqlite::Error> {
-    let given = sha256_hex(key);
-    let mut found = None;
-    {
-        let mut stmt = conn.prepare_cached("SELECT id, key_hash, last_used_at FROM api_keys")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-            ))
-        })?;
-        for row in rows {
-            let (id, hash, last_used) = row?;
-            if bool::from(hash.as_bytes().ct_eq(given.as_bytes())) {
-                found = Some((id, last_used));
-            }
-        }
-    }
+    let found: Option<(i64, Option<i64>)> = conn
+        .prepare_cached("SELECT id, last_used_at FROM api_keys WHERE key_hash = ?1")?
+        .query_row(params![sha256_hex(key)], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .optional()?;
     let Some((id, last_used)) = found else {
         return Ok(None);
     };
