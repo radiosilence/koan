@@ -1,0 +1,1 @@
+- **A tap on a record's sleeve on Android opens the record.** It played the record in place of the queue, so its tracks could not be seen without playing them. The record's page and the long-press menu play it, as on the iPhone and iPad.
