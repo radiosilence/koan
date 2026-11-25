@@ -863,6 +863,20 @@
   .field > small.warn, .field.warn > small {
     color: var(--warn);
   }
+  .combo {
+    display: inline-flex;
+    align-items: stretch;
+  }
+  .combo > * + * {
+    margin-left: -1px;
+  }
+  .combo > :is(input, select) {
+    flex: 1;
+  }
+  .combo > :focus-visible {
+    position: relative;
+    z-index: 10;
+  }
   .toggle {
     display: flex;
     cursor: pointer;

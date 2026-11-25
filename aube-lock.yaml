@@ -8,17 +8,17 @@ importers:
 
   .:
     dependencies:
-      '@radiosilence/theme':
-        specifier: 0.2.8
-        version: 0.2.8
+      '@radiosilence/koan-kit-web':
+        specifier: 0.3.0
+        version: 0.3.0
       zod:
         specifier: 4.6.7
         version: 4.6.7
 
 packages:
 
-  '@radiosilence/theme@0.2.8':
-    resolution: {gitHosted: true, integrity: sha512-Eb5KmAlONc4zjkXX1uc0yFo6yKRAlqfG99F+6Fx16u8UjsIy07VLFnTCQXnsQckf3PHFm2BMrWx6bHvEyO0BNw==, tarball: https://npm.pkg.github.com/download/@radiosilence/theme/0.2.8/4605cd140e05f52b2b252071a31c2fcad8941b45}
+  '@radiosilence/koan-kit-web@0.3.0':
+    resolution: {gitHosted: true, integrity: sha512-rR/TayBRR/YE/n02qOkS2rWmAIdxqdnSvHRDwck68jF/7vOLiMzpiPN5mRaytCQqc+BjcSszAk8pTDGCUOZbKw==, tarball: https://npm.pkg.github.com/download/@radiosilence/koan-kit-web/0.3.0/fb72b5ed519fdeeda4351d766d008ed6f9c7cf09}
     hasBin: true
 
   zod@4.6.7:
@@ -26,6 +26,6 @@ packages:
 
 snapshots:
 
-  '@radiosilence/theme@0.2.8': {}
+  '@radiosilence/koan-kit-web@0.3.0': {}
 
   zod@4.6.7: {}

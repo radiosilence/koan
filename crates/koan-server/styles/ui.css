@@ -2,7 +2,7 @@
  * The web UI's stylesheet, compiled by Tailwind into assets/ui.css (`just css`). The compiled file is committed:
  * the crate embeds it, and building koan must not need the Tailwind CLI.
  *
- * The pages are drawn with the kōan web kit (@radiosilence/theme): its element defaults and classes, and utilities in the
+ * The pages are drawn with the kōan web kit (@radiosilence/koan-kit-web): its element defaults and classes, and utilities in the
  * askama templates (`templates/`) for layout. What is here is particular to koan: rules for markup that ui.js builds or
  * classes it toggles (`playing`, `missing`).
  */
@@ -11,14 +11,14 @@
 @source "../templates";
 @source not "../templates/share";
 @source "../scripts/ui.ts";
-@import "@radiosilence/theme";
+@import "@radiosilence/koan-kit-web";
 
 @theme {
   /* Wider than this, a sidebar and a transport bar; narrower, a tab bar. ui.js matches on the same width. */
   --breakpoint-wide: 721px;
 }
 
-/* The element defaults, button weights, busy spinner, meter and the rest come from the kit (@radiosilence/theme). What
+/* The element defaults, button weights, busy spinner, meter and the rest come from the kit (@radiosilence/koan-kit-web). What
  * is here is koan's own: the shell's layout variables, the track lists and the track menu. */
 @layer base {
   :root {

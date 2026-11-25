@@ -151,7 +151,7 @@ css:
     scripts/styles-deps.sh
     tailwindcss --input crates/koan-server/styles/ui.css --output crates/koan-server/assets/ui.css
     tailwindcss --input crates/koan-server/styles/share.css --output crates/koan-server/assets/share.css
-    node node_modules/@radiosilence/theme/kit-check.mjs crates/koan-server/templates crates/koan-server/src crates/koan-server/scripts
+    node node_modules/@radiosilence/koan-kit-web/kit-check.mjs crates/koan-server/templates crates/koan-server/src crates/koan-server/scripts
 
 # Typecheck the web UI and share page scripts (crates/koan-server/scripts/*.ts).
 # Cargo strips their types when it builds koan-server (build.rs). Zod's types
