@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>kōan web kit</title>
+    <link rel="stylesheet" href="out.css" />
+  </head>
+  <body class="mx-auto max-w-panel px-5 py-8">
+    <h1>the kōan web kit</h1>
+    <p class="text-muted">Every control in every state. The scheme follows the system; the accent is koan's mint.</p>
+
+    <h2>type</h2>
+    <p class="text-display font-extralight text-strong">display</p>
+    <p class="text-title font-light text-strong">title</p>
+    <p class="text-title-sm font-light text-strong">title-sm</p>
+    <p class="text-body">body: the text of a page.</p>
+    <p class="text-control">control: a button's or field's label.</p>
+    <p class="text-meta text-muted">meta: secondary text, counts, durations 3:41.</p>
+    <p class="text-fine text-muted">fine: footnotes and hints.</p>
+    <h3>a section heading</h3>
+    <p>A <a href="#">link</a>, <strong>strong text</strong>, and <code>code</code>.</p>
+
+    <h2>buttons</h2>
+    <div class="flex flex-wrap items-center gap-3">
+      <button class="primary">connect</button>
+      <button>bordered</button>
+      <button class="standard">standard</button>
+      <button class="quiet">quiet</button>
+      <button class="link">link</button>
+      <a class="button" href="#">a link as a button</a>
+    </div>
+    <div class="mt-3 flex flex-wrap items-center gap-3">
+      <button class="bad">disconnect</button>
+      <button class="quiet bad">remove</button>
+      <button class="busy">saving</button>
+      <button class="primary busy">connecting</button>
+      <button disabled>disabled</button>
+      <button class="icon-button" aria-label="more">⋯</button>
+    </div>
+    <div class="mt-3 flex flex-wrap items-center gap-3">
+      <button class="fill">filled</button>
+      <button class="bad fill">delete</button>
+      <button class="fill" disabled>disabled</button>
+    </div>
+
+    <h2>fields</h2>
+    <form class="grid max-w-form gap-5">
+      <label class="field">
+        <span>api token</span>
+        <input type="password" placeholder="paste the token" />
+        <small>Stored sealed; the gateway never shows it again.</small>
+      </label>
+      <label class="field">
+        <span>region</span>
+        <select>
+          <option>eu-west</option>
+          <option>us-east</option>
+        </select>
+      </label>
+      <label class="field bad">
+        <span>server url</span>
+        <input type="url" value="htp://example" />
+        <small>Not a URL: it must start with https://.</small>
+      </label>
+      <label class="field">
+        <span>notes</span>
+        <textarea rows="3">Text a person wrote keeps its Case.</textarea>
+        <small class="warn">Saved locally only.</small>
+      </label>
+      <span class="combo">
+        <input placeholder="split on" aria-label="separator" />
+        <button>credit artists</button>
+      </span>
+      <span class="combo">
+        <input value="Artist Album" aria-label="search" />
+        <button class="primary">grab</button>
+      </span>
+      <label class="toggle">notify when done <input type="checkbox" checked /></label>
+      <label class="toggle">include lossy copies <input type="checkbox" /></label>
+      <fieldset class="grid gap-2">
+        <label class="flex items-center gap-3"><input type="radio" name="q" checked /> lossless</label>
+        <label class="flex items-center gap-3"><input type="radio" name="q" /> any</label>
+      </fieldset>
+      <input type="range" min="0" max="100" value="40" />
+    </form>
+
+    <h2>status</h2>
+    <div class="flex flex-wrap gap-5">
+      <span class="status ok">connected</span>
+      <span class="status warn">not configured</span>
+      <span class="status bad">rejected</span>
+      <span class="status wait">queued</span>
+      <span class="status busy">checking</span>
+    </div>
+
+    <h2>progress</h2>
+    <div class="grid max-w-form gap-4">
+      <progress class="meter" value="40" max="100"></progress>
+      <progress class="meter ok" value="80" max="100"></progress>
+      <progress class="meter warn" value="30" max="100"></progress>
+      <progress class="meter bad" value="60" max="100"></progress>
+      <progress class="meter"></progress>
+      <span class="flex items-center gap-2 text-meta text-muted"><span class="spinner"></span> loading</span>
+      <span class="skeleton block h-9 max-w-form">placeholder</span>
+    </div>
+
+    <h2>panels and notices</h2>
+    <section class="panel">
+      <h2>github</h2>
+      <p class="text-meta text-muted">A region of the page, told apart by a hairline.</p>
+      <span class="code">https://mcp.example.com/mcp/github</span>
+    </section>
+    <p class="notice">Saved. The next sign-in uses it.</p>
+    <p class="notice warn">The token expires in two days.</p>
+    <p class="notice bad">The server refused the token: 401. <button>retry</button></p>
+
+    <h2>rows and tables</h2>
+    <ul class="rows">
+      <li><span class="flex-1">Polar Bear — Held on the Tips of Fingers</span><span class="text-meta text-muted">9 tracks</span></li>
+      <li><span class="flex-1">Phace — Impulse</span><span class="text-meta text-muted">12 tracks</span></li>
+    </ul>
+    <table class="dense mt-6">
+      <thead>
+        <tr><th>band</th><th class="num">freq</th><th class="num">gain</th><th class="num">q</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>low shelf</td><td class="num">105</td><td class="num">+4.2</td><td class="num">0.71</td></tr>
+        <tr><td>peak</td><td class="num">2400</td><td class="num">−1.5</td><td class="num">1.41</td></tr>
+      </tbody>
+    </table>
+
+    <h2>disclosure</h2>
+    <details class="disclosure">
+      <summary>connection details</summary>
+      <p class="text-meta text-muted">What only some readers need.</p>
+    </details>
+
+    <h2>dialog and toast</h2>
+    <div class="flex gap-3">
+      <button onclick="document.getElementById('sheet').showModal()">open sheet</button>
+      <button onclick="document.getElementById('toast').hidden = false">show toast</button>
+    </div>
+    <dialog id="sheet" class="sheet p-5">
+      <h2 class="mt-0">add a server</h2>
+      <p class="text-meta text-muted">A dialog that rises from the bottom on a phone.</p>
+      <form method="dialog" class="flex justify-end gap-3"><button class="quiet">cancel</button><button class="primary">add</button></form>
+    </dialog>
+    <div id="toast" class="toast" hidden>Copied.</div>
+    <script>
+      // WebKit draws the slider's done part from --fill.
+      for (const range of document.querySelectorAll('input[type="range"]')) {
+        const fill = () => range.style.setProperty("--fill", `${(100 * (range.value - range.min)) / (range.max - range.min)}%`);
+        fill();
+        range.addEventListener("input", fill);
+      }
+    </script>
+  </body>
+</html>

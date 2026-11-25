@@ -60,6 +60,7 @@ jobs:
       pull-requests: read
       actions: read
     outputs:
+      ci: ${{ steps.filter.outputs.ci }}
       rust: ${{ steps.filter.outputs.rust }}
       web: ${{ steps.filter.outputs.web }}
       deps: ${{ steps.filter.outputs.deps }}
@@ -97,7 +98,7 @@ jobs:
         # command rather than an answer, so every question is asked in a
         # condition.
         run: |
-          rust=true web=true deps=true docker=true package=true apple=true apple_apps=true gui_mac=true android=true release=false
+          ci=true rust=true web=true deps=true docker=true package=true apple=true apple_apps=true gui_mac=true android=true release=false
           version_of() { sed -n 's/^version = "\(.*\)"/\1/p' | head -1; }
           # A pull request merged or closed as its run was created: the
           # cancelling workflow can look before this run is listed, and the
@@ -157,7 +158,7 @@ jobs:
           touches() { printf '%s\n' "$files" | grep -E "$1" | grep -qvE '\.md$'; }
           if [ "$state" != "OPEN" ]; then
             echo "pull request #$PR is no longer open -- skipping everything"
-            rust=false web=false deps=false docker=false package=false apple=false apple_apps=false gui_mac=false android=false release=false
+            ci=false rust=false web=false deps=false docker=false package=false apple=false apple_apps=false gui_mac=false android=false release=false
           elif [ "$EVENT" != "workflow_dispatch" ] && [ -n "$base" ] && files=$(git diff --name-only "$base" HEAD); then
             echo "changes since $(git rev-parse --short "$base"):"
             printf '%s\n' "$files" | sed 's/^/  /'
@@ -165,6 +166,13 @@ jobs:
             # count for an app only when the change reaches it. Unanswerable,
             # they count.
             inputs=$(python3 .github/scripts/native_inputs.py "$base" HEAD) || inputs=$'apple=true\nandroid=true'
+
+            # The web kit and koan.rocks have workflows of their own (koan-kit-web.yml, site.yml), so a change to nothing else
+            # runs none of this one, the always-on checks and main's audit included; `Checks` still reports.
+            if ! printf '%s\n' "$files" | grep -qvE '^(koan-kit-web|site)/'; then
+              echo "only koan-kit-web/ and site/ changed -- skipping everything"
+              ci=false deps=false
+            fi
             eval "$(printf '%s\n' "$inputs" | sed 's/^/inputs_/')"
 
             # Anything cargo compiles or that decides how.
@@ -236,6 +244,7 @@ jobs:
             fi
           fi
           {
+            echo "ci=$ci"
             echo "rust=$rust"
             echo "web=$web"
             echo "deps=$deps"
@@ -317,6 +326,8 @@ jobs:
   changelog:
     name: Changelog
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.ci == 'true'
     timeout-minutes: 5
     permissions:
       contents: read
@@ -859,6 +870,8 @@ jobs:
   actionlint:
     name: Actionlint
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.ci == 'true'
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -894,7 +907,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [changes, checks]
-    if: ${{ !cancelled() && needs.checks.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && needs.checks.result == 'success' && needs.changes.outputs.ci == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
     permissions:
       contents: read
     outputs:

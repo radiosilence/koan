@@ -1,0 +1,82 @@
+name: koan-kit-web
+
+# The kōan web kit, `@radiosilence/koan-kit-web`: checked when `koan-kit-web/` changes, and published to GitHub Packages when a push
+# to main changes its version. It is released on its own rather than with koan, and `ci-cd.yml` skips a change to
+# `koan-kit-web/` alone, so this is the kit's whole CI. Its storybook is built and served by `site.yml`, at ui.koan.rocks.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "koan-kit-web/**"
+      - ".github/workflows/koan-kit-web.yml"
+  pull_request:
+    paths:
+      - "koan-kit-web/**"
+      - ".github/workflows/koan-kit-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: koan-kit-web
+
+jobs:
+  check:
+    name: koan-kit-web
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # The package is only useful if Tailwind accepts it as an import.
+      - name: Compile a stylesheet that imports the theme
+        run: |
+          mkdir -p /tmp/probe && cd /tmp/probe
+          npm init -y >/dev/null
+          npm install --no-save tailwindcss@4 @tailwindcss/cli@4 "$GITHUB_WORKSPACE/koan-kit-web"
+          printf '@import "tailwindcss" source(none);\n@import "@radiosilence/koan-kit-web";\n@source inline("bg-brand text-warn font-sans text-body rounded-lg shadow-xl text-sm bg-red-500");\n' > in.css
+          npx tailwindcss -i in.css -o out.css
+          grep -q 'var(--brand)' out.css
+          grep -q 'Geist Mono' out.css
+          # The kit's controls are in, and Tailwind's radii, shadows, sizes and palette are not.
+          grep -q 'progress.meter' out.css
+          ! grep -qE '\.rounded-lg|\.shadow-xl|\.text-sm|\.bg-red-500' out.css
+      # The theme's own check task without mise, which here would also install the tools koan's root mise.toml lists.
+      - name: Compile the storybook and check it against the kit
+        run: |
+          cp geist-mono.woff2 storybook/
+          npm install --no-save --no-package-lock tailwindcss@4.3.3 @tailwindcss/cli@4.3.3
+          npx tailwindcss -i storybook/in.css -o storybook/out.css
+          node kit-check.mjs storybook
+
+  publish:
+    name: Publish koan-kit-web
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+      # A push publishes only when it changes the version; a published version is never overwritten. Not tagged: the
+      # kit's versions would collide with koan's `v*` tags, and its notes are its section of koan-kit-web/CHANGELOG.md.
+      - name: Publish a new version
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if npm view "@radiosilence/koan-kit-web@$version" version >/dev/null 2>&1; then
+            echo "$version is already published"
+            exit 0
+          fi
+          npm publish

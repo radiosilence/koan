@@ -1,0 +1,12 @@
+[tools]
+node = "24"
+"github:tailwindlabs/tailwindcss" = "4.3.3"
+
+[tasks.storybook]
+description = "Compile the storybook, every control in every state, at storybook/index.html"
+run = "cp geist-mono.woff2 storybook/ && tailwindcss -i storybook/in.css -o storybook/out.css"
+
+[tasks.check]
+description = "Compile the storybook and run kit-check over it"
+depends = ["storybook"]
+run = "node kit-check.mjs storybook"
