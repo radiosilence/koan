@@ -1,0 +1,1 @@
+- **Notarisation runs on Linux** ([#2357](https://github.com/radiosilence/koan/pull/2357)). rcodesign submits to Apple's notary and staples from ubuntu runners, so the Mac app and CLI are notarised as soon as they are signed rather than after the release has published and a macOS runner has come free. The Linux packages are attached to the release without waiting on Apple.
