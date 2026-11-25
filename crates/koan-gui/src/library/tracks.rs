@@ -559,11 +559,12 @@ impl Render for TrackBrowser {
         );
         let scale = window.scale_factor();
         let lead_width = rows::lead_width(p, self.total as usize, window);
-        // The rows on screen from the scroll's offset, rows being one height.
+        // The rows on screen from the scroll's offset, rows being one height;
+        // none above the first, however far a scroll went past the top.
         let (offset, viewport) = {
             let state = self.scroll.0.borrow();
             (
-                -f32::from(state.base_handle.offset().y),
+                (-f32::from(state.base_handle.offset().y)).max(0.0),
                 f32::from(state.base_handle.bounds().size.height),
             )
         };
@@ -608,7 +609,6 @@ impl Render for TrackBrowser {
         } else {
             Pixels::ZERO
         };
-        let scrolled = self.scroll.0.borrow().base_handle.offset().y;
         let entity = cx.entity_id();
         // A phone's bar names the page: its list leads with the filter field
         // alone.
@@ -704,7 +704,8 @@ impl Render for TrackBrowser {
                     .children(away_header.map(|header| {
                         crate::components::scrolls_away(
                             header,
-                            scrolled + above,
+                            &self.scroll,
+                            above,
                             self.header_height.clone(),
                             entity,
                         )

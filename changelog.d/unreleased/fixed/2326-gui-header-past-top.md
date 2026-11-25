@@ -1,0 +1,1 @@
+- **Page headers stay on their rows.** Scrolling past the top of the albums, artists or tracks list with a mouse wheel or a trackpad no longer leaves the page's title and count drawn over the first row until the page next redraws.
