@@ -17,9 +17,6 @@ final class PlayerModel {
     @ObservationIgnored let mirror: EngineMirror
 
     /// Which queue rows are selected.
-    ///
-    /// Lives on the model rather than in the view because the Edit menu acts on
-    /// it, and a menu can't reach a view's `@State`.
     var queueSelection: Set<String> = []
 
     /// Set while the user drags the seek head, so the engine's own position
@@ -61,7 +58,6 @@ final class PlayerModel {
 
     func start() async {
         refreshDevices()
-        followDevices()
         followSession()
         // A renderer plays from a URL this process serves, which goes with
         // it: stop it rather than leave it to play out and stall. The session
@@ -473,11 +469,6 @@ final class PlayerModel {
         }
     }
 
-    /// Re-reads the outputs whenever CoreAudio's list of devices changes, so a
-    /// DAC plugged in after launch can be picked without a restart.
-    private func followDevices() {
-    }
-
     func setDevice(_ name: String?) {
         attempt {
             if let name { try await self.engine.setDevice(name: name) } else { try await self.engine.clearDevice() }
@@ -645,44 +636,7 @@ final class PlayerModel {
         )
     }
 
-    // MARK: - Edit actions
-    //
-    // Wired to the standard Edit menu, so ⌘A/⌘C/⌘X/⌘V/Delete mean what they
-    // mean everywhere else rather than being decorative.
-
-    func removeSelected() {
-        remove(itemIds: Array(queueSelection))
-        queueSelection = []
-    }
-
-    /// Copies as both a koan payload and plain text: the first lets it be
-    /// pasted back into the queue, the second makes it useful anywhere else.
-    func copySelection() {
-        let items = queue.filter { queueSelection.contains($0.queueItemId) }
-        guard !items.isEmpty else { return }
-        Pasteboard.write(
-            trackIds: items.compactMap(\.trackId),
-            text: items.map { "\($0.artistCredit.text) — \($0.title)" }.joined(separator: "\n")
-        )
-    }
-
-    func cutSelection() {
-        copySelection()
-        removeSelected()
-    }
-
-    /// Pastes after the selection if there is one, otherwise appends.
-    func paste() {
-        let ids = Pasteboard.readTrackIds()
-        guard !ids.isEmpty else { return }
-        if let anchor = queue.last(where: { queueSelection.contains($0.queueItemId) }) {
-            mutate { _ = try await $0.insertAfter(trackIds: ids, afterQueueItemId: anchor.queueItemId) }
-        } else {
-            enqueue(trackIds: ids)
-        }
-    }
-
-    /// Index files dropped from Finder into the library, then queue them.
+    /// Index files into the library, then queue them.
     ///
     /// They are indexed where they lie rather than copied anywhere: a drop is
     /// "play this", and giving the files library rows is what lets organize
@@ -708,15 +662,6 @@ final class PlayerModel {
                 lastError = first
             }
             enqueue(trackIds: summary.trackIds)
-        }
-    }
-
-    /// Queue dropped playables. Order is preserved: dropping a selection of
-    /// albums queues them in the order they were dragged.
-    func acceptDrop(_ dropped: [PlayableTransfer], playImmediately: Bool = false) {
-        guard !dropped.isEmpty else { return }
-        dropped.withSources(using: engine) { sources in
-            self.queue(sources, playImmediately ? .replace(startAt: 0, shuffled: false) : .append)
         }
     }
 
@@ -752,18 +697,8 @@ final class PlayerModel {
         }
     }
 
-    /// The Mac losing focus: written here only if it moved since last
-    /// written, a seek while paused say, so a Mac that quits without asking
-    /// (automatic termination, a force quit) loses nothing. Never the server:
-    /// that is for quitting.
-    func saveIfChanged() async {
-        guard saved != Saved(self) else { return }
-        await saveSession()
-    }
-
-    /// The app is leaving: an iPhone going to the background, a Mac quitting.
-    /// The session here, and the queue on the server when this device keeps
-    /// it there.
+    /// The app is going to the background. The session here, and the queue
+    /// on the server when this device keeps it there.
     func saveOnLeaving() async {
         await saveSession()
         await engine.saveServerQueueNow()
