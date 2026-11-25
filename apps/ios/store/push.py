@@ -162,7 +162,13 @@ def attach(detail_id, file):
 def settle(submission_id):
     """Wait for a cancelled submission to finish cancelling."""
     for _ in range(60):
-        state = call("GET", f"/v1/reviewSubmissions/{submission_id}")["data"]["attributes"]["state"]
+        # Right after the cancel the submission can answer 404 for a while.
+        try:
+            state = call("GET", f"/v1/reviewSubmissions/{submission_id}")["data"]["attributes"]["state"]
+        except SystemExit as e:
+            if ": 404" not in str(e):
+                raise
+            state = "NOT_FOUND"
         if state == "COMPLETE":
             return
         time.sleep(5)
