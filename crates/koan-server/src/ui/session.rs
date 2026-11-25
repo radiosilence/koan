@@ -120,7 +120,7 @@ pub(super) async fn login(
     }
     match authenticate(&s.auth, &f.username, &f.password, None, from).await {
         Ok(SignedIn::Session(_, access, refresh)) => signed_in(&s, next, &access, &refresh),
-        Ok(SignedIn::NeedsSecond(user)) => {
+        Ok(SignedIn::NeedsSecond { user, .. }) => {
             use koan_auth::second_factor::Purpose;
             match s
                 .auth
@@ -300,6 +300,10 @@ pub(super) async fn second(
                 StatusCode::TOO_MANY_REQUESTS => {
                     "Too many wrong answers for this account. Try again in a minute."
                 }
+                StatusCode::LOCKED => {
+                    "Too many wrong codes in a row. Sign in with a passkey, or ask an admin to turn two-step sign-in off."
+                }
+                StatusCode::CONFLICT => "This server's address takes no security keys. Use a code.",
                 StatusCode::GONE => {
                     return html(
                         StatusCode::UNAUTHORIZED,
@@ -320,7 +324,9 @@ pub(super) async fn second(
                 .tickets()
                 .get(&ticket, koan_auth::second_factor::Purpose::SignIn);
             match held {
-                Some(held) if status != StatusCode::TOO_MANY_REQUESTS => {
+                Some(held)
+                    if status != StatusCode::TOO_MANY_REQUESTS && status != StatusCode::LOCKED =>
+                {
                     second_step(&s, next, &ticket, &held, Some(message)).await
                 }
                 _ => html(status, pages::login(&s, next, Some(message))),

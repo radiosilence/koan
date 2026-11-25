@@ -103,6 +103,13 @@ const MIGRATIONS: &[&str] = &[
     );
 
     CREATE INDEX IF NOT EXISTS idx_recovery_codes_user ON recovery_codes(user_id);
+
+    -- Wrong second factors in a row, which only a right one or turning
+    -- two-step sign-in off clears: see `second_factor::MAX_MISSES`.
+    CREATE TABLE IF NOT EXISTS second_factor_misses (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        count   INTEGER NOT NULL
+    );
 ",
 ];
 

@@ -27,6 +27,10 @@ pub struct PasswordVerifier {
     /// apart, so that loading the sign-in page many times cannot push out a
     /// sign-in waiting on its second factor.
     passkeys: koan_auth::second_factor::Tickets,
+    /// Security keys being registered from the Account page, apart for the
+    /// same reason: a signed-in account starting many cannot push out others'
+    /// sign-ins.
+    registrations: koan_auth::second_factor::Tickets,
 }
 
 impl PasswordVerifier {
@@ -36,6 +40,7 @@ impl PasswordVerifier {
             inner: koan_auth::password::Verifier::new(),
             tickets: Default::default(),
             passkeys: Default::default(),
+            registrations: Default::default(),
         }
     }
 
@@ -45,6 +50,10 @@ impl PasswordVerifier {
 
     pub(crate) fn passkeys(&self) -> &koan_auth::second_factor::Tickets {
         &self.passkeys
+    }
+
+    pub(crate) fn registrations(&self) -> &koan_auth::second_factor::Tickets {
+        &self.registrations
     }
 
     /// Whether `username` has spent its failures for the minute, as far as a

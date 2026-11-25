@@ -704,7 +704,8 @@ pub fn cmd_auth_regenerate_keys(tty: Tty, yes: bool) {
     if !confirmed(
         tty,
         yes,
-        "This will invalidate ALL existing tokens. Continue?",
+        "This will invalidate ALL existing tokens, and turn off every authenticator app \
+         (two-step sign-in), whose secrets are sealed under the key. Continue?",
     ) {
         println!("Aborted.");
         return;
@@ -723,6 +724,34 @@ pub fn cmd_auth_regenerate_keys(tty: Tty, yes: bool) {
         }
         Err(e) => {
             eprintln!("{} Failed to generate keypair: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+
+    // The new key opens no authenticator app's secret: each would answer
+    // every right code as wrong. Retired here, said aloud.
+    let db = open_db();
+    match koan_core::auth::second_factor::forget_totp(&db.conn) {
+        Ok(users) if users.is_empty() => {}
+        Ok(users) => {
+            let names: Vec<String> = users
+                .iter()
+                .filter_map(|&id| auth_queries::get_user_by_id(&db.conn, id).ok().flatten())
+                .map(|u| u.username)
+                .collect();
+            println!(
+                "{} Authenticator apps turned off for: {}. Those accounts set one up again on the \
+                 Account page; any with a passkey or security key keep it.",
+                "!".yellow().bold(),
+                names.join(", ")
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "{} Authenticator apps could not be turned off: {e}. Their codes no longer work; \
+                 turn two-step sign-in off for those accounts on the Users page.",
+                "✗".red().bold()
+            );
             std::process::exit(1);
         }
     }

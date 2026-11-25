@@ -236,13 +236,18 @@ impl SubsonicError {
 
     /// The password was right, and the account wants its second factor too.
     /// `code` is what `koanSignIn` was given, if the request was one: empty
-    /// when it was given none.
-    fn second_factor(code: Option<&str>) -> Self {
+    /// when it was given none. `totp` is whether the account has an
+    /// authenticator app; without one, only its keys or a recovery code will
+    /// do, and an app can use no key.
+    fn second_factor(code: Option<&str>, totp: bool) -> Self {
         Self::auth(
             SubsonicErrorCode::SecondFactor,
             match code.map(str::trim) {
-                Some("") => {
+                Some("") if totp => {
                     "This account uses two-step sign-in: give a code from your authenticator app, or a recovery code"
+                }
+                Some("") => {
+                    "This account's second factor is a security key, which apps cannot use: sign in with an invite or pairing from a signed-in device, or an API key. A recovery code works too, once each"
                 }
                 Some(_) => "Wrong code",
                 None => {
@@ -1091,30 +1096,34 @@ fn second_factor(
     code: Option<&str>,
 ) -> Result<(), SubsonicError> {
     let db = state.open_db()?;
-    let on = koan_auth::second_factor::enabled(&db.conn, account.id)
+    let factors = koan_auth::second_factor::factors(&db.conn, account.id)
         .map_err(|e| SubsonicError::internal(e.to_string()))?;
-    if !on {
+    if !factors.enabled() {
         return Ok(());
     }
+    let refused = || SubsonicError::second_factor(code, factors.totp);
     let Some(given) = code.filter(|c| !c.trim().is_empty()) else {
-        return Err(SubsonicError::second_factor(code));
+        return Err(refused());
     };
     if state.users.codes_spent(&account.username) {
         return Err(SubsonicError::generic(
             "Too many wrong codes for this account; try again in a minute",
         ));
     }
-    let key = state
-        .totp_key
-        .as_ref()
-        .ok_or_else(|| SubsonicError::second_factor(code))?;
-    let right = koan_auth::second_factor::check_code(&db.conn, key, account.id, given)
-        .map_err(|e| SubsonicError::internal(e.to_string()))?;
-    if !right {
-        state.users.code_failed(&account.username);
-        return Err(SubsonicError::second_factor(code));
+    let key = state.totp_key.as_ref().ok_or_else(refused)?;
+    use koan_auth::second_factor::Checked;
+    match koan_auth::second_factor::check_code(&db.conn, key, account.id, given)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+    {
+        Checked::Right => Ok(()),
+        Checked::Wrong => {
+            state.users.code_failed(&account.username);
+            Err(refused())
+        }
+        Checked::Locked => Err(SubsonicError::generic(
+            "Too many wrong codes in a row: sign in to the web UI with a passkey, or ask an admin to turn two-step sign-in off",
+        )),
     }
-    Ok(())
 }
 
 /// `username`'s app passwords, checked with `matches`.

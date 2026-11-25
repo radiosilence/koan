@@ -11,6 +11,7 @@ use axum::response::{AppendHeaders, IntoResponse, Response};
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
 
+use koan_auth::second_factor::Checked;
 use koan_core::auth;
 use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries::auth as auth_queries;
@@ -373,8 +374,13 @@ pub(crate) enum SignedIn {
     /// A session: the account, a fresh access token and a stored refresh token.
     Session(auth_queries::UserRow, String, String),
     /// The password passed, and the account has a second factor that was not
-    /// given: see `koan_auth::second_factor`.
-    NeedsSecond(auth_queries::UserRow),
+    /// given: see `koan_auth::second_factor`. `totp` is whether it has an
+    /// authenticator app, without which only the web sign-in, which can use
+    /// its keys, or a recovery code will do.
+    NeedsSecond {
+        user: auth_queries::UserRow,
+        totp: bool,
+    },
 }
 
 /// What a person gave as their second factor.
@@ -463,17 +469,58 @@ fn authenticate_blocking(
     let db = state
         .open_db()
         .map_err(|(status, msg)| Box::new((status, msg).into_response()))?;
-    let second = koan_auth::second_factor::enabled(&db.conn, user.id)
+    let factors = koan_auth::second_factor::factors(&db.conn, user.id)
         .map_err(|e| internal("second factor lookup", e))?;
-    if second {
+    if factors.enabled() {
         let Some(code) = code.filter(|c| !c.trim().is_empty()) else {
-            return Ok(SignedIn::NeedsSecond(user));
+            return Ok(SignedIn::NeedsSecond {
+                user,
+                totp: factors.totp,
+            });
         };
-        check_code(state, &db.conn, &user, code)?;
+        check_code(state, &db.conn, &user, code).map_err(Missed::response)?;
     }
     state.users.signed_in(username, from);
     let (access, refresh) = open_session(state, &db.conn, &user)?;
     Ok(SignedIn::Session(user, access, refresh))
+}
+
+/// Why a second factor was not taken.
+pub(crate) enum Missed {
+    /// The answer was wrong, or the account may not answer now: it counts
+    /// against the sign-in's tries.
+    Wrong(Box<Response>),
+    /// The server could not judge it: nothing is counted.
+    Server(Box<Response>),
+}
+
+impl Missed {
+    fn response(self) -> Box<Response> {
+        match self {
+            Missed::Wrong(r) | Missed::Server(r) => r,
+        }
+    }
+}
+
+/// What a second factor's check came to, as the response to send.
+fn judged(
+    state: &AuthRouteState,
+    user: &auth_queries::UserRow,
+    checked: rusqlite::Result<Checked>,
+    wrong: &str,
+) -> Result<(), Missed> {
+    match checked {
+        Ok(Checked::Right) => Ok(()),
+        Ok(Checked::Wrong) => {
+            state.users.code_failed(&user.username);
+            Err(Missed::Wrong(refused(StatusCode::UNAUTHORIZED, wrong)))
+        }
+        Ok(Checked::Locked) => Err(Missed::Wrong(refused(
+            StatusCode::LOCKED,
+            "too many wrong codes in a row: sign in with a passkey, or ask an admin to turn two-step sign-in off",
+        ))),
+        Err(e) => Err(Missed::Server(internal("second factor check", e))),
+    }
 }
 
 /// Check a second-factor code for `user`, on the account's budget for wrong
@@ -483,28 +530,23 @@ fn check_code(
     conn: &rusqlite::Connection,
     user: &auth_queries::UserRow,
     code: &str,
-) -> Result<(), Box<Response>> {
+) -> Result<(), Missed> {
     if state.users.codes_spent(&user.username) {
-        return Err(refused(
+        return Err(Missed::Wrong(refused(
             StatusCode::TOO_MANY_REQUESTS,
             "too many wrong codes for this account; try again in a minute",
-        ));
+        )));
     }
     let key = koan_auth::second_factor::totp_key(&state.private_pem);
-    match koan_auth::second_factor::check_code(conn, &key, user.id, code) {
-        Ok(true) => Ok(()),
-        Ok(false) => {
-            state.users.code_failed(&user.username);
-            Err(refused(StatusCode::UNAUTHORIZED, "wrong code"))
-        }
-        Err(e) => Err(internal("second factor check", e)),
-    }
+    let checked = koan_auth::second_factor::check_code(conn, &key, user.id, code);
+    judged(state, user, checked, "wrong code")
 }
 
 /// Finish a sign-in that `ticket` holds, its password already passed, with
 /// the second factor: a code, or a security key's answer checked as `rp`'s.
 /// A ticket that has lapsed, or has taken too many wrong answers, is `GONE`:
-/// the password must be given again.
+/// the password must be given again. One the server failed to judge is
+/// given back untouched.
 pub(crate) async fn finish_second(
     state: &AuthRouteState,
     ticket: String,
@@ -518,57 +560,79 @@ pub(crate) async fn finish_second(
         let tickets = state.users.tickets();
         let gone = || refused(StatusCode::GONE, "sign in again");
         // Taken while it is answered, so that one answer cannot pass twice
-        // in requests racing each other; given back when it is wrong.
+        // in requests racing each other; given back unless it was right.
         let held = tickets.take(&ticket, Purpose::SignIn).ok_or_else(gone)?;
-        let db = state
-            .open_db()
-            .map_err(|(status, msg)| Box::new((status, msg).into_response()))?;
-        let user = auth_queries::get_user_by_id(&db.conn, held.user_id)
-            .map_err(|e| internal("user lookup", e))?
-            .filter(|u| u.username == held.username)
-            .ok_or_else(gone)?;
-        let checked = match answer {
-            Answer::Code(code) => check_code(&state, &db.conn, &user, &code),
-            Answer::Key(assertion) => {
-                if state.users.codes_spent(&user.username) {
-                    Err(refused(
-                        StatusCode::TOO_MANY_REQUESTS,
-                        "too many wrong answers for this account; try again in a minute",
-                    ))
-                } else {
-                    let ok = match &rp {
-                        Some(rp) => koan_auth::second_factor::check_assertion(
-                            &db.conn,
-                            rp,
-                            user.id,
-                            &held.challenge,
-                            &assertion,
-                        )
-                        .map_err(|e| internal("security key check", e))?,
-                        None => false,
-                    };
-                    if ok {
-                        Ok(())
-                    } else {
-                        state.users.code_failed(&user.username);
-                        Err(refused(
-                            StatusCode::UNAUTHORIZED,
-                            "that security key is not one of this account's",
-                        ))
-                    }
-                }
+        match answered(&state, &held, answer, rp.as_ref()) {
+            Ok(user) => {
+                state.users.signed_in(&user.username, from);
+                let session = state
+                    .open_db()
+                    .map_err(|(status, msg)| Box::new((status, msg).into_response()))
+                    .and_then(|db| open_session(&state, &db.conn, &user));
+                session.map(|(access, refresh)| (user, access, refresh))
             }
-        };
-        if let Err(e) = checked {
-            tickets.missed_answer(&ticket, held);
-            return Err(e);
+            Err(Missed::Wrong(e)) => {
+                tickets.missed_answer(&ticket, held);
+                Err(e)
+            }
+            Err(Missed::Server(e)) => {
+                tickets.give_back(&ticket, held);
+                Err(e)
+            }
         }
-        state.users.signed_in(&user.username, from);
-        let (access, refresh) = open_session(&state, &db.conn, &user)?;
-        Ok((user, access, refresh))
     })
     .await
     .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())))
+}
+
+/// The account `held` signs in, when `answer` is its second factor.
+fn answered(
+    state: &AuthRouteState,
+    held: &koan_auth::second_factor::Ticket,
+    answer: Answer,
+    rp: Option<&koan_auth::webauthn::RelyingParty>,
+) -> Result<auth_queries::UserRow, Missed> {
+    let server = |(status, msg): (StatusCode, String)| {
+        Missed::Server(Box::new((status, msg).into_response()))
+    };
+    let db = state.open_db().map_err(server)?;
+    let user = auth_queries::get_user_by_id(&db.conn, held.user_id)
+        .map_err(|e| Missed::Server(internal("user lookup", e)))?
+        .filter(|u| u.username == held.username)
+        .ok_or_else(|| Missed::Wrong(refused(StatusCode::GONE, "sign in again")))?;
+    match answer {
+        Answer::Code(code) => check_code(state, &db.conn, &user, &code)?,
+        Answer::Key(assertion) => {
+            // A server whose address no longer takes keys refuses the
+            // answer without counting it against the person.
+            let Some(rp) = rp else {
+                return Err(Missed::Server(refused(
+                    StatusCode::CONFLICT,
+                    "this server's address takes no security keys",
+                )));
+            };
+            if state.users.codes_spent(&user.username) {
+                return Err(Missed::Wrong(refused(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "too many wrong answers for this account; try again in a minute",
+                )));
+            }
+            let checked = koan_auth::second_factor::check_assertion(
+                &db.conn,
+                rp,
+                user.id,
+                &held.challenge,
+                &assertion,
+            );
+            judged(
+                state,
+                &user,
+                checked,
+                "that security key is not one of this account's",
+            )?;
+        }
+    }
+    Ok(user)
 }
 
 /// Sign in with a passkey alone, answering the challenge `ticket` holds: the
@@ -694,11 +758,16 @@ async fn login(
         Ok(SignedIn::Session(user, access, refresh)) => (user, access, refresh),
         // Asked for with the password again: a client without a page keeps
         // nothing between the two.
-        Ok(SignedIn::NeedsSecond(_)) => {
+        Ok(SignedIn::NeedsSecond { totp, .. }) => {
+            let message = if totp {
+                "this account needs a second factor: send `code` with a code from its authenticator app or a recovery code"
+            } else {
+                "this account's second factor is a security key, which only the web sign-in can use: sign in with an API key, or send a recovery code as `code`"
+            };
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({
-                    "message": "this account needs a second factor: send `code` with a code from its authenticator app or a recovery code",
+                    "message": message,
                     "second_factor": true,
                 })),
             )

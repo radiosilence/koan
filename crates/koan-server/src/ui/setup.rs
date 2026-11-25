@@ -140,7 +140,7 @@ pub(super) async fn create(
         )
             .into_response(),
         // Made, but not signed in: the sign-in form will do it.
-        Ok(SignedIn::NeedsSecond(_)) | Err(_) => see_other("/login"),
+        Ok(SignedIn::NeedsSecond { .. }) | Err(_) => see_other("/login"),
     }
 }
 

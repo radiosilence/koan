@@ -434,8 +434,7 @@ fn public_key(cose: &[u8]) -> Result<PublicKey, WebAuthnError> {
     }
 }
 
-/// An authenticator played in software, for tests here and in the services
-/// built on this crate.
+/// An authenticator played in software, for this crate's tests.
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;

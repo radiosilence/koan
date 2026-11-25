@@ -49,10 +49,9 @@ type Descriptor = z.infer<typeof Descriptor>;
 type RequestJson = z.infer<typeof RequestJson>;
 type CreationJson = z.infer<typeof CreationJson>;
 
-const descriptors = (list: Descriptor[]) =>
-  list.map((d): PublicKeyCredentialDescriptor => ({ type: d.type, id: fromB64(d.id) }));
+const descriptors = (list: Descriptor[]) => list.map((d) => ({ type: d.type, id: fromB64(d.id) }));
 
-const requestOptions = (o: RequestJson): PublicKeyCredentialRequestOptions => ({
+const requestOptions = (o: RequestJson) => ({
   rpId: o.rpId,
   challenge: fromB64(o.challenge),
   timeout: o.timeout,
@@ -60,7 +59,7 @@ const requestOptions = (o: RequestJson): PublicKeyCredentialRequestOptions => ({
   userVerification: o.userVerification,
 });
 
-const creationOptions = (o: CreationJson): PublicKeyCredentialCreationOptions => ({
+const creationOptions = (o: CreationJson) => ({
   rp: o.rp,
   user: { id: fromB64(o.user.id), name: o.user.name, displayName: o.user.displayName },
   challenge: fromB64(o.challenge),
@@ -153,14 +152,14 @@ async function signIn(form: HTMLFormElement, conditional = false) {
 }
 
 // On the sign-in page, the browser's saved passkeys are offered at once,
-// beside the saved passwords, where the browser can.
+// beside the saved passwords, where the browser can. Quietly: nobody asked
+// for this one, so a failure (no passkeys, a busy server) says nothing, and
+// the button is still there to ask outright.
 const login = document.querySelector<HTMLFormElement>("form[data-passkey-login]");
 if (login && typeof PublicKeyCredential !== "undefined" && "isConditionalMediationAvailable" in PublicKeyCredential) {
   PublicKeyCredential.isConditionalMediationAvailable().then((available) => {
     if (available) {
-      signIn(login, true).catch((e) => {
-        if (!aborted(e)) say(login, failure(e));
-      });
+      signIn(login, true).catch(() => {});
     }
   });
 }

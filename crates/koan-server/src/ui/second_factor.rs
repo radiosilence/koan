@@ -384,7 +384,7 @@ pub(super) async fn begin_key(
     let Ok((ticket, held)) =
         s.auth
             .users
-            .tickets()
+            .registrations()
             .open(user.user_id, &user.username, Purpose::Register)
     else {
         return json_error(StatusCode::INTERNAL_SERVER_ERROR, "That did not work.");
@@ -420,7 +420,7 @@ pub(super) async fn finish_key(
     if let Some(why) = refused(&s, &user) {
         return json_error(StatusCode::FORBIDDEN, why);
     }
-    let tickets = s.auth.users.tickets();
+    let tickets = s.auth.users.registrations();
     let held = tickets
         .get(&req.ticket, Purpose::Register)
         .filter(|t| t.user_id == user.user_id);

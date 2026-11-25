@@ -90,6 +90,7 @@ pub fn delete_user(conn: &Connection, user_id: i64) -> Result<bool, rusqlite::Er
             "totp",
             "security_keys",
             "recovery_codes",
+            "second_factor_misses",
         ] {
             conn.execute(
                 &format!("DELETE FROM {table} WHERE user_id = ?1"),

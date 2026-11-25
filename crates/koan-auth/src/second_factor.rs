@@ -14,7 +14,14 @@
 //!
 //! Authenticator app secrets are sealed as app passwords are, under a key
 //! derived from the server's signing key ([`totp_key`]) and bound to the
-//! account. Recovery codes are random and kept as their SHA-256.
+//! account, so a new signing key retires them ([`forget_totp`]). Recovery
+//! codes are random and kept as their SHA-256.
+//!
+//! A per-minute budget alone would let someone holding the password guess
+//! codes for ever, a few a minute. So wrong answers in a row are counted per
+//! account, and past [`MAX_MISSES`] codes and keys are refused until a right
+//! one (a passkey still signs in) or an admin turns two-step sign-in off, as
+//! NIST SP 800-63B §5.2.2 asks.
 
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
@@ -29,6 +36,20 @@ use crate::webauthn::{self, Assertion, NewCredential, RelyingParty, WebAuthnErro
 
 /// How many recovery codes an account is given at a time.
 pub const RECOVERY_CODES: usize = 10;
+
+/// Wrong second factors in a row after which an account's codes and keys are
+/// refused. NIST SP 800-63B §5.2.2's ceiling: against three codes a step,
+/// the odds of a guess getting through before it are about one in 3,000.
+pub const MAX_MISSES: i64 = 100;
+
+/// How a second factor was taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Checked {
+    Right,
+    Wrong,
+    /// [`MAX_MISSES`] wrong in a row: nothing was checked.
+    Locked,
+}
 
 /// How many security keys one account may register.
 pub const MAX_KEYS: i64 = 20;
@@ -247,7 +268,14 @@ fn check_totp(
             |r| r.get(0),
         )
         .optional()?;
-    let Some(secret) = sealed.and_then(|s| crate::app_passwords::open(key, user_id, &s)) else {
+    let Some(sealed) = sealed else {
+        return Ok(false);
+    };
+    let Some(secret) = crate::app_passwords::open(key, user_id, &sealed) else {
+        log::warn!(
+            "account {user_id}: its authenticator app's secret does not open under this signing key; \
+             a regenerated keypair retires them (second_factor::forget_totp)"
+        );
         return Ok(false);
     };
     let Some(step) = crate::totp::matching_step(&secret, code, now) else {
@@ -360,8 +388,21 @@ pub fn remove_key(conn: &Connection, user_id: i64, id: i64) -> rusqlite::Result<
     })
 }
 
-/// Check an assertion against the account's key that made it, and move the
-/// key's counter on.
+/// A security key's answer to a sign-in's challenge, checked against the
+/// account's key that made it, whose counter moves on. Counted toward
+/// [`MAX_MISSES`] as a code is.
+pub fn check_assertion(
+    conn: &Connection,
+    rp: &RelyingParty,
+    user_id: i64,
+    challenge: &[u8],
+    assertion: &Assertion,
+) -> rusqlite::Result<Checked> {
+    counted(conn, user_id, |conn| {
+        check_key(conn, rp, user_id, challenge, assertion)
+    })
+}
+
 fn check_key(
     conn: &Connection,
     rp: &RelyingParty,
@@ -460,33 +501,64 @@ fn spend_recovery_code(conn: &Connection, user_id: i64, code: &str) -> rusqlite:
 // ---------------------------------------------------------------------------
 
 /// What a person typed as their second factor: a code from the authenticator
-/// app or, longer, a recovery code. Either is spent by checking it.
+/// app or, longer, a recovery code. Either is spent by checking it, and
+/// counted toward [`MAX_MISSES`] when wrong.
 pub fn check_code(
     conn: &Connection,
     key: &[u8; 32],
     user_id: i64,
     code: &str,
-) -> rusqlite::Result<bool> {
-    let compact: String = code
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != '-')
-        .collect();
-    if compact.len() == crate::totp::DIGITS as usize {
-        check_totp(conn, key, user_id, &compact, crate::clock::unix_secs())
+) -> rusqlite::Result<Checked> {
+    counted(conn, user_id, |conn| {
+        let compact: String = code
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '-')
+            .collect();
+        if compact.len() == crate::totp::DIGITS as usize {
+            check_totp(conn, key, user_id, &compact, crate::clock::unix_secs())
+        } else {
+            spend_recovery_code(conn, user_id, &compact)
+        }
+    })
+}
+
+/// Run `check` unless the account is locked, and count what it found: a
+/// right answer clears the count, a wrong one adds to it.
+fn counted(
+    conn: &Connection,
+    user_id: i64,
+    check: impl FnOnce(&Connection) -> rusqlite::Result<bool>,
+) -> rusqlite::Result<Checked> {
+    let misses: i64 = conn
+        .query_row(
+            "SELECT count FROM second_factor_misses WHERE user_id = ?1",
+            [user_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or(0);
+    if misses >= MAX_MISSES {
+        return Ok(Checked::Locked);
+    }
+    if check(conn)? {
+        clear_misses(conn, user_id)?;
+        Ok(Checked::Right)
     } else {
-        spend_recovery_code(conn, user_id, &compact)
+        conn.execute(
+            "INSERT INTO second_factor_misses (user_id, count) VALUES (?1, 1)
+             ON CONFLICT (user_id) DO UPDATE SET count = count + 1",
+            [user_id],
+        )?;
+        Ok(Checked::Wrong)
     }
 }
 
-/// A security key's answer to a sign-in's challenge.
-pub fn check_assertion(
-    conn: &Connection,
-    rp: &RelyingParty,
-    user_id: i64,
-    challenge: &[u8],
-    assertion: &Assertion,
-) -> rusqlite::Result<bool> {
-    check_key(conn, rp, user_id, challenge, assertion)
+fn clear_misses(conn: &Connection, user_id: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "DELETE FROM second_factor_misses WHERE user_id = ?1",
+        [user_id],
+    )?;
+    Ok(())
 }
 
 /// Sign in with a passkey alone: the account whose key made `assertion`, when
@@ -526,6 +598,11 @@ pub fn passkey_sign_in(
                  WHERE id = ?1 AND sign_count = ?2",
                 params![id, count, now, crate::clock::unix_secs()],
             )?;
+            // The account's own passkey: whoever was guessing its codes was
+            // not its owner, who need not wait on an admin.
+            if n == 1 {
+                clear_misses(conn, user_id)?;
+            }
             Ok((n == 1).then_some(user_id))
         }
         Err(e) => {
@@ -558,6 +635,7 @@ fn removing(
 
 fn ended(conn: &Connection, user_id: i64) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM recovery_codes WHERE user_id = ?1", [user_id])?;
+    clear_misses(conn, user_id)?;
     crate::sessions::revoke_all_user_tokens(conn, user_id)?;
     Ok(())
 }
@@ -576,6 +654,31 @@ pub fn turn_off(conn: &Connection, user_id: i64) -> rusqlite::Result<bool> {
     })?;
     account_changed(user_id);
     Ok(had)
+}
+
+/// Drop every authenticator app's secret, for a server that has regenerated
+/// its signing key, under which they were sealed and which they no longer
+/// open. Accounts left with no second factor have it turned off, as
+/// [`turn_off`] does; those with keys keep them. Returns the accounts that
+/// had an authenticator app.
+pub fn forget_totp(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
+    let users = crate::sql::atomically(conn, || {
+        let users: Vec<i64> = conn
+            .prepare("SELECT user_id FROM totp WHERE confirmed = 1 ORDER BY user_id")?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        conn.execute("DELETE FROM totp", [])?;
+        for &user_id in &users {
+            if !enabled(conn, user_id)? {
+                ended(conn, user_id)?;
+            }
+        }
+        Ok::<_, rusqlite::Error>(users)
+    })?;
+    for &user_id in &users {
+        account_changed(user_id);
+    }
+    Ok(users)
 }
 
 // ---------------------------------------------------------------------------
@@ -664,17 +767,6 @@ impl Tickets {
         (ticket.purpose == purpose).then_some(ticket)
     }
 
-    /// Count a wrong answer against `id`, dropping it at the limit.
-    pub fn missed(&self, id: &str) {
-        let mut open = self.open.lock();
-        if let Some(ticket) = open.get_mut(id) {
-            ticket.tries += 1;
-            if ticket.tries >= TICKET_TRIES {
-                open.pop(id);
-            }
-        }
-    }
-
     /// End the ceremony `id`: its challenge is used.
     pub fn close(&self, id: &str) {
         self.open.lock().pop(id);
@@ -694,7 +786,15 @@ impl Tickets {
     /// counted against its tries.
     pub fn missed_answer(&self, id: &str, mut ticket: Ticket) {
         ticket.tries += 1;
-        if ticket.tries < TICKET_TRIES && ticket.expires > Instant::now() {
+        if ticket.tries < TICKET_TRIES {
+            self.give_back(id, ticket);
+        }
+    }
+
+    /// Give back a ceremony [`Tickets::take`] took and could not answer, for
+    /// the server's own failure: the person's answer was not judged.
+    pub fn give_back(&self, id: &str, ticket: Ticket) {
+        if ticket.expires > Instant::now() {
             self.open.lock().put(id.to_owned(), ticket);
         }
     }
@@ -779,9 +879,15 @@ mod tests {
                 .is_some()
         );
         let assertion = device.get(&rp(), b"sign in");
-        assert!(check_assertion(conn, &rp(), ann, b"sign in", &assertion).unwrap());
+        assert_eq!(
+            check_assertion(conn, &rp(), ann, b"sign in", &assertion).unwrap(),
+            Checked::Right
+        );
         // The same assertion again is refused: the counter has moved on.
-        assert!(!check_assertion(conn, &rp(), ann, b"sign in", &assertion).unwrap());
+        assert_eq!(
+            check_assertion(conn, &rp(), ann, b"sign in", &assertion).unwrap(),
+            Checked::Wrong
+        );
     }
 
     #[test]
@@ -798,11 +904,14 @@ mod tests {
         )
         .unwrap();
         let code = code_now(&secret);
-        assert!(check_code(conn, &key, ann, &code).unwrap());
-        assert!(!check_code(conn, &key, ann, &code).unwrap());
+        assert_eq!(check_code(conn, &key, ann, &code).unwrap(), Checked::Right);
+        assert_eq!(check_code(conn, &key, ann, &code).unwrap(), Checked::Wrong);
         // Another server's key does not open the secret.
         let other = totp_key(b"another key");
-        assert!(!check_code(conn, &other, ann, &code).unwrap());
+        assert_eq!(
+            check_code(conn, &other, ann, &code).unwrap(),
+            Checked::Wrong
+        );
     }
 
     #[test]
@@ -813,9 +922,15 @@ mod tests {
         let codes = replace_recovery_codes(conn, ann).unwrap();
         assert_eq!(codes[0].len(), 17);
         let typed = codes[0].replace('-', " ").to_uppercase();
-        assert!(check_code(conn, &key, ann, &typed).unwrap());
-        assert!(!check_code(conn, &key, ann, &codes[0]).unwrap());
-        assert!(check_code(conn, &key, ann, &codes[1]).unwrap());
+        assert_eq!(check_code(conn, &key, ann, &typed).unwrap(), Checked::Right);
+        assert_eq!(
+            check_code(conn, &key, ann, &codes[0]).unwrap(),
+            Checked::Wrong
+        );
+        assert_eq!(
+            check_code(conn, &key, ann, &codes[1]).unwrap(),
+            Checked::Right
+        );
         assert_eq!(factors(conn, ann).unwrap().recovery_left, 8);
     }
 
@@ -902,13 +1017,72 @@ mod tests {
     }
 
     #[test]
+    fn wrong_answers_in_a_row_lock_codes_until_a_right_one_or_turning_it_off() {
+        let conn = &test_db();
+        let key = totp_key(b"a signing key");
+        let ann = create_user(conn, "ann", "a password", Role::User).unwrap();
+        let codes = replace_recovery_codes(conn, ann).unwrap();
+        for _ in 0..MAX_MISSES - 1 {
+            assert_eq!(
+                check_code(conn, &key, ann, "000000").unwrap(),
+                Checked::Wrong
+            );
+        }
+        // A right answer before the limit clears the count.
+        assert_eq!(
+            check_code(conn, &key, ann, &codes[0]).unwrap(),
+            Checked::Right
+        );
+        for _ in 0..MAX_MISSES {
+            assert_eq!(
+                check_code(conn, &key, ann, "000000").unwrap(),
+                Checked::Wrong
+            );
+        }
+        // Locked: even a right code is not checked, nor spent.
+        assert_eq!(
+            check_code(conn, &key, ann, &codes[1]).unwrap(),
+            Checked::Locked
+        );
+        assert_eq!(factors(conn, ann).unwrap().recovery_left, 9);
+        // An admin turning it off clears the lock with everything else.
+        turn_off(conn, ann).unwrap();
+        let codes = replace_recovery_codes(conn, ann).unwrap();
+        assert_eq!(
+            check_code(conn, &key, ann, &codes[0]).unwrap(),
+            Checked::Right
+        );
+    }
+
+    #[test]
+    fn a_new_signing_key_retires_authenticator_apps() {
+        let conn = &test_db();
+        let key = totp_key(b"a signing key");
+        let ann = create_user(conn, "ann", "a password", Role::User).unwrap();
+        let bob = create_user(conn, "bob", "b password", Role::User).unwrap();
+        for id in [ann, bob] {
+            let secret = begin_totp(conn, &key, id).unwrap();
+            confirm_totp(conn, &key, id, &code_now(&secret)).unwrap();
+        }
+        let made =
+            webauthn::register(&rp(), b"c", &Authenticator::new().create(&rp(), b"c")).unwrap();
+        add_key(conn, bob, "yubikey", &made).unwrap();
+        assert_eq!(forget_totp(conn).unwrap(), [ann, bob]);
+        // Ann had nothing else: off. Bob keeps his key, and his codes.
+        assert_eq!(factors(conn, ann).unwrap(), Factors::default());
+        let bob_now = factors(conn, bob).unwrap();
+        assert!(!bob_now.totp && bob_now.keys.len() == 1 && bob_now.recovery_left == 10);
+    }
+
+    #[test]
     fn a_ticket_is_for_one_purpose_and_a_few_tries() {
         let tickets = Tickets::default();
         let (id, ticket) = tickets.open(1, "ann", Purpose::SignIn).unwrap();
         assert_eq!(tickets.get(&id, Purpose::SignIn), Some(ticket));
         assert_eq!(tickets.get(&id, Purpose::Register), None);
         for _ in 0..TICKET_TRIES {
-            tickets.missed(&id);
+            let taken = tickets.take(&id, Purpose::SignIn).unwrap();
+            tickets.missed_answer(&id, taken);
         }
         assert_eq!(tickets.get(&id, Purpose::SignIn), None);
         // Taken, it cannot be taken again until given back.

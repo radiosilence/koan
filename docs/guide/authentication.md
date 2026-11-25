@@ -251,7 +251,7 @@ Turning it on ends every session, API key and app password the account had, as a
 | Door | With two-step sign-in |
 | --- | --- |
 | Web UI sign-in | The password, then a code, a security key or a recovery code. A passkey signs in on its own, with no username or password. |
-| The apps and the terminal UI (`koanSignIn`) | The password, then a code or a recovery code; the app asks for one when the server says so. The device keeps the API key it is given, as before. |
+| The apps and the terminal UI (`koanSignIn`) | The password, then a code or a recovery code; the app asks for one when the server says so. The device keeps the API key it is given, as before. An account whose only second factor is a passkey or security key, which apps cannot use, signs its apps in with an invite or pairing from a signed-in device, or an API key, rather than spending recovery codes. |
 | `koan auth login`, `POST /auth/login` | The password and `code`. Without one, `/auth/login` answers 401 with `"second_factor": true`, and the CLI asks (or reads `KOAN_CODE`). |
 | Subsonic `p=` | Refused with error 45. A Subsonic client signs in with an API key or an app password instead. |
 | API keys, app passwords, invites, pairing, refresh tokens, OAuth | Unchanged: each already proves possession of something handed out. OAuth signs in through the web UI, so it asks there. |
@@ -283,6 +283,8 @@ Either ends the account's browser sessions. The demo server's shared account can
 ### Limits
 
 A code is checked only after the password has passed. Each username gets five wrong codes a minute, from every network, the account's own included: whoever is guessing already has the password. Wrong codes count against the account's password budget too. A sign-in waiting on its second step lasts five minutes and five wrong answers, after which the password is asked again.
+
+A per-minute budget alone would let someone with the password guess for ever, so wrong codes and keys are also counted in a row, per account, in the database. After 100 (NIST SP 800-63B §5.2.2's ceiling, against which a guesser's odds are about one in 3,000), codes and keys are refused until the owner signs in with a passkey, which clears the count, or an admin turns two-step sign-in off. A right answer before then clears it too.
 
 ## Sharing devices between accounts
 
@@ -415,7 +417,9 @@ An admin who has also lost their [two-step sign-in](#two-step-sign-in) adds `--r
 ```bash
 koan auth regenerate-keys
 # Generates new Ed25519 keypair. All existing tokens are invalidated.
-# Users keep their passwords but must re-login.
+# Users keep their passwords but must re-login. Authenticator apps are sealed
+# under the key, so they are turned off and named: those accounts set one up
+# again. Passkeys and security keys are unaffected.
 ```
 
 **Disable auth entirely:**
