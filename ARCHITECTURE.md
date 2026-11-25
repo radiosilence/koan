@@ -6,9 +6,13 @@ Developer manual for working on koan. Read this before touching the code.
 
 ```
 crates/
+├── koan-auth/     Library crate, MIT. Accounts and signing in: passwords,
+│                  sessions, API keys, invites, limits, the OAuth server's
+│                  protocol, pairing. Shared with other services; no pages.
+│
 ├── koan-core/     Library crate. Audio engine, player, database, indexer,
-│                  format strings, file organization, remote client, auth.
-│                  No UI code, no terminal deps.
+│                  format strings, file organization, remote client.
+│                  Re-exports koan-auth. No UI code, no terminal deps.
 │
 ├── koan-tui/      Library crate. Ratatui TUI, visualizers, media keys,
 │                  transport. Exports `run_tui()`.
@@ -16,7 +20,7 @@ crates/
 │
 ├── koan-server/   Library crate. GraphQL (async-graphql + axum),
 │                  Subsonic REST API, MCP server.
-│                  Depends on koan-core.
+│                  Depends on koan-core and koan-auth.
 │
 ├── koan-runtime/  Library crate. KoanEngine, the facade every app drives:
 │                  offload lanes, state slices, queue patches, sharing.

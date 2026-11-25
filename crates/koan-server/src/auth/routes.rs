@@ -1,8 +1,7 @@
 //! Auth HTTP routes: login, refresh, logout.
 
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{ConnectInfo, State};
@@ -26,70 +25,12 @@ const REFRESH_COOKIE_PATH: &str = "/auth";
 /// the refresh cookie clears this one too.
 const STALE_REFRESH_COOKIE_PATH: &str = "/auth/refresh";
 
-/// Fixed-window per-IP cap on requests. By default, the cap on login attempts:
-///
-/// Argon2 is tuned to cost ~19MiB and real CPU per verification, which is
-/// correct for resisting cracking and ruinous when anyone may trigger it at
-/// will: a few hundred concurrent logins exhaust memory and starve every other
-/// request. The window is coarse on purpose — it bounds cost, it is not a quota.
-const LOGIN_WINDOW_SECS: u64 = 60;
-const LOGIN_MAX_PER_WINDOW: u32 = 10;
-/// Above this many tracked IPs, drop stale windows before inserting more.
-const TRACKED_IPS_MAX: usize = 4096;
+pub use koan_auth::limit::{RateLimiter, network};
+pub use koan_auth::net::ForwardedFrom;
 
-pub struct RateLimiter {
-    windows: Mutex<HashMap<IpAddr, (u64, u32)>>,
-    window_secs: u64,
-    max: u32,
-}
-
-impl Default for RateLimiter {
-    fn default() -> Self {
-        Self::new(LOGIN_WINDOW_SECS, LOGIN_MAX_PER_WINDOW)
-    }
-}
-
-impl RateLimiter {
-    pub fn new(window_secs: u64, max: u32) -> Self {
-        Self {
-            windows: Mutex::default(),
-            window_secs,
-            max,
-        }
-    }
-
-    /// Returns false when `ip`'s network (see [`network`]) has spent its
-    /// allowance for the current window.
-    pub(crate) fn allow(&self, ip: IpAddr) -> bool {
-        let now = koan_core::clock::unix_secs() as u64;
-        let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-
-        if windows.len() > TRACKED_IPS_MAX {
-            windows.retain(|_, (start, _)| now.saturating_sub(*start) < self.window_secs);
-        }
-
-        let entry = windows.entry(network(ip)).or_insert((now, 0));
-        if now.saturating_sub(entry.0) >= self.window_secs {
-            *entry = (now, 0);
-        }
-        entry.1 += 1;
-        entry.1 <= self.max
-    }
-}
-
-/// The address a request came from.
-///
-/// Behind a reverse proxy the TCP peer is the proxy, for every client, so a
-/// limit keyed on it is one bucket for everyone. When the peer is on a private
-/// or loopback address — a proxy in the cluster or on the host — the last
-/// `X-Forwarded-For` entry is the one that proxy appended, and is the client.
-/// Earlier entries are whatever the client sent, and are ignored. A public
-/// peer is the client, and its header is not believed. Nor is it when the
-/// peer is unknown: a listener served without its connection info would
-/// otherwise let every client pick its own address.
-///
-/// IPv4-mapped IPv6 addresses come back as IPv4, so one client is one address
-/// whichever way a dual-stack listener or a proxy spelled it.
+/// The address a request came from: see `koan_auth::net::client_address`.
+/// Whose `X-Forwarded-For` is believed is set on each request as a
+/// [`ForwardedFrom`] extension; without one, `Private`.
 pub(crate) fn client_ip(request: &axum::extract::Request) -> IpAddr {
     address(request.extensions(), request.headers())
 }
@@ -108,67 +49,15 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for ClientIp {
     }
 }
 
-/// Whose `X-Forwarded-For` a server believes, set on each request as an
-/// extension. Without one, `Private`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ForwardedFrom {
-    /// Any private address: a server behind an ingress, where only the proxy
-    /// shares its private network.
-    Private,
-    /// Loopback alone: a server on a home network, where every device has a
-    /// private address and only a tunnel client on the same machine forwards.
-    /// A loopback connection that names no client comes from nowhere known,
-    /// so it neither counts as this network nor shares a limit with it.
-    Loopback,
-}
-
 fn address(extensions: &axum::http::Extensions, headers: &axum::http::HeaderMap) -> IpAddr {
-    let unknown = IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
-    let Some(ConnectInfo(peer)) = extensions.get::<ConnectInfo<SocketAddr>>() else {
-        return unknown;
-    };
-    let peer = peer.ip().to_canonical();
+    let peer = extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(peer)| *peer);
     let trust = extensions
         .get::<ForwardedFrom>()
         .copied()
-        .unwrap_or(ForwardedFrom::Private);
-    let believed = match trust {
-        ForwardedFrom::Private => is_internal(peer),
-        ForwardedFrom::Loopback => peer.is_loopback(),
-    };
-    if !believed {
-        return peer;
-    }
-    let forwarded = headers
-        .get_all("x-forwarded-for")
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(','))
-        .filter_map(|ip| ip.trim().parse::<IpAddr>().ok())
-        .next_back()
-        .map(|ip| ip.to_canonical());
-    match (forwarded, trust) {
-        (Some(ip), _) => ip,
-        (None, ForwardedFrom::Private) => peer,
-        (None, ForwardedFrom::Loopback) => unknown,
-    }
-}
-
-/// The network an address counts against a per-address limit as: itself, or
-/// for IPv6 its /64, which one subscriber is usually given whole. Keyed on the
-/// full address, a client would have 2^64 fresh allowances.
-pub(crate) fn network(ip: IpAddr) -> IpAddr {
-    match ip.to_canonical() {
-        IpAddr::V4(v4) => IpAddr::V4(v4),
-        IpAddr::V6(v6) => IpAddr::V6((u128::from(v6) & !((1u128 << 64) - 1)).into()),
-    }
-}
-
-fn is_internal(ip: IpAddr) -> bool {
-    match ip.to_canonical() {
-        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback(),
-        IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
-    }
+        .unwrap_or_default();
+    koan_auth::net::client_address(peer, trust, headers)
 }
 
 // ---------------------------------------------------------------------------
@@ -259,13 +148,6 @@ impl AuthRouteState {
             (SET_COOKIE, self.stale_refresh_cookie()),
         ])
     }
-}
-
-/// A hash with the same parameters as a real one, to verify unknown usernames
-/// against.
-pub(crate) fn dummy_password_hash() -> &'static str {
-    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    HASH.get_or_init(|| auth::hash_password("koan-dummy-password").unwrap_or_default())
 }
 
 /// Read the refresh token from the request body, falling back to the cookie so a
@@ -854,6 +736,7 @@ async fn logout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use koan_auth::limit::LOGIN_MAX_PER_WINDOW;
 
     #[test]
     fn login_limiter_caps_a_single_ip() {

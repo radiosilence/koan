@@ -1548,7 +1548,7 @@ async fn a_waiting_device_is_approved_from_the_pair_page() {
         .open("Living <room> TV", None, "10.0.0.8".parse().unwrap())
         .unwrap();
     let typed = opened.code.to_lowercase();
-    let device = opened.device(true);
+    let device = crate::pair::device(opened, true);
     let r = send(
         &f.app,
         authed(&f.state, &format!("/pair?code={typed}"))

@@ -1,57 +1,19 @@
-//! Auth queries: user CRUD, refresh token management.
+//! Accounts and sessions, from `koan-auth`, and whose data kōan's implicit
+//! user's is.
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 
-use crate::auth::{self, Role};
+pub use koan_auth::sessions::{
+    OAuthGrant, RefreshTokenRow, cleanup_expired_tokens, consume_refresh_token,
+    get_valid_refresh_token, revoke_all_user_tokens, revoke_grant, revoke_refresh_token,
+    revoke_replayed_grant, store_grant_token, store_refresh_token,
+};
+pub use koan_auth::users::{
+    UserRow, admin_count, delete_user, get_user_by_id, get_user_by_username, has_users, list_users,
+    update_password,
+};
 
-// ---------------------------------------------------------------------------
-// Row types
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub struct UserRow {
-    pub id: i64,
-    pub username: String,
-    pub password_hash: String,
-    pub role: Role,
-    pub created_at: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RefreshTokenRow {
-    pub id: String,
-    pub user_id: i64,
-    pub expires_at: i64,
-    pub revoked: bool,
-    pub created_at: Option<String>,
-    /// The OAuth grant the token descends from, and the client it was granted
-    /// to; `None` for app and web sessions.
-    pub grant: Option<OAuthGrant>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OAuthGrant {
-    pub id: String,
-    pub client_name: String,
-}
-
-const TOKEN_COLUMNS: &str = "id, user_id, expires_at, revoked, created_at, grant_id, client_name";
-
-fn token_row(row: &rusqlite::Row) -> rusqlite::Result<RefreshTokenRow> {
-    let grant_id: Option<String> = row.get(5)?;
-    let client_name: Option<String> = row.get(6)?;
-    Ok(RefreshTokenRow {
-        id: row.get(0)?,
-        user_id: row.get(1)?,
-        expires_at: row.get(2)?,
-        revoked: row.get::<_, i32>(3)? != 0,
-        created_at: row.get(4)?,
-        grant: grant_id.map(|id| OAuthGrant {
-            id,
-            client_name: client_name.unwrap_or_default(),
-        }),
-    })
-}
+use crate::auth::Role;
 
 // ---------------------------------------------------------------------------
 // Whose data
@@ -130,7 +92,7 @@ pub fn adopt_local_rows(conn: &Connection) -> Result<(), rusqlite::Error> {
 }
 
 // ---------------------------------------------------------------------------
-// User CRUD
+// Accounts that change whose data the implicit user's is
 // ---------------------------------------------------------------------------
 
 /// Create a new user. Returns the user ID.
@@ -140,289 +102,17 @@ pub fn create_user(
     password: &str,
     role: Role,
 ) -> Result<i64, rusqlite::Error> {
-    let hash = auth::hash_password(password)
-        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
-    conn.execute(
-        "INSERT INTO users (username, password_hash, role) VALUES (?1, ?2, ?3)",
-        params![username, hash, role.as_str()],
-    )?;
-    let id = conn.last_insert_rowid();
+    let id = koan_auth::users::create_user(conn, username, password, role)?;
     adopt_local_rows(conn)?;
     Ok(id)
 }
 
-/// Get a user by username.
-pub fn get_user_by_username(
-    conn: &Connection,
-    username: &str,
-) -> Result<Option<UserRow>, rusqlite::Error> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT id, username, password_hash, role, created_at FROM users WHERE username = ?1",
-    )?;
-    let mut rows = stmt.query_map(params![username], |row| {
-        let role_str: String = row.get(3)?;
-        Ok(UserRow {
-            id: row.get(0)?,
-            username: row.get(1)?,
-            password_hash: row.get(2)?,
-            role: role_str.parse().unwrap_or(Role::Readonly),
-            created_at: row.get(4)?,
-        })
-    })?;
-    match rows.next() {
-        Some(Ok(user)) => Ok(Some(user)),
-        Some(Err(e)) => Err(e),
-        None => Ok(None),
-    }
-}
-
-/// Get a user by ID.
-pub fn get_user_by_id(conn: &Connection, user_id: i64) -> Result<Option<UserRow>, rusqlite::Error> {
-    let mut stmt = conn
-        .prepare("SELECT id, username, password_hash, role, created_at FROM users WHERE id = ?1")?;
-    let mut rows = stmt.query_map(params![user_id], |row| {
-        let role_str: String = row.get(3)?;
-        Ok(UserRow {
-            id: row.get(0)?,
-            username: row.get(1)?,
-            password_hash: row.get(2)?,
-            role: role_str.parse().unwrap_or(Role::Readonly),
-            created_at: row.get(4)?,
-        })
-    })?;
-    match rows.next() {
-        Some(Ok(user)) => Ok(Some(user)),
-        Some(Err(e)) => Err(e),
-        None => Ok(None),
-    }
-}
-
-/// List all users (no password hashes).
-pub fn list_users(conn: &Connection) -> Result<Vec<UserRow>, rusqlite::Error> {
-    let mut stmt = conn
-        .prepare("SELECT id, username, password_hash, role, created_at FROM users ORDER BY id")?;
-    let rows = stmt.query_map([], |row| {
-        let role_str: String = row.get(3)?;
-        Ok(UserRow {
-            id: row.get(0)?,
-            username: row.get(1)?,
-            password_hash: row.get(2)?,
-            role: role_str.parse().unwrap_or(Role::Readonly),
-            created_at: row.get(4)?,
-        })
-    })?;
-    rows.collect()
-}
-
-/// Delete a user by ID. Returns true if a row was deleted.
-pub fn delete_user(conn: &Connection, user_id: i64) -> Result<bool, rusqlite::Error> {
-    let count = conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])?;
-    if count > 0 {
-        auth::account_changed(user_id);
-    }
-    Ok(count > 0)
-}
-
-/// Update a user's password. Revokes all their refresh tokens and API keys: a
-/// reset is how an admin shuts out whoever else had the password, and a key
-/// made with it would otherwise outlast it.
-pub fn update_password(
-    conn: &Connection,
-    username: &str,
-    new_password: &str,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let hash = crate::auth::hash_password(new_password)?;
-    let updated = conn.execute(
-        "UPDATE users SET password_hash = ?1 WHERE username = ?2",
-        params![hash, username],
-    )?;
-    if updated > 0 {
-        // Revoke all existing tokens for this user.
-        if let Some(user) = get_user_by_username(conn, username)? {
-            revoke_all_user_tokens(conn, user.id)?;
-            super::api_keys::revoke_user_api_keys(conn, user.id)?;
-            super::app_passwords::revoke_user_app_passwords(conn, user.id)?;
-            auth::account_changed(user.id);
-        }
-    }
-    Ok(updated > 0)
-}
-
 /// Update a user's role.
-pub fn update_role(
-    conn: &Connection,
-    username: &str,
-    role: crate::auth::Role,
-) -> Result<bool, rusqlite::Error> {
-    let updated: Option<i64> = conn
-        .query_row(
-            "UPDATE users SET role = ?1 WHERE username = ?2 RETURNING id",
-            params![role.as_str(), username],
-            |row| row.get(0),
-        )
-        .optional()?;
+pub fn update_role(conn: &Connection, username: &str, role: Role) -> Result<bool, rusqlite::Error> {
+    let updated = koan_auth::users::update_role(conn, username, role)?;
     adopt_local_rows(conn)?;
-    if let Some(id) = updated {
-        auth::account_changed(id);
-    }
-    Ok(updated.is_some())
+    Ok(updated)
 }
-
-/// Check if any users exist (for first-run detection).
-pub fn has_users(conn: &Connection) -> Result<bool, rusqlite::Error> {
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
-    Ok(count > 0)
-}
-
-/// Count users with admin role.
-pub fn admin_count(conn: &Connection) -> Result<i64, rusqlite::Error> {
-    conn.query_row(
-        "SELECT COUNT(*) FROM users WHERE role = 'admin'",
-        [],
-        |row| row.get(0),
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Refresh tokens
-// ---------------------------------------------------------------------------
-
-/// Store a refresh token. Only `sha256(token)` is persisted — the raw token is
-/// a bearer credential and read access to the database must not yield one.
-pub fn store_refresh_token(
-    conn: &Connection,
-    token_id: &str,
-    user_id: i64,
-    expires_at: i64,
-) -> Result<(), rusqlite::Error> {
-    store_grant_token(conn, token_id, user_id, expires_at, None)
-}
-
-/// Store a refresh token belonging to an OAuth grant, or to none.
-pub fn store_grant_token(
-    conn: &Connection,
-    token_id: &str,
-    user_id: i64,
-    expires_at: i64,
-    grant: Option<&OAuthGrant>,
-) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "INSERT INTO refresh_tokens (id, user_id, expires_at, grant_id, client_name)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            auth::sha256_hex(token_id),
-            user_id,
-            expires_at,
-            grant.map(|g| &g.id),
-            grant.map(|g| &g.client_name),
-        ],
-    )?;
-    Ok(())
-}
-
-/// Look up a refresh token. Returns None if not found, expired, or revoked.
-pub fn get_valid_refresh_token(
-    conn: &Connection,
-    token_id: &str,
-) -> Result<Option<RefreshTokenRow>, rusqlite::Error> {
-    let now = crate::clock::unix_secs();
-    let mut stmt = conn.prepare_cached(&format!(
-        "SELECT {TOKEN_COLUMNS} FROM refresh_tokens
-         WHERE id = ?1 AND revoked = 0 AND expires_at > ?2"
-    ))?;
-    let mut rows = stmt.query_map(params![auth::sha256_hex(token_id), now], token_row)?;
-    match rows.next() {
-        Some(Ok(token)) => Ok(Some(token)),
-        Some(Err(e)) => Err(e),
-        None => Ok(None),
-    }
-}
-
-/// Atomically consume a valid refresh token: revoke it and return the row in one
-/// statement. Returns `None` if the token doesn't exist, is already revoked, or
-/// has expired. This prevents TOCTOU races in refresh-token rotation.
-pub fn consume_refresh_token(
-    conn: &Connection,
-    token_id: &str,
-) -> Result<Option<RefreshTokenRow>, rusqlite::Error> {
-    let now = crate::clock::unix_secs();
-    let mut stmt = conn.prepare(&format!(
-        "UPDATE refresh_tokens SET revoked = 1, used_at = ?2
-         WHERE id = ?1 AND revoked = 0 AND expires_at > ?2
-         RETURNING {TOKEN_COLUMNS}"
-    ))?;
-    let mut rows = stmt.query_map(params![auth::sha256_hex(token_id), now], token_row)?;
-    match rows.next() {
-        Some(Ok(token)) => Ok(Some(token)),
-        Some(Err(e)) => Err(e),
-        None => Ok(None),
-    }
-}
-
-/// Revoke a single refresh token (logout).
-pub fn revoke_refresh_token(conn: &Connection, token_id: &str) -> Result<bool, rusqlite::Error> {
-    let count = conn.execute(
-        "UPDATE refresh_tokens SET revoked = 1 WHERE id = ?1",
-        params![auth::sha256_hex(token_id)],
-    )?;
-    Ok(count > 0)
-}
-
-/// Revoke all refresh tokens for a user (password change, account delete).
-pub fn revoke_all_user_tokens(conn: &Connection, user_id: i64) -> Result<usize, rusqlite::Error> {
-    let count = conn.execute(
-        "UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?1 AND revoked = 0",
-        params![user_id],
-    )?;
-    Ok(count)
-}
-
-/// A refresh token of an OAuth grant spent once already, more than `grace_secs`
-/// ago, is a copy in someone else's hands: revoke the whole grant, so whichever
-/// side refreshed first loses it too. The grace covers a client retrying a
-/// refresh whose answer it never received. Returns how many tokens were revoked.
-///
-/// OAuth grants only: browser tabs and app tasks share one session and may
-/// race a refresh, which is not theft.
-pub fn revoke_replayed_grant(
-    conn: &Connection,
-    token_id: &str,
-    grace_secs: i64,
-) -> Result<usize, rusqlite::Error> {
-    let cutoff = crate::clock::unix_secs() - grace_secs;
-    conn.execute(
-        "UPDATE refresh_tokens SET revoked = 1
-         WHERE revoked = 0 AND grant_id = (
-           SELECT grant_id FROM refresh_tokens
-           WHERE id = ?1 AND revoked = 1 AND grant_id IS NOT NULL AND used_at < ?2)",
-        params![auth::sha256_hex(token_id), cutoff],
-    )
-}
-
-/// Revoke every refresh token of an OAuth grant.
-pub fn revoke_grant(conn: &Connection, grant_id: &str) -> Result<usize, rusqlite::Error> {
-    conn.execute(
-        "UPDATE refresh_tokens SET revoked = 1 WHERE grant_id = ?1 AND revoked = 0",
-        params![grant_id],
-    )
-}
-
-/// Clean up expired/revoked refresh tokens (housekeeping). A spent token of an
-/// OAuth grant stays until it would have expired, so `revoke_replayed_grant`
-/// can still recognise it.
-pub fn cleanup_expired_tokens(conn: &Connection) -> Result<usize, rusqlite::Error> {
-    let now = crate::clock::unix_secs();
-    let count = conn.execute(
-        "DELETE FROM refresh_tokens
-         WHERE expires_at <= ?1 OR (revoked = 1 AND (grant_id IS NULL OR used_at IS NULL))",
-        params![now],
-    )?;
-    Ok(count)
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -435,138 +125,6 @@ mod tests {
         let db_path = tmp.path().join("test.db");
         let db = Database::open(&db_path).unwrap();
         (db, tmp)
-    }
-
-    #[test]
-    fn create_and_get_user() {
-        let (db, _tmp) = test_db();
-        let id = create_user(&db.conn, "alice", "password123", Role::Admin).unwrap();
-        assert!(id > 0);
-
-        let user = get_user_by_username(&db.conn, "alice").unwrap().unwrap();
-        assert_eq!(user.username, "alice");
-        assert_eq!(user.role, Role::Admin);
-        assert!(user.password_hash.starts_with("$argon2"));
-    }
-
-    #[test]
-    fn duplicate_username_rejected() {
-        let (db, _tmp) = test_db();
-        create_user(&db.conn, "bob", "pass1", Role::User).unwrap();
-        let result = create_user(&db.conn, "bob", "pass2", Role::User);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn list_and_delete_users() {
-        let (db, _tmp) = test_db();
-        let id1 = create_user(&db.conn, "user1", "pass", Role::Admin).unwrap();
-        create_user(&db.conn, "user2", "pass", Role::User).unwrap();
-
-        let users = list_users(&db.conn).unwrap();
-        assert_eq!(users.len(), 2);
-
-        assert!(delete_user(&db.conn, id1).unwrap());
-        let users = list_users(&db.conn).unwrap();
-        assert_eq!(users.len(), 1);
-        assert_eq!(users[0].username, "user2");
-    }
-
-    #[test]
-    fn has_users_empty_and_populated() {
-        let (db, _tmp) = test_db();
-        assert!(!has_users(&db.conn).unwrap());
-        create_user(&db.conn, "first", "pass", Role::Admin).unwrap();
-        assert!(has_users(&db.conn).unwrap());
-    }
-
-    #[test]
-    fn refresh_token_lifecycle() {
-        let (db, _tmp) = test_db();
-        let uid = create_user(&db.conn, "user", "pass", Role::User).unwrap();
-
-        let future_ts = crate::clock::unix_secs() + 86400;
-        store_refresh_token(&db.conn, "tok-123", uid, future_ts).unwrap();
-
-        // Valid lookup.
-        let tok = get_valid_refresh_token(&db.conn, "tok-123")
-            .unwrap()
-            .unwrap();
-        assert_eq!(tok.user_id, uid);
-
-        // Revoke.
-        assert!(revoke_refresh_token(&db.conn, "tok-123").unwrap());
-        assert!(
-            get_valid_refresh_token(&db.conn, "tok-123")
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn expired_token_not_returned() {
-        let (db, _tmp) = test_db();
-        let uid = create_user(&db.conn, "user", "pass", Role::User).unwrap();
-
-        // Already expired.
-        store_refresh_token(&db.conn, "tok-old", uid, 0).unwrap();
-        assert!(
-            get_valid_refresh_token(&db.conn, "tok-old")
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn a_spent_grant_token_coming_back_revokes_the_grant() {
-        let (db, _tmp) = test_db();
-        let uid = create_user(&db.conn, "user", "pass", Role::User).unwrap();
-        let future = crate::clock::unix_secs() + 86400;
-        let grant = OAuthGrant {
-            id: "g1".into(),
-            client_name: "Claude".into(),
-        };
-        store_grant_token(&db.conn, "first", uid, future, Some(&grant)).unwrap();
-        let spent = consume_refresh_token(&db.conn, "first").unwrap().unwrap();
-        assert_eq!(spent.grant.as_ref(), Some(&grant));
-        store_grant_token(&db.conn, "second", uid, future, Some(&grant)).unwrap();
-        // An app session, spent the same way, is not a grant.
-        store_refresh_token(&db.conn, "app", uid, future).unwrap();
-        consume_refresh_token(&db.conn, "app").unwrap().unwrap();
-
-        // Within the grace: a retry, nothing revoked.
-        assert_eq!(revoke_replayed_grant(&db.conn, "first", 30).unwrap(), 0);
-        assert_eq!(revoke_replayed_grant(&db.conn, "app", -1).unwrap(), 0);
-        // Spent and kept, so cleanup leaves it to be recognised.
-        cleanup_expired_tokens(&db.conn).unwrap();
-        assert_eq!(revoke_replayed_grant(&db.conn, "first", -1).unwrap(), 1);
-        assert!(
-            get_valid_refresh_token(&db.conn, "second")
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn cleanup_removes_expired_and_revoked() {
-        let (db, _tmp) = test_db();
-        let uid = create_user(&db.conn, "user", "pass", Role::User).unwrap();
-
-        let future = crate::clock::unix_secs() + 86400;
-        store_refresh_token(&db.conn, "active", uid, future).unwrap();
-        store_refresh_token(&db.conn, "expired", uid, 0).unwrap();
-        store_refresh_token(&db.conn, "revoked", uid, future).unwrap();
-        revoke_refresh_token(&db.conn, "revoked").unwrap();
-
-        let cleaned = cleanup_expired_tokens(&db.conn).unwrap();
-        assert_eq!(cleaned, 2);
-
-        // Active token still there.
-        assert!(
-            get_valid_refresh_token(&db.conn, "active")
-                .unwrap()
-                .is_some()
-        );
     }
 
     // -- Per-user data ------------------------------------------------------
