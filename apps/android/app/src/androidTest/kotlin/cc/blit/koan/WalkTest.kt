@@ -65,17 +65,17 @@ class WalkTest {
             pause(3)
             snap("03-albums")
             // The first sleeve, above the topmost, leftmost of the library's
-            // record titles. It plays the record and opens it, asking first
-            // when something is queued; the title's own tap is crowded by the
-            // artist link beneath it.
+            // record titles, which opens the record; the title's own tap is
+            // crowded by the artist link beneath it.
             val title = device.wait(Until.findObjects(By.text(Pattern.compile("(?i)album \\d+|record \\d+|thirty rooms"))), 3_000)
                 ?.minWithOrNull(compareBy({ it.visibleBounds.top }, { it.visibleBounds.left }))
                 ?.visibleBounds
             title?.let { device.click(it.centerX(), it.top - it.height() * 3) }
-            if (device.wait(Until.hasObject(label("Replace the queue?")), 2_000) == true) tap { find(label("Play")) }
-            pause(3)
-            // A record's page, by its Shuffle, which the browser has not.
-            if (title != null && device.hasObject(label("Shuffle"))) {
+            // A record's page, by its Shuffle, which the browser has not. Its
+            // Play starts what Now Playing shows later in the walk.
+            if (title != null && find(label("Shuffle")) != null) {
+                tap { find(label("Play")) }
+                pause(3)
                 snap("04-album")
                 back()
             }

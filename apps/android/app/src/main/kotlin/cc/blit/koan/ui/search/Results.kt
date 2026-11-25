@@ -37,7 +37,6 @@ import cc.blit.koan.ui.library.TrackAvailability
 import cc.blit.koan.ui.library.albumName
 import cc.blit.koan.ui.library.artistCredit
 import cc.blit.koan.ui.library.pickable
-import cc.blit.koan.ui.library.rememberPlayNow
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
@@ -57,8 +56,9 @@ import cc.blit.koan.ui.theme.koanSurface
 internal val TileMinimum = 140.dp
 
 /**
- * A record: the sleeve plays it, the words under it open it, the artist's name
- * goes to the artist. While picking, any of it ticks the record.
+ * A record: a tap opens it, the artist's name goes to the artist, and a long
+ * press offers the rest, playing it among them. While picking, any of it ticks
+ * the record.
  */
 @Composable
 internal fun AlbumTile(album: Album, selection: Selection<Playable>) {
@@ -66,14 +66,11 @@ internal fun AlbumTile(album: Album, selection: Selection<Playable>) {
     val playable = Playable.OfAlbum(album)
     val picked = selection.contains(playable)
     var menu by remember { mutableStateOf(false) }
-    val showMenu = { menu = true }
-    Column(verticalArrangement = Arrangement.spacedBy(KoanSpace.xs)) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .pickable(playable, selection, showMenu, rememberPlayNow(playable)),
-        ) {
+    Column(
+        Modifier.pickable(playable, selection, { menu = true }) { nav.push(AlbumRoute(album.id)) },
+        verticalArrangement = Arrangement.spacedBy(KoanSpace.xs),
+    ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
             Sleeve(Art.album(album.id), Modifier.matchParentSize())
             if (selection.active) {
                 if (picked) Box(Modifier.matchParentSize().border(3.dp, KoanTheme.color(KoanTone.Accent)))
@@ -81,15 +78,10 @@ internal fun AlbumTile(album: Album, selection: Selection<Playable>) {
             }
             PlayableMenu(playable, menu) { menu = false }
         }
-        KoanText(
-            album.title,
-            Modifier.fillMaxWidth().pickable(playable, selection, showMenu) { nav.push(AlbumRoute(album.id)) },
-            role = KoanType.Control,
-            maxLines = 1,
-        )
+        KoanText(album.title, Modifier.fillMaxWidth(), role = KoanType.Control, maxLines = 1)
         NameLine(
             listOfNotNull(artistCredit(album.artistCredit), album.year?.let { Named("$it") }),
-            Modifier.fillMaxWidth().pickable(playable, selection, showMenu) { nav.push(AlbumRoute(album.id)) },
+            Modifier.fillMaxWidth(),
             role = KoanType.Fine,
             linked = !selection.active,
         )
