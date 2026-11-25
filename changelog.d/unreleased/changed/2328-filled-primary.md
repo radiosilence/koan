@@ -1,0 +1,1 @@
+- **Filled primary buttons.** A page's main action, such as Play, Sign in or Allow, is filled with the accent so it stands out from the buttons beside it.
