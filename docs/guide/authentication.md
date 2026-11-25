@@ -2,10 +2,30 @@
 
 kōan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default.
 
+## The first account
+
+A new server has no accounts. Until one exists, its web UI sends sign-in to a setup page at `/setup`:
+
+1. Start the server and find the line in its log that begins `No accounts yet`. It holds the setup code, and is written at start-up and again, at most once a minute, while the page is in use.
+
+   | Where the server runs | Where the log is |
+   |---|---|
+   | Directly on a machine | the server's output, in its terminal or its service manager's log |
+   | `docker run` | `docker logs koan 2>&1 \| grep 'No accounts yet'` |
+   | Docker Compose | `docker compose logs koan \| grep 'No accounts yet'` |
+   | Kubernetes | `kubectl -n koan logs deploy/koan \| grep 'No accounts yet'` |
+
+2. Open `/setup` on the server (`http://localhost:4000/setup`, or any page, which redirects there), enter the code, and choose the admin's username and password.
+3. You are signed in as that admin, and the page closes for good.
+
+The code means the admin is whoever can read the server's log, not whoever reaches the page first: a database can be empty because a volume did not mount or a backup was not restored, not only on a new install. Further accounts come from that admin, by [invite](#invites) or from the Users page.
+
+To make the admin from a shell instead, run `koan auth setup` against the server's config directory; `[graphql] setup_wizard = false` turns the page off. [The first account](headless-server.md#the-first-account) in the headless server guide covers Docker and Kubernetes.
+
 ## Quick start
 
 ```bash
-koan auth setup               # signing keys and the first admin account
+koan auth setup               # signing keys and the first admin account, or use the setup page
 KOAN_SERVER__URL=http://localhost:4000 koan --headless --port 4000
 
 # Sign in: returns an access token, a refresh token and its lifetime
@@ -370,12 +390,26 @@ Ed25519 keypair is auto-generated on first `koan auth setup` and stored at:
 
 ## Recovery / lockout
 
-**Reset a password:**
+### A forgotten admin password
+
+Another admin can reset it from the web UI's Users page. When there is no other admin, reset it from a shell on the server, run against the config directory the server uses. The server can stay running; the new password works at the next sign-in.
+
+| Where the server runs | Run |
+|---|---|
+| Directly on a machine | `koan auth reset-password admin` |
+| `docker run` | `docker exec -it koan koan auth reset-password admin` |
+| Docker Compose | `docker compose exec koan koan auth reset-password admin` |
+| Kubernetes | `kubectl -n koan exec -it deploy/koan -- koan auth reset-password admin` |
+
+It asks for the new password, or offers to generate one and prints it once. Without a terminal, pass it in the environment:
+
 ```bash
-koan auth reset-password admin
-# Prompts for new password. Revokes that user's sessions, API keys and app passwords.
-# --remove-second-factor also turns off their two-step sign-in.
+kubectl -n koan exec deploy/koan -- env KOAN_PASSWORD='…' koan auth reset-password admin
 ```
+
+`koan auth list-users`, run the same way, shows the usernames and roles when the admin's name is forgotten too. A reset signs the account out everywhere: it ends its sessions and revokes its API keys and app passwords, so its apps and scripts need signing in again.
+
+An admin who has also lost their [two-step sign-in](#two-step-sign-in) adds `--remove-second-factor`, which turns it off so the new password alone signs in.
 
 **Regenerate keypair:**
 ```bash
