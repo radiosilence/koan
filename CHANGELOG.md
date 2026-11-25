@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.75.2
+
+### Changed
+
+- **Filled primary buttons.** A page's main action, such as Play, Sign in or Allow, is filled with the accent so it stands out from the buttons beside it.
+
+### Internal
+
+- **Accounts and signing in are a crate of their own.** `koan-auth`, licensed MIT, holds the account rules, sessions, keys, tokens, sign-in limits, the OAuth server's protocol and the pairing registry, so other services can use them; kōan works as before.
+
 ## 0.75.1
 
 ### Changed
