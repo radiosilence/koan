@@ -99,16 +99,9 @@
   --container-form: 520px;
   --container-panel: 560px;
 
-  --animate-busy: busy 0.7s linear infinite;
   --animate-sweep: sweep 1.6s ease-in-out infinite alternate;
   /* A confirmation: seen, then gone by itself. */
   --animate-fade: fade 4s forwards;
-
-  @keyframes busy {
-    to {
-      transform: rotate(360deg);
-    }
-  }
 
   @keyframes sweep {
     from {
