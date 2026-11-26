@@ -8,4 +8,4 @@
 {%- if tick.disabled %} disabled{% endif %}
 {%- if tick.required %} required{% endif %}
 {%- if let Some(signal) = tick.bind %} data-bind="{{ signal }}"{% endif %}
-{%- if bare %} aria-label="{{ tick.label }}"{{ attrs }}{% endif %}>
+{%- if bare %} aria-label="{{ self.label_text() }}"{{ attrs }}{% endif %}>

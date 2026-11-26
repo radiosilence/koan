@@ -162,12 +162,16 @@ impl Confirm<'_> {
     /// # Panics
     ///
     /// When `href` is not a path on this origin: it must start with `/`, and not with `//` or `/\\`, which a browser
-    /// reads as another host.
+    /// reads as another host, and hold no whitespace or control character, which a browser strips before reading it,
+    /// so `/\t/host` would be `//host`.
     pub fn go<'h>(href: impl Into<Text<'h>>) -> PatchElements {
         let href: Text<'h> = href.into();
         let path = href.as_str();
         assert!(
-            path.starts_with('/') && !path.starts_with("//") && !path.starts_with("/\\"),
+            path.starts_with('/')
+                && !path.starts_with("//")
+                && !path.starts_with("/\\")
+                && !path.chars().any(|c| c.is_control() || c.is_whitespace()),
             "{path:?} is not a path on this site"
         );
         Html::trusted(format!(
@@ -231,6 +235,12 @@ mod tests {
         let patch = format!("{:?}", Confirm::error("refused: <403>"));
         assert!(patch.contains("kit-confirm-error"), "{patch}");
         assert!(patch.contains("&#60;403&#62;"), "{patch}");
+    }
+
+    #[test]
+    #[should_panic(expected = "is not a path on this site")]
+    fn go_refuses_a_path_a_browser_would_read_as_another_host() {
+        let _ = Confirm::go("/\t/evil.example");
     }
 
     #[test]

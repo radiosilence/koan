@@ -40,7 +40,9 @@ impl<'a> Link<'a> {
 
     /// A plain click reads the page in place with `@get`, its handler patching what changes, while a modified click, a
     /// middle click or a page without script follows the real `href`. The spinner follows it while it loads, and a
-    /// second press meanwhile does nothing: crumbs, a tree to browse, a list of conversations.
+    /// second press meanwhile does nothing: crumbs, a tree to browse, a list of conversations. The address becomes the
+    /// `href` in a history entry of its own, and Back to an entry made this way reloads it, so a reload, Back and a
+    /// copied address all name the page shown.
     pub fn in_place(mut self) -> Self {
         self.in_place = true;
         self
@@ -109,6 +111,10 @@ mod tests {
             "{html}"
         );
         assert!(html.contains("@get(el.getAttribute('href')"), "{html}");
+        assert!(
+            html.contains("history.pushState({kit: 1}, '', el.href)"),
+            "the address follows the page: {html}"
+        );
         assert!(html.ends_with(">Untrue</a>"), "{html}");
     }
 }

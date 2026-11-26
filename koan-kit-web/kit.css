@@ -216,17 +216,17 @@
     @apply inline-grid size-10 place-items-center border-0 bg-transparent p-0 text-ink hover:bg-hover/30;
   }
 
-  /* A button holding two glyphs shows the second only while it is pressed (play and pause, mute) or has just copied
-   * its value. */
-  :is(button, .button) > .icon + .icon {
+  /* A button's `pressed` glyph stands in for its other glyphs while it is pressed (play and pause, mute) or has just
+   * copied its value, and is hidden otherwise. */
+  :is(button, .button) > .icon.pressed {
     @apply hidden;
   }
 
-  :is(button, .button):is([aria-pressed="true"], .copied) > .icon:first-child {
+  :is(button, .button):is([aria-pressed="true"], .copied) > .icon:not(.pressed) {
     @apply hidden;
   }
 
-  :is(button, .button):is([aria-pressed="true"], .copied) > .icon + .icon {
+  :is(button, .button):is([aria-pressed="true"], .copied) > .icon.pressed {
     @apply inline-block;
   }
 

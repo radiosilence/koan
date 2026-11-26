@@ -37,7 +37,7 @@ macro_rules! tick {
                         label: Content::Text(label.into()),
                         ..Tick::default()
                     },
-                    ..Self::empty()
+                    ..Self::default()
                 }
             }
 
@@ -114,7 +114,7 @@ enum Picture<'a> {
 /// With a [`picture`](Self::picture) or a [`detail`](Self::detail) it is a row of a list to choose from, the box, the
 /// picture and two lines of words, as a picker of albums draws each. [`bare`](Self::bare) draws the box alone.
 #[must_use = "a check draws nothing until it is rendered"]
-#[derive(Clone, Debug, Template)]
+#[derive(Clone, Debug, Default, Template)]
 #[template(path = "check.html")]
 pub struct Check<'a> {
     tick: Tick<'a>,
@@ -155,21 +155,17 @@ impl<'a> Check<'a> {
         self.bare
     }
 
+    /// The label as an attribute takes it: the words, or a block's markup as text, escaped where it lands.
+    fn label_text(&self) -> &str {
+        match &self.tick.label {
+            Content::Text(text) => text.as_str(),
+            Content::Markup(markup) => markup.as_str(),
+        }
+    }
+
     /// Whether it is drawn as a row of a list.
     fn is_row(&self) -> bool {
         self.picture.is_some() || !self.detail.is_empty()
-    }
-}
-
-impl Check<'_> {
-    fn empty() -> Self {
-        Self {
-            tick: Tick::default(),
-            bare: false,
-            picture: None,
-            detail: Text::default(),
-            attrs: Attrs::default(),
-        }
     }
 }
 
@@ -178,7 +174,7 @@ component!(Check);
 
 /// A settings row: the words leading, the box at the trailing edge. `kit::Toggle::new("notify", "notify when done")`.
 #[must_use = "a toggle draws nothing until it is rendered"]
-#[derive(Clone, Debug, Template)]
+#[derive(Clone, Debug, Default, Template)]
 #[template(path = "toggle.html")]
 pub struct Toggle<'a> {
     tick: Tick<'a>,
@@ -194,11 +190,12 @@ impl Toggle<'_> {
         false
     }
 
-    fn empty() -> Self {
-        Self {
-            tick: Tick::default(),
-            attrs: Attrs::default(),
-        }
+    #[expect(
+        clippy::unused_self,
+        reason = "the box's template names a bare box by its label, and a toggle is never bare"
+    )]
+    fn label_text(&self) -> &str {
+        ""
     }
 }
 
@@ -245,6 +242,15 @@ mod tests {
         assert!(html.contains("form=\"library\""), "{html}");
         assert!(html.contains("class=\"mt-1\""), "{html}");
         assert!(!html.contains("<label"), "{html}");
+    }
+
+    #[test]
+    fn a_bare_box_never_writes_markup_into_its_label() {
+        let html = Check::new("path", "")
+            .bare()
+            .wrap(Markup::kit("<b>\"x\"</b>".into()))
+            .to_string();
+        assert!(html.contains("aria-label=\"&#60;b&#62;"), "{html}");
     }
 
     #[test]

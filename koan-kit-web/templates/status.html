@@ -2,4 +2,4 @@
     replacement as the page starts; one that follows a busy group turns while the group's requests run. -#}
 <span class="status {{ self.tone() }}{% if busy %} busy{% endif %}{{ attrs.classes() }}"
 {%- if let Some(url) = loads.present() %} data-url="{{ url }}" data-init="@get(el.dataset.url)" aria-busy="true"{% endif %}
-{%- if let Some(signal) = self.busy_signal() %} data-class:busy="{% if busy %}true || {% endif %}${{ signal }}" data-attr:aria-busy="${{ signal }} ? 'true' : 'false'"{% endif %}{{ attrs }}>{{ word }}</span>
+{%- if let Some(signal) = self.busy_signal() %} data-class:busy="{% if busy %}true || {% endif %}${{ signal }}" data-attr:aria-busy="{% if busy %}true || {% endif %}${{ signal }} ? 'true' : 'false'"{% endif %}{{ attrs }}>{{ word }}</span>

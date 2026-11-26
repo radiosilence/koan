@@ -676,13 +676,7 @@ impl<'a> Field<'a> {
     /// label and described by its note, since a `<label>` cannot hold more than one control; give each control inside
     /// its own `label` too.
     pub fn custom(label: impl Into<Text<'a>>) -> Self {
-        let mut field = Self::new(label, Markup::default());
-        // An id until the app gives one, so the group's label and note can be named.
-        field.attrs.set_id(Text::from(format!(
-            "field-{:012x}",
-            crate::action::serial() & 0xffff_ffff_ffff
-        )));
-        field
+        Self::new(label, Markup::default())
     }
 
     /// A line of text named `name`.
@@ -909,21 +903,45 @@ impl<'a> Field<'a> {
 
     /// The note's id: the field's, or its control's name, and `-note`.
     fn note_id(&self) -> String {
-        let base = if self.attrs.id().is_empty() {
-            self.control.name()
-        } else {
-            self.attrs.id()
-        };
-        format!("{base}-note")
+        format!("{}-note", self.base())
+    }
+
+    /// What the label's and the note's ids are built from: the field's id, or its control's name, or for a group with
+    /// neither its label, so the same field renders the same ids and a patch morphs it in place. Two groups with one
+    /// label on a page are told apart by [`id`](Self::id).
+    fn base(&self) -> String {
+        if !self.attrs.id().is_empty() {
+            return self.attrs.id().to_owned();
+        }
+        let name = self.control.name();
+        if !name.is_empty() || !self.is_custom() {
+            return name.to_owned();
+        }
+        let words: String = self
+            .label
+            .as_str()
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        format!(
+            "field-{}",
+            words
+                .split('-')
+                .filter(|w| !w.is_empty())
+                .collect::<Vec<_>>()
+                .join("-")
+        )
     }
 
     /// The label's id: the field's, or its control's name, and `-label`.
     fn label_id(&self) -> Option<String> {
-        let base = if self.attrs.id().is_empty() {
-            self.control.name()
-        } else {
-            self.attrs.id()
-        };
+        let base = self.base();
         (!base.is_empty()).then(|| format!("{base}-label"))
     }
 
@@ -1085,6 +1103,22 @@ mod tests {
         assert!(field.contains("aria-labelledby=\"types-label\""), "{field}");
         assert!(field.contains("aria-describedby=\"types-note\""), "{field}");
         assert!(field.contains("<span id=\"types-label\">"), "{field}");
+    }
+
+    #[test]
+    fn a_group_without_an_id_is_named_the_same_on_every_render() {
+        let render = || {
+            Field::custom("Release type")
+                .hint("x")
+                .wrap(Markup::kit("<select name=\"t\"></select>".into()))
+                .to_string()
+        };
+        let field = render();
+        assert_eq!(field, render(), "a patch must morph it in place");
+        assert!(
+            field.contains("aria-labelledby=\"field-release-type-label\""),
+            "{field}"
+        );
     }
 
     #[test]

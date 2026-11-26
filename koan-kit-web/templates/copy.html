@@ -5,7 +5,7 @@
   <input readonly value="{{ value }}"{% if let Some(id) = self.input_id() %} id="{{ id }}"{% endif %}{% if let Some(name) = name.present() %} name="{{ name }}"{% endif %} aria-label="{{ label }}" data-on:focus="el.select()">
 {%- if icon %}
   <button type="button" class="icon-button"{% if let Some(copied) = copied.present() %} data-copied="{{ copied }}"{% endif %} data-label="{{ button }}" aria-label="{{ button }}"
-    data-on:click="(navigator.clipboard?.writeText(el.previousElementSibling.value) ?? Promise.reject()).then(() => (el.classList.add('copied'), el.ariaLabel = el.dataset.copied || el.dataset.label, setTimeout(() => (el.classList.remove('copied'), el.ariaLabel = el.dataset.label), 2000))).catch(() => el.previousElementSibling.select())">{{ icon::COPY.svg(15.6) }}{{ icon::CHECK.svg(15.6) }}</button>
+    data-on:click="(navigator.clipboard?.writeText(el.previousElementSibling.value) ?? Promise.reject()).then(() => (el.classList.add('copied'), el.ariaLabel = el.dataset.copied || el.dataset.label, setTimeout(() => (el.classList.remove('copied'), el.ariaLabel = el.dataset.label), 2000))).catch(() => el.previousElementSibling.select())">{{ icon::COPY.svg(15.6) }}{{ icon::CHECK.svg(15.6).class("pressed") }}</button>
 {%- else %}
   <button type="button"{% if let Some(copied) = copied.present() %} data-copied="{{ copied }}"{% endif %} data-label="{{ button }}"
     data-on:click="(navigator.clipboard?.writeText(el.previousElementSibling.value) ?? Promise.reject()).then(() => el.dataset.copied &amp;&amp; (el.textContent = el.dataset.copied, setTimeout(() => el.textContent = el.dataset.label, 2000))).catch(() => el.previousElementSibling.select())">{{ button }}</button>

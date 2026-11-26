@@ -213,6 +213,19 @@ mod tests {
     }
 
     #[test]
+    fn a_status_busy_by_itself_stays_busy_in_its_group() {
+        let status = Status::wait("checking")
+            .loads("/s")
+            .busy_with("job-1")
+            .to_string();
+        let signal = Busy::keyed("job-1");
+        assert!(
+            status.contains(&format!("data-attr:aria-busy=\"true || ${signal} ? ")),
+            "{status}"
+        );
+    }
+
+    #[test]
     fn a_status_that_loads_asks_with_a_constant_expression() {
         let status = Status::wait("checking")
             .loads("/mcp/1/status?x='y'")

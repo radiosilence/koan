@@ -844,13 +844,13 @@
       }
     }
   }
-  :is(button, .button) > .icon + .icon {
+  :is(button, .button) > .icon.pressed {
     display: none;
   }
-  :is(button, .button):is([aria-pressed="true"], .copied) > .icon:first-child {
+  :is(button, .button):is([aria-pressed="true"], .copied) > .icon:not(.pressed) {
     display: none;
   }
-  :is(button, .button):is([aria-pressed="true"], .copied) > .icon + .icon {
+  :is(button, .button):is([aria-pressed="true"], .copied) > .icon.pressed {
     display: inline-block;
   }
   .field {
