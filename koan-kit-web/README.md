@@ -1,13 +1,42 @@
-# @radiosilence/koan-kit-web
+# koan-kit-web
 
-The kōan theme for Tailwind v4: the tokens, the Geist Mono typeface, and the kit of controls radiosilence's server-rendered web UIs (askama and Datastar) are drawn with. It is to the web what `koan-kit` is to GPUI: the look lives here, so an app cannot drift from it. The specification, with the reason for each rule, is [docs/design/koan-theme.md](../docs/design/koan-theme.md). Every control in every state is drawn at [ui.koan.rocks](https://ui.koan.rocks), from `storybook/`.
+The kōan web kit: the look radiosilence's server-rendered pages are drawn in, as a stylesheet and as askama components wired for Datastar. It is to the web what `koan-kit` is to GPUI: the look and the markup live here, so an app cannot drift from either. The specification, with the reason for each rule, is [docs/design/koan-theme.md](../docs/design/koan-theme.md). Every component in every state is drawn at [ui.koan.rocks](https://ui.koan.rocks), each beside the call that drew it.
 
-## Use
+It ships as two packages at one version:
+
+- **The `koan-kit-web` crate:** the components, carrying the stylesheet in its source.
+- **The `@radiosilence/koan-kit-web` npm package:** the stylesheet alone, for a page with no Rust behind it.
+
+## Use, from Rust
+
+```toml
+[dependencies]
+koan-kit-web = "0.5"
+```
+
+The crate builds on `askama_datastar` and re-exports it, so an app's askama and askama_datastar are the kit's: `HtmlSafe` belongs to one askama release, and the components write the attribute syntax of the Datastar that crate serves.
+
+### The stylesheet, from the crate
+
+An app compiles its stylesheet from the kit in the crate's source, so the version in `Cargo.lock` names both the markup and the rules that draw it:
+
+```just
+# Compile the stylesheet with the kōan web kit from koan-kit-web's source, the version Cargo.lock names, so the markup
+# the components write and the rules that draw it come from one release.
+css:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    manifest=$(cargo metadata --format-version 1 --locked | python3 -c 'import json, sys; print(next(p["manifest_path"] for p in json.load(sys.stdin)["packages"] if p["name"] == "koan-kit-web"))')
+    ln -sfn "$(dirname "$manifest")" styles/kit
+    tailwindcss --input styles/app.css --output assets/app.css --minify
+    node styles/kit/kit-check.mjs templates src
+```
 
 ```css
 @import "tailwindcss" source(none);
 @source "../templates";
-@import "@radiosilence/koan-kit-web";
+@source "../src";
+@import "./kit/theme.css";
 
 /* The app's accent, in both schemes, each at least 4.5:1 on --surface. */
 :root {
@@ -21,79 +50,137 @@ The kōan theme for Tailwind v4: the tokens, the Geist Mono typeface, and the ki
 }
 ```
 
-Serve `geist-mono.woff2` from this package beside the compiled stylesheet. The checkbox's tick and the select's chevron are `data:` URLs, so the app's Content Security Policy allows `img-src 'self' data:`; without it a ticked box is a plain fill and a select has no chevron. A static site with markup of its own imports `@radiosilence/koan-kit-web/tokens.css` for the tokens without the controls.
+`styles/kit` is a symlink `just css` makes, so it is gitignored; the compiled stylesheet is committed, as §8 asks, so `cargo build` needs neither Node nor Tailwind. The components use the kit's own classes and no utilities, so the app's Tailwind needs to scan only the app's templates.
 
-The package is published to GitHub Packages, so installing it needs a token with `read:packages`.
+### The page
 
-## What it gives
-
-**Tokens** (`tokens.css`): the colours by role (`bg`, `surface`, `rule`, `hover`, `ink`, `strong`, `muted`, `brand`, `ok`, `warn`, `bad`), the seven type roles (`fine`, `meta`, `control`, `body`, `title-sm`, `title`, `display`, plus `input`, the 16px a field needs so iOS does not zoom into it), and the `busy`, `sweep` and `fade` animations.
-
-Tailwind's own palette, radii, shadows, blurs and type sizes are removed: `rounded-lg`, `shadow-xl`, `text-sm` and `bg-red-500` compile to nothing. What that cannot reach, such as `rounded-full` and arbitrary values, kit-check reports. This is because the look has square corners, no shadows or blur, colours by role and seven type sizes, and a vocabulary that can say only that keeps every app to it.
-
-**Elements** (`kit.css`, base layer): plain markup comes out in the theme. `<button>` is the bordered button; `<input>`, `<select>` and `<textarea>` the square field; a checkbox or radio is the square toggle; `<input type="range">` the hairline slider (in WebKit its done part is drawn from a `--fill` percentage the page's script keeps up to date); `<dialog>` a hairline panel over a dimmed page; `h1` to `h3`, links, `strong`, `small` and `:focus-visible` are set. Headings, buttons and a field's label are lowercased, as the app's own words are; a heading showing a person's text adds `normal-case`. Other labels and summaries keep their case, since they often hold file names, titles or paths, so the app's words in them are written lowercase in the source.
-
-**Classes** (`kit.css`, components layer):
-
-| Class | What it is |
-|---|---|
-| `primary`, `standard`, `quiet`, `link` | The button weights beside the bordered default. `primary` is filled with the accent: the main action of a page, a card or a form. Actions repeated on every row of a long list stay bordered |
-| `bad` | Destructive, on any weight |
-| `fill` | A button filled with its tone rather than outlined: a quiet fill on the default, the error colour on `bad` |
-| `button` | A link drawn as a button |
-| `icon-button` | A glyph alone, with a 40px target and an `aria-label` |
-| `busy` | A control whose request is running, with a spinner after its label; `spinner` stands alone |
-| `field` | A `<label>` holding a `<span>` label, the control and a `<small>` hint; `bad` or `warn` on the field or the hint tones it |
-| `combo` | A field and the button it feeds, joined into one control: `<span class="combo"><input> <button>…</button></span>` |
-| `toggle` | A checkbox's row in a form: label leading, box trailing |
-| `panel` | A region on the lighter `surface` ground, with a clear border an app can tone |
-| `notice` | A message about the page: a result, or with `warn` or `bad` a warning or error |
-| `status` | A square mark and a word in a tone: `ok`, `warn`, `bad`, `wait`; with `busy` it breathes |
-| `meter` | `<progress class="meter">`: a hairline, the done part in the accent or a status tone; indeterminate, a sweep |
-| `skeleton` | Content on its way |
-| `code` | A value to read or copy |
-| `qr` | A QR code to scan: an inline `<svg>` carrying its own quiet zone, as generators draw it, dark on white in either scheme |
-| `codes` | `<ul class="codes">`: one-time codes to keep, such as recovery codes, in two columns, selected whole |
-| `rows` | A list of rows, without rules between them |
-| `dense` | `<table class="dense">`: technical data, `num` columns right-aligned |
-| `disclosure` | `<details class="disclosure">` with a chevron in place of the browser's marker |
-| `toast` | A message over the page; `brief` fades by itself, `bad` is an error |
-| `sheet` | `<dialog class="sheet">`: rises from the bottom on a phone, clear of the home indicator, a centred panel elsewhere. Its bottom padding is `--sheet-padding-bottom`. On iOS the page's script sets `--keyboard-inset` from `visualViewport` to keep it above the keyboard |
+askama resolves `{% extends %}` against the app's own templates, so an app keeps its base template and places the kit's parts in it:
 
 ```html
-<label class="field">
-  <span>api token</span>
-  <input type="password" name="token" />
-  <small>Stored sealed.</small>
-</label>
-<button class="primary">connect</button>
-<span class="status ok">connected</span>
+<!doctype html>
+<html lang="en-GB">
+<head>
+  {{ kit::Head::new(self.css()).title(self.title()).datastar("/assets/datastar.js") }}
+</head>
+<body>
+  {{ kit::SkipLink::new("skip to content", "main") }}
+  <main id="main">{% block main %}{% endblock %}</main>
+  <footer>{{ kit::Release::new("slsk", crate::VERSION, "https://github.com/radiosilence/slsk-mcp") }}</footer>
+  {{ kit::Confirm::new("cancel") }}
+  {{ kit::Flash::region() }}
+</body>
+</html>
 ```
 
-Layout, spacing and anything particular to one app stay in the app's templates as utilities.
+Its view's module has `use koan_kit_web as kit;`. `Head` writes the charset, the viewport, both colour schemes with the browser's chrome in the kit's ground, the font's preload, the stylesheet, an import map and Datastar's script. The app routes the font beside its stylesheet, where the stylesheet asks for it:
 
-## The storybook
+```rust
+.route("/assets/app.css", get(stylesheet))
+.route("/assets/geist-mono.woff2", get(koan_kit_web::font::serve))
+.route("/assets/datastar.js", get(askama_datastar::script::serve))
+```
 
-`storybook/index.html` shows every control in every state. `mise run storybook` compiles its stylesheet; open the page and switch the system between dark and light. The koan.rocks image carries it as of the commit the image is built from, and serves it at ui.koan.rocks.
+The Content Security Policy needs `img-src 'self' data:` for the checkbox's tick and the select's chevron, `script-src 'self' 'unsafe-eval'` for Datastar, and an import map's `ImportMap::csp_source()` when the page has one.
+
+## Components
+
+A component is a value: built with its props, then rendered wherever askama renders a value, inline in a template or as a field of a view.
+
+```html
+{{ kit::Field::email("email", "email").required().hint("For sign-in only.").error(error) }}
+{{ kit::Status::ok("connected") }}
+{{ kit::Button::quiet("remove").bad().post(url).confirm("remove this album?", "remove") }}
+{{ kit::icon::HEART.svg(15) }}
+```
+
+Every prop takes what a view holds, by value or by reference. askama hands a template's variables over by reference (`&String`, `&&String` from a loop, `&u64`, `&bool`, `&Option<String>`) and its literals and calls by value, and each prop converts from all of them, so a template never writes `*count` or `&name`. A prop that may be left out reads empty text as absent, so an `Option<String>` field passes as it is: `.error(error)`.
+
+Text is escaped wherever it lands. Markup is a separate type, built from an `askama_datastar::Html`, a component or a filter block's content, and no string converts into it, so a person's text cannot be passed where markup goes.
+
+| Component | What it draws |
+|---|---|
+| `Button` | Every action. Its weight is its constructor (`primary`, `bordered`, `standard`, `quiet`, `link`); `bad`, `fill`, `icon`, `icon_only`, `busy`, `disabled` qualify it; one action says what it does: `post`, `get`, `href`, `opens`, `closes`, `submit` |
+| `Form` | A form's attributes for the app's own `<form>` (`post`, `get`, `plain`, `live`), and its submit |
+| `Field` | A label, a control and a note under it, linked by `aria-describedby`: `text`, `password`, `email`, `url`, `number`, `select`, `textarea`, `custom`; `hint`, `error`, `warning` |
+| `Input`, `Select`, `Textarea` | The controls, alone or in a field |
+| `Combo` | A control joined to the button it feeds |
+| `Check`, `Toggle` | A box leading its words inline; a settings row with the box trailing. Each a checkbox or a radio |
+| `Status`, `Meter` | A state in a tone, in words; progress as a hairline, named for a screen reader |
+| `Notice`, `Flash`, `Empty` | A message in place; one over the page; what stands where a list would be |
+| `Sheet`, `Confirm` | A dialog opened through `commandfor`; the page's one sheet for asking before a change |
+| `Pairs`, `Disclosure`, `CopyField` | Labels and values; a summary that opens or loads; a value to copy |
+| `Head`, `ImportMap`, `SkipLink`, `Release` | The page around the content |
+| `icon::*` | The kōan icon set, `kit::icon::HEART.svg(15)` |
+
+The common props, on every component: `id`, `class` for the app's own layout utilities, `data`, `attr`, and `datastar` for a Datastar attribute the kit does not write. Every component also has `html` and `patch`, so a handler answers with one: `events([kit::Flash::ok("Saved.").patch().into()])`.
+
+Containers whose markup is one element and a class stay classes: `panel`, `rows`, `dense`, `code`, `codes` (one-time codes to keep, selected whole), `qr` (a QR code's `<svg>`, dark on white in either scheme), `skeleton`.
+
+### Children
+
+A component with a slot takes its content as a prop, or from the template that places it, through the `wrap` filter. askama renders the block, escaping its values as everywhere, and hands it over marked safe:
+
+```html
+{% filter kit::wrap(kit::Sheet::new("add", "add a download").close("close")) %}
+  {% let form = kit::Form::post("/downloads") %}
+  <form {{ form.attrs() }} class="grid gap-4">
+    {{ kit::Field::url("link", "link").required() }}
+    {{ form.submit(kit::Button::primary("add")) }}
+  </form>
+{% endfilter %}
+```
+
+`Sheet`, `Disclosure`, `Notice`, `Empty` and `Field::custom` have a slot.
+
+### Datastar
+
+Every expression a component writes is the kit's own constant. A URL, a question or an id goes in a `data-*` attribute, escaped, and the expression reads it with `el.dataset`, so nothing a person typed reaches script (§8). Names an app gives, a signal to bind or an expression through `.datastar()`, are `&'static str`: by convention the program's own text.
+
+- **Busy while its request runs.** A control that sends a request is busy, disabled and spinning for exactly as long as its own request runs. Its signal is named for the request, a lowercase hash of the method and URL, so two controls posting the same thing share it and any other two never do.
+- **Forms.** A `Form` keeps its real `method` and `action`, so a submit made before Datastar loads stays off the query string; `require_datastar_on_post` refuses that submit, which is how it should fail. A form that must work without script, such as sign-in or consent, is `Form::plain`, posting to a route outside that layer which checks the request's origin itself.
+- **Asking first.** `Button::confirm(question, yes)` and `Button::preview(url, question, yes)` ask in the page's one `Confirm`, so a list of a thousand rows carries no thousand dialogs. Opening it empties what it last held and disables yes until this button's question, or this button's preview, is in place; each opening cancels the last one's preview request, so a late answer cannot land under another question. A preview's handler answers `events(kit::Confirm::preview(plan))`. The sheet stays open while yes's request runs, busy, and the action's handler closes it with `kit::Confirm::close()`, so a failure is seen where it happened.
+
+## Use, without Rust
+
+```css
+@import "tailwindcss" source(none);
+@import "@radiosilence/koan-kit-web";
+```
+
+Plain elements come out in the theme, and the classes the components use give the rest: the button weights, `field`, `combo`, `check`, `toggle`, `panel`, `notice`, `status`, `meter`, `pairs`, `empty`, `qr`, `codes`, `sheet` and its parts, `actions`, `skip`. A static site with markup of its own imports `@radiosilence/koan-kit-web/tokens.css` for the tokens alone. The package is published to GitHub Packages, so installing it needs a token with `read:packages`.
+
+Tailwind's palette, radii, shadows, blurs and type sizes are removed: `rounded-lg`, `shadow-xl`, `text-sm` and `bg-red-500` compile to nothing. What that cannot reach, such as `rounded-full` and arbitrary values, kit-check reports.
 
 ## kit-check
 
 ```sh
-kit-check templates src
+node kit-check.mjs templates src
 ```
 
-Reports classes outside the look in templates and in code that writes markup (`class`, JSX's `className` and `classList` calls, across lines): rounded corners, shadows, rings, blur, gradients, Tailwind's palette and type sizes, arbitrary colours, and `style=` attributes, which the CSP blocks. Most of these already compile to nothing; kit-check says where they are, and fails CI. A deliberate exception carries `kit: raw` and its reason on the line or the line above. An app runs it from its CSS task or CI:
+Reports classes outside the look in templates and in code that writes markup: rounded corners, shadows, rings, blur, gradients, Tailwind's palette and type sizes, arbitrary colours, and `style=` attributes, which the CSP blocks. A deliberate exception carries `kit: raw` and its reason on the line or the line above.
+
+## The storybook
+
+`storybook/index.html` is generated from the components, so ui.koan.rocks shows the markup apps receive:
 
 ```sh
-node node_modules/@radiosilence/koan-kit-web/kit-check.mjs templates src
+cargo run -p koan-kit-web --example storybook --features storybook              # writes storybook/index.html
+mise run storybook                                                              # compiles its stylesheet
+cargo run -p koan-kit-web --example storybook --features storybook -- --serve   # serves it live, with Datastar
 ```
+
+The written page is static, since a static site ships no Datastar; served, the same page talks to stub handlers, so a busy button, a question, a preview and a live search can be tried. A test fails when the written page is stale, and another renders every component and fails on a class `kit.css` has no rule for.
 
 ## Adding to the kit
 
-A look an app needs and the kit lacks is added here, not in the app, once a second app needs it or it is a control the specification describes. It gets a place in the storybook in each of its states.
+A look an app needs and the kit lacks is added here, not in the app, once a second app needs it or it is a control the specification describes. A component that writes markup two apps repeat is added to the crate the same way. Each gets a place in the storybook in each of its states.
 
 ## Release
 
-A push to main that changes `version` in `package.json` publishes it to GitHub Packages, from `.github/workflows/koan-kit-web.yml`. Its notes are its section of `CHANGELOG.md`; it is not tagged, since koan's own `v*` tags would collide. The kit is released on its own, not with koan, and koan's CI and CD skip a change to `koan-kit-web/` alone.
+The crate and the npm package carry one version, in `Cargo.toml` and `package.json`, which a test and the workflow check. A push to main that changes it publishes both, from `.github/workflows/koan-kit-web.yml`. Its notes are its section of `CHANGELOG.md`; it is not tagged, since koan's own `v*` tags would collide. The kit is released on its own, not with koan; koan uses it from the tree, and its release refuses to go out while the kit has changed since its version last moved, since the published koan-server names the kit by version.
 
 Until 0.2.9 it was `@radiosilence/theme`, in radiosilence/theme, which keeps its history.
+
+## Licence
+
+MIT (`LICENSE`), with Geist Mono under the SIL Open Font License (`OFL.txt`).

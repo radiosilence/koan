@@ -25,9 +25,9 @@
 {#- A loose list is titled by its note; a slice keeps the note beside it. #}
 <p class="-mt-1.5 mb-3.5 text-ink italic wrap-anywhere">{{ note }}</p>
 {%- endif %}
-<div class="flex items-center gap-2"><button id="prev" class="icon-button size-11" aria-label="Previous">{{ crate::icon::PREVIOUS.svg(18.0, "size-[18px]") }}</button>
+<div class="flex items-center gap-2"><button id="prev" class="icon-button size-11" aria-label="Previous">{{ crate::icon::PREVIOUS.svg(18.0).class("size-[18px]") }}</button>
 <button id="play" class="primary min-w-24">Play</button>
-<button id="next" class="icon-button size-11" aria-label="Next">{{ crate::icon::NEXT.svg(18.0, "size-[18px]") }}</button>
+<button id="next" class="icon-button size-11" aria-label="Next">{{ crate::icon::NEXT.svg(18.0).class("size-[18px]") }}</button>
 {%- if download %}
 <a class="button ml-auto" href="share/{{ id }}/download" download>Download</a>
 {%- endif %}</div>

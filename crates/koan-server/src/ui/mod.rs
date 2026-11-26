@@ -410,6 +410,7 @@ async fn ui_asset(Path(name): Path<String>, query: RawQuery) -> Response {
         "zod.js" => asset(ZOD_JS, JS, query),
         "player.js" => asset(crate::share::ENGINE_JS, JS, query),
         "datastar.js" => askama_datastar::script::serve(query).await,
+        "geist-mono.woff2" => koan_kit_web::font::serve(query).await,
         other => crate::share::binary_asset(other).unwrap_or_else(not_found),
     }
 }

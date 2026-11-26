@@ -1,0 +1,3 @@
+{#- A square mark and a word, both in the tone. One that loads fetches its replacement as the page starts. -#}
+<span class="status {{ self.tone() }}{% if busy %} busy{% endif %}{{ attrs.classes() }}"
+{%- if let Some(url) = loads.present() %} data-url="{{ url }}" data-init="@get(el.dataset.url)" aria-busy="true"{% endif %}{{ attrs }}>{{ word }}</span>

@@ -1,8 +1,10 @@
 name: koan-kit-web
 
-# The kōan web kit, `@radiosilence/koan-kit-web`: checked when `koan-kit-web/` changes, and published to GitHub Packages when a push
-# to main changes its version. It is released on its own rather than with koan, and `ci-cd.yml` skips a change to
-# `koan-kit-web/` alone, so this is the kit's whole CI. Its storybook is built and served by `site.yml`, at ui.koan.rocks.
+# The kōan web kit: the `koan-kit-web` crate (its components, carrying the stylesheet) and the `@radiosilence/koan-kit-web`
+# npm package (the stylesheet alone), at one version. Its stylesheet is checked here when `koan-kit-web/` changes; the
+# crate is a workspace member, built, linted and tested by `ci-cd.yml`. A push to main that changes the version publishes
+# both, the crate to crates.io and the package to GitHub Packages. It is released on its own rather than with koan. Its
+# storybook is built and served by `site.yml`, at ui.koan.rocks.
 on:
   push:
     branches: [main]
@@ -51,7 +53,17 @@ jobs:
           cp geist-mono.woff2 storybook/
           npm install --no-save --no-package-lock tailwindcss@4.3.3 @tailwindcss/cli@4.3.3
           npx tailwindcss -i storybook/in.css -o storybook/out.css
-          node kit-check.mjs storybook
+          node kit-check.mjs storybook templates src
+      # The crate and the package publish the one kit, so they carry one version. The crate's tests check it too; this
+      # fails before either is published under the other's number.
+      - name: The crate and the package agree
+        run: |
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          package=$(node -p 'require("./package.json").version')
+          if [ "$crate" != "$package" ]; then
+            echo "::error::koan-kit-web/Cargo.toml is $crate and package.json is $package: they publish the one kit"
+            exit 1
+          fi
 
   publish:
     name: Publish koan-kit-web
@@ -80,3 +92,41 @@ jobs:
             exit 0
           fi
           npm publish
+
+  # The crate, beside the package: what an app depends on for the components and, from its source, the stylesheet. Only a
+  # 404 from the index means the version is not out; anything else fails rather than publish twice or never (§18).
+  publish-crate:
+    name: Publish the koan-kit-web crate
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      # A version on crates.io cannot be taken back, so the crate's own tests pass first: ci-cd.yml runs them too, but
+      # this job does not wait for it.
+      - name: Test the crate
+        run: cargo test -p koan-kit-web --all-features --locked
+      - name: Publish a new version
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          status=$(curl -s -o "$RUNNER_TEMP/index" -w '%{http_code}' https://index.crates.io/ko/an/koan-kit-web)
+          case "$status" in
+            200)
+              if grep -q "\"vers\":\"$version\"" "$RUNNER_TEMP/index"; then
+                echo "koan-kit-web $version is already on crates.io"
+                exit 0
+              fi
+              ;;
+            404) ;;
+            *)
+              echo "::error::crates.io's index answered $status for koan-kit-web; not publishing on a guess"
+              exit 1
+              ;;
+          esac
+          cargo publish -p koan-kit-web --locked

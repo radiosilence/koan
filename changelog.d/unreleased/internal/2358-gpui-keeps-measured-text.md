@@ -1,0 +1,1 @@
+- **GPUI keeps measured text between frames.** Text whose content and style are unchanged is neither measured nor shaped again, which makes frames cheaper on pages full of text.

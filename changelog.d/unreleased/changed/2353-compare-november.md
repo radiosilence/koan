@@ -1,0 +1,1 @@
+- **koan.rocks' comparison is checked again.** Every other project's cells were checked against its current release in November 2026 and moved where a source showed they had: NaviBeat's new platforms and features, share links in Psysonic, Feishin and Supersonic, Poweramp's AutoEQ database, Gonic 0.23, and the servers' versions.

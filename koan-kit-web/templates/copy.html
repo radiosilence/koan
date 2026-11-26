@@ -1,0 +1,8 @@
+{#- A read-only field joined to the button that copies it. The value and the labels travel in attributes the
+    expressions read, so nothing in them reaches script. Where the clipboard is refused, the value is selected to copy by
+    hand. -#}
+<span class="combo{{ attrs.classes() }}"{{ attrs }}>
+  <input readonly value="{{ value }}" aria-label="{{ label }}" data-on:focus="el.select()">
+  <button type="button"{% if let Some(copied) = copied.present() %} data-copied="{{ copied }}"{% endif %} data-label="{{ button }}"
+    data-on:click="(navigator.clipboard?.writeText(el.previousElementSibling.value) ?? Promise.reject()).then(() => el.dataset.copied &amp;&amp; (el.textContent = el.dataset.copied, setTimeout(() => el.textContent = el.dataset.label, 2000))).catch(() => el.previousElementSibling.select())">{{ button }}</button>
+</span>

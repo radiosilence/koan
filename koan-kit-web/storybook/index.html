@@ -1,171 +1,571 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>kōan web kit</title>
-    <link rel="stylesheet" href="out.css" />
-  </head>
-  <body class="mx-auto max-w-panel px-5 py-8">
-    <h1>the kōan web kit</h1>
-    <p class="text-muted">Every control in every state. The scheme follows the system; the accent is koan's mint.</p>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<title>kōan web kit</title>
+<link rel="preload" href="geist-mono.woff2?v=4a0c51217eb6bd13" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="out.css">
+<link rel="icon" href="data:,">
+</head>
+<body class="mx-auto max-w-3xl px-5 py-8">
+<a class="skip" href="#main">skip to the kit</a>
+<main id="main">
+<h1>the kōan web kit</h1>
+<p class="text-muted">Every component in every state, each beside the call that drew it: the koan-kit-web crate's askama components, drawn with the kit's stylesheet. The scheme follows the system; the accent is koan's mint.</p>
+<nav class="flex flex-wrap gap-x-4 gap-y-1 text-meta">
+  <a href="#type">type</a>
+  <a href="#buttons">buttons</a>
+  <a href="#requests">requests</a>
+  <a href="#asking-first">asking first</a>
+  <a href="#sheets">sheets</a>
+  <a href="#fields">fields</a>
+  <a href="#choices">choices</a>
+  <a href="#forms">forms</a>
+  <a href="#state">state</a>
+  <a href="#messages">messages</a>
+  <a href="#content">content</a>
+  <a href="#icons">icons</a>
+  <a href="#classes">classes</a>
+</nav>
 
-    <h2>type</h2>
-    <p class="text-display font-extralight text-strong">display</p>
-    <p class="text-title font-light text-strong">title</p>
-    <p class="text-title-sm font-light text-strong">title-sm</p>
-    <p class="text-body">body: the text of a page.</p>
-    <p class="text-control">control: a button's or field's label.</p>
-    <p class="text-meta text-muted">meta: secondary text, counts, durations 3:41.</p>
-    <p class="text-fine text-muted">fine: footnotes and hints.</p>
-    <h3>a section heading</h3>
-    <p>A <a href="#">link</a>, <strong>strong text</strong>, and <code>code</code>.</p>
+<h2 id="type">type</h2>
+<p class="text-display font-extralight text-strong">display</p>
+<p class="text-title font-light text-strong">title</p>
+<p class="text-title-sm font-light text-strong">title-sm</p>
+<p class="text-body">body: the text of a page.</p>
+<p class="text-control">control: a button's or field's label.</p>
+<p class="text-meta text-muted">meta: secondary text, counts, durations 3:41.</p>
+<p class="text-fine text-muted">fine: footnotes and hints.</p>
+<h3>a section heading</h3>
+<p>A <a href="#type">link</a>, <strong>strong text</strong>, and <code>code</code>.</p>
 
-    <h2>buttons</h2>
-    <div class="flex flex-wrap items-center gap-3">
-      <button class="primary">connect</button>
-      <button>bordered</button>
-      <button class="standard">standard</button>
-      <button class="quiet">quiet</button>
-      <button class="link">link</button>
-      <a class="button" href="#">a link as a button</a>
-    </div>
-    <div class="mt-3 flex flex-wrap items-center gap-3">
-      <button class="bad">disconnect</button>
-      <button class="quiet bad">remove</button>
-      <button class="busy">saving</button>
-      <button class="primary busy">connecting</button>
-      <button disabled>disabled</button>
-      <button class="icon-button" aria-label="more">⋯</button>
-    </div>
-    <div class="mt-3 flex flex-wrap items-center gap-3">
-      <button class="fill">filled</button>
-      <button class="bad fill">delete</button>
-      <button class="fill" disabled>disabled</button>
-    </div>
+<h2 id="buttons">buttons</h2>
+<p class="text-meta text-muted">One type draws every action. Its weight is its constructor; bad, fill and a glyph qualify it.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="primary">connect</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;connect&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button">bordered</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;bordered&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="standard">standard</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::standard(&#34;standard&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="quiet">quiet</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;quiet&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="link">link</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::link(&#34;link&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><a class="button primary" href="#buttons">sign in</a></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;sign in&#34;).href(&#34;#buttons&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="bad">disconnect</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;disconnect&#34;).bad()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="quiet bad">remove</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;remove&#34;).bad()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="bad fill">delete</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;delete&#34;).bad().fill()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="fill">filled</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;filled&#34;).fill()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="primary busy">connecting</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;connecting&#34;).busy(true)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" disabled>disabled</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;disabled&#34;).disabled(true)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button"><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M4 13L4 20L20 20L20 13M12 15.5L12 3.5M8 7.5L12 3.5L16 7.5"/></svg>export</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;export&#34;).icon(kit::icon::EXPORT)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="icon-button" aria-label="more"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M5.25 12L5.75 12M11.75 12L12.25 12M18.25 12L18.75 12"/></svg></button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;more&#34;).icon_only(kit::icon::MORE)</pre></figcaption>
+  </figure>
+</div>
+<h2 id="requests">requests</h2>
+<p class="text-meta text-muted">A request carries its URL as data, and the button is busy for exactly as long as its own request runs.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="primary" data-url="/stub/slow" data-indicator="_busyadcb76ddf8a7" data-class:busy="$_busyadcb76ddf8a7" data-attr:disabled="$_busyadcb76ddf8a7" data-on:click="@post(el.dataset.url)">rescan</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;rescan&#34;).post(&#34;/stub/slow&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" data-url="/stub/slow" data-indicator="_busyfb539b5f8e0c" data-class:busy="$_busyfb539b5f8e0c" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url, {requestCancellation: 'disabled'})">retry</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;retry&#34;).post(&#34;/stub/slow&#34;).busy_key(&#34;card-1&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" data-url="/stub/slow?next" data-indicator="_busyfb539b5f8e0c" data-class:busy="$_busyfb539b5f8e0c" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url, {requestCancellation: 'disabled'})">next copy</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;next copy&#34;).post(&#34;/stub/slow?next&#34;).busy_key(&#34;card-1&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" data-url="/stub/flash" data-indicator="_busye6c26beeae86" data-class:busy="$_busye6c26beeae86" data-attr:disabled="$_busye6c26beeae86" data-on:click="@get(el.dataset.url)">say saved</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;say saved&#34;).get(&#34;/stub/flash&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" data-url="/stub/failed" data-indicator="_busy039535423be1" data-class:busy="$_busy039535423be1" data-attr:disabled="$_busy039535423be1" data-on:click="@get(el.dataset.url)">say it failed</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;say it failed&#34;).get(&#34;/stub/failed&#34;)</pre></figcaption>
+  </figure>
+</div>
+<h2 id="asking-first">asking first</h2>
+<p class="text-meta text-muted">A question, or the server&#39;s preview of a change, in the page&#39;s one Confirm. Yes waits for its own preview.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="bad" data-url="/stub/slow" data-ask="remove Held on the Tips of Fingers from the library?" data-yes="remove" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.detail = el.dataset.detail || ''; $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">remove album</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;remove album&#34;).bad().post(&#34;/stub/slow&#34;).confirm(&#34;remove Held on the Tips of Fingers from the library?&#34;,
+&#34;remove&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="quiet" data-url="/stub/slow" data-ask="close every unpinned search?" data-yes="close them" data-detail="Pinned searches stay open; the rest lose their results." data-yes-bad commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.detail = el.dataset.detail || ''; $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">close unpinned</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;close unpinned&#34;).post(&#34;/stub/slow&#34;).confirm(&#34;close every unpinned search?&#34;,
+&#34;close them&#34;).detail(&#34;Pinned searches stay open; the rest lose their results.&#34;).yes_bad()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="primary" data-url="/stub/slow" data-ask="rename three files?" data-yes="rename" data-preview="/stub/preview" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.detail = el.dataset.detail || ''; $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">rename files</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;rename files&#34;).post(&#34;/stub/slow&#34;).preview(&#34;/stub/preview&#34;,
+&#34;rename three files?&#34;, &#34;rename&#34;)</pre></figcaption>
+  </figure>
+</div>
+<h2 id="sheets">sheets</h2>
+<p class="text-meta text-muted">A dialog opened and closed through commandfor, with no script: rising from the bottom on a phone.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="primary" commandfor="story-sheet" command="show-modal">add a server</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;add a server&#34;).opens(&#34;story-sheet&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><dialog class="sheet" closedby="any" aria-labelledby="story-sheet-title" id="story-sheet">
+  <header>
+    <h2 id="story-sheet-title">add a server</h2>
+    <button type="button" class="quiet" commandfor="story-sheet" command="close">close</button>
+  </header>
+  <section>A dialog that rises from the bottom on a phone and is a centred panel elsewhere.</section>
+  <footer class="actions">
+    <button type="button" class="quiet" commandfor="story-sheet" command="close">cancel</button>
+    <button type="button" class="primary" commandfor="story-sheet" command="close">add</button>
+  </footer>
+</dialog></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Sheet::new(&#34;story-sheet&#34;,
+&#34;add a server&#34;).close(&#34;close&#34;).body(&#34;A dialog that rises from the bottom on a phone and is a centred panel elsewhere.&#34;).action(kit::Button::quiet(&#34;cancel&#34;).closes(&#34;story-sheet&#34;)).action(kit::Button::primary(&#34;add&#34;).closes(&#34;story-sheet&#34;))</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" commandfor="story-wrapped" command="show-modal">open a wrapped sheet</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;open a wrapped sheet&#34;).opens(&#34;story-wrapped&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><dialog class="sheet" closedby="any" aria-labelledby="story-wrapped-title" id="story-wrapped">
+  <header>
+    <h2 id="story-wrapped-title">rename</h2>
+    <button type="button" class="quiet" commandfor="story-wrapped" command="close">close</button>
+  </header>
+  <section><p>The sheet holds whatever the block renders.</p></section>
+</dialog></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{% filter kit::wrap(kit::Sheet::new(&#34;story-wrapped&#34;, &#34;rename&#34;).close(&#34;close&#34;)) %}
+  &#60;p&#62;The sheet holds whatever the block renders.&#60;/p&#62;
+{% endfilter %}</pre></figcaption>
+  </figure>
+</div>
+<h2 id="fields">fields</h2>
+<p class="text-meta text-muted">A label leading, the control filling the width, and a note under it that describes the control.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><label class="field">
+  <span id="token-label">api token</span>
+  <input type="password" placeholder="paste the token" name="token" aria-labelledby="token-label" aria-describedby="token-note">
+  <small id="token-note">Stored sealed; the gateway never shows it again.</small>
+</label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::password(&#34;token&#34;,
+&#34;api token&#34;).placeholder(&#34;paste the token&#34;).hint(&#34;Stored sealed; the gateway never shows it again.&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="field">
+  <span id="region-label">region</span>
+  <select name="region" aria-labelledby="region-label"><option value="eu-west">eu-west</option><option value="us-east" selected>us-east</option></select>
+</label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::select(&#34;region&#34;, &#34;region&#34;,
+[(&#34;eu-west&#34;, &#34;eu-west&#34;), (&#34;us-east&#34;, &#34;us-east&#34;)]).value(&#34;us-east&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="field bad">
+  <span id="server-label">server url</span>
+  <input type="url" value="htp://example" name="server" aria-labelledby="server-label" aria-describedby="server-note" aria-invalid="true">
+  <small id="server-note">Not a URL: it must start with https://.</small>
+</label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::url(&#34;server&#34;,
+&#34;server url&#34;).value(&#34;htp://example&#34;).error(&#34;Not a URL: it must start with https://.&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="field warn">
+  <span id="notes-label">notes</span>
+  <textarea name="notes" aria-labelledby="notes-label" aria-describedby="notes-note">
+Text a person wrote keeps its Case.</textarea>
+  <small id="notes-note">Saved on this device only.</small>
+</label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::textarea(&#34;notes&#34;,
+&#34;notes&#34;).value(&#34;Text a person wrote keeps its Case.&#34;).warning(&#34;Saved on this device only.&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="field">
+  <span id="slots-label">upload slots</span>
+  <input type="number" value="4" min="0" max="20" name="slots" aria-labelledby="slots-label">
+</label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::number(&#34;slots&#34;, &#34;upload slots&#34;).value(&#34;4&#34;).min(0).max(20)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="combo"><input type="text" placeholder="split on" name="split" aria-label="separator"><button type="button">credit artists</button></span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Combo::new(kit::Input::text(&#34;split&#34;).placeholder(&#34;split on&#34;).label(&#34;separator&#34;),
+kit::Button::bordered(&#34;credit artists&#34;))</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="combo"><input type="search" value="Artist Album" name="query" aria-label="search"><button type="button" class="primary">grab</button></span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Combo::new(kit::Input::search(&#34;query&#34;).value(&#34;Artist Album&#34;).label(&#34;search&#34;),
+kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
+  </figure>
+</div>
+<h2 id="choices">choices</h2>
+<p class="text-meta text-muted">A box leading its words inline, or a settings row with the box where a switch would be.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><label class="check"><input type="checkbox" name="lossless" checked> lossless only</label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::new(&#34;lossless&#34;, &#34;lossless only&#34;).checked(true)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="check"><input type="radio" name="quality" value="lossless" checked> lossless</label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::radio(&#34;quality&#34;, &#34;lossless&#34;, &#34;lossless&#34;).checked(true)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="check"><input type="radio" name="quality" value="any"> any</label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::radio(&#34;quality&#34;, &#34;any&#34;, &#34;any&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="toggle"><span>notify when done</span><input type="checkbox" name="notify" checked></label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Toggle::new(&#34;notify&#34;, &#34;notify when done&#34;).checked(true)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="toggle"><span>include lossy copies</span><input type="checkbox" name="lossy"></label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Toggle::new(&#34;lossy&#34;, &#34;include lossy copies&#34;)</pre></figcaption>
+  </figure>
+</div>
+<h2 id="forms">forms</h2>
+<p class="text-meta text-muted">A form keeps its method and action, and its submit is busy while the form&#39;s request runs.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><form action="/stub/slow" method="post" data-indicator="_busy1fb960ff6465" data-on:submit="(el.noValidate || el.checkValidity()) && @post(el.getAttribute('action'), {contentType: 'form'})"><label class="field">
+  <span id="name-label">name</span>
+  <input type="text" name="name" aria-labelledby="name-label" aria-describedby="name-note" required>
+  <small id="name-note">What the server calls itself.</small>
+</label><label class="toggle"><span>listed publicly</span><input type="checkbox" name="public"></label><button type="submit" class="primary" data-class:busy="$_busy1fb960ff6465" data-attr:disabled="$_busy1fb960ff6465">save</button></form></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{% let form = kit::Form::post(&#34;/stub/slow&#34;) %}
+&#60;form {{ form.attrs() }}&#62;
+  {{ kit::Field::text(&#34;name&#34;, &#34;name&#34;).required().hint(&#34;What the server calls itself.&#34;) }}
+  {{ kit::Toggle::new(&#34;public&#34;, &#34;listed publicly&#34;) }}
+  {{ form.submit(kit::Button::primary(&#34;save&#34;)) }}
+&#60;/form&#62;</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><form action="/stub/search" method="get" data-indicator="_busy58b056101a44" data-on:submit="(el.noValidate || el.checkValidity()) && @get(el.getAttribute('action'), {contentType: 'form'})" data-on:input__debounce.300ms="(el.noValidate || el.checkValidity()) && @get(el.getAttribute('action'), {contentType: 'form'})"><input type="search" placeholder="polar bear" name="q" aria-label="search"></form><ul id="story-results" class="rows"></ul></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{% let search = kit::Form::get(&#34;/stub/search&#34;).live() %}
+&#60;form {{ search.attrs() }}&#62;
+  {{ kit::Input::search(&#34;q&#34;).label(&#34;search&#34;).placeholder(&#34;polar bear&#34;) }}
+&#60;/form&#62;
+&#60;ul id=&#34;story-results&#34; class=&#34;rows&#34;&#62;&#60;/ul&#62;</pre></figcaption>
+  </figure>
+</div>
+<h2 id="state">state</h2>
+<p class="text-meta text-muted">A status&#39;s word says what its colour does; a meter is named for a screen reader.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><span class="status ok">connected</span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::ok(&#34;connected&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="status warn">not configured</span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::warn(&#34;not configured&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="status bad">rejected</span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::bad(&#34;rejected&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="status wait">queued</span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::wait(&#34;queued&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="status wait busy">checking</span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::wait(&#34;checking&#34;).busy(true)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="status wait busy" data-url="/stub/status" data-init="@get(el.dataset.url)" aria-busy="true" id="story-status">checking</span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::wait(&#34;checking&#34;).loads(&#34;/stub/status&#34;).id(&#34;story-status&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><progress class="meter" value="40" max="100" aria-label="download"></progress></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Meter::new(40, 100).label(&#34;download&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><progress class="meter ok" value="80" max="100" aria-label="scan"></progress></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Meter::new(80, 100).tone(kit::Tone::Ok).label(&#34;scan&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><progress class="meter warn" value="30" max="100" aria-label="disk"></progress></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Meter::new(30, 100).tone(kit::Tone::Warn).label(&#34;disk&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><progress class="meter bad" value="60" max="100" aria-label="errors"></progress></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Meter::new(60, 100).tone(kit::Tone::Bad).label(&#34;errors&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><progress class="meter" aria-label="connecting"></progress></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Meter::waiting().label(&#34;connecting&#34;)</pre></figcaption>
+  </figure>
+</div>
+<h2 id="messages">messages</h2>
+<p class="text-meta text-muted">A notice says something about the page in place; an empty state stands where a list would be.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><div class="notice" role="status">Saved. The next sign-in uses it.</div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::new(&#34;Saved. The next sign-in uses it.&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><div class="notice warn" role="status">The token expires in two days.</div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::warn(&#34;The token expires in two days.&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><div class="notice bad" role="alert">The server refused the token: 401. <button type="button" data-url="/stub/slow" data-indicator="_busy3c8c2a52f1c0" data-class:busy="$_busy3c8c2a52f1c0" data-attr:disabled="$_busy3c8c2a52f1c0" data-on:click="@post(el.dataset.url)">retry</button></div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::bad(&#34;The server refused the token: 401.&#34;).action(kit::Button::bordered(&#34;retry&#34;).post(&#34;/stub/slow&#34;))</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><div class="notice warn" role="status"><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 3.5L21 19.5L3 19.5ZM12 9L12 14M11.75 16.75L12.25 16.75"/></svg>Unreachable since 14:02.</div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::warn(&#34;Unreachable since 14:02.&#34;).icon(kit::icon::WARNING)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><div class="empty compact">
+  <strong>no rooms joined</strong>
+</div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Empty::new(&#34;no rooms joined&#34;).compact()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><div class="empty">
+  <svg class="icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.22" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 4L12 15M7.5 10.5L12 15L16.5 10.5M5 19.5L19 19.5"/></svg>
+  <strong>nothing downloading</strong>
+  <p>Albums you grab appear here.</p>
+</div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Empty::new(&#34;nothing downloading&#34;).detail(&#34;Albums you grab appear here.&#34;).icon(kit::icon::DOWNLOAD)</pre></figcaption>
+  </figure>
+</div>
+<h2 id="content">content</h2>
+<p class="text-meta text-muted">Labelled pairs, a disclosure that opens or loads, and a value to copy.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><dl class="pairs"><dt>format</dt><dd>FLAC 24/96</dd><dt>size</dt><dd>1.2 GB</dd><dt>source</dt><dd><a class="button link" href="#content">soulseek</a></dd></dl></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Pairs::new().pair(&#34;format&#34;,
+&#34;FLAC 24/96&#34;).pair(&#34;size&#34;,
+&#34;1.2 GB&#34;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek&#34;).href(&#34;#content&#34;))</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><details class="disclosure">
+  <summary>connection details</summary>
+  <div>What only some readers need.</div>
+</details></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Disclosure::new(&#34;connection details&#34;).body(&#34;What only some readers need.&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><details class="disclosure" data-url="/stub/files" data-init="el.open &amp;&amp; @get(el.dataset.url)" data-on:toggle="el.open &amp;&amp; @get(el.dataset.url)" id="story-files">
+  <summary>files</summary>
+  <div>Reading…</div>
+</details></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Disclosure::new(&#34;files&#34;).loads(&#34;/stub/files&#34;,
+&#34;Reading…&#34;).id(&#34;story-files&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="combo">
+  <input readonly value="https://mcp.example.com/mcp/github" aria-label="mcp url" data-on:focus="el.select()">
+  <button type="button" data-copied="copied" data-label="copy"
+    data-on:click="(navigator.clipboard?.writeText(el.previousElementSibling.value) ?? Promise.reject()).then(() => el.dataset.copied &amp;&amp; (el.textContent = el.dataset.copied, setTimeout(() => el.textContent = el.dataset.label, 2000))).catch(() => el.previousElementSibling.select())">copy</button>
+</span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::CopyField::new(&#34;mcp url&#34;, &#34;https://mcp.example.com/mcp/github&#34;,
+&#34;copy&#34;).copied(&#34;copied&#34;)</pre></figcaption>
+  </figure>
+</div>
+<h2 id="icons">icons</h2>
+<p class="text-meta text-muted">The kōan set, on a 24-unit grid, its stroke set by the size it is drawn at.</p>
+<div class="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-4">
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="account"><path d="M3.5 3.5L20.5 3.5L20.5 20.5L3.5 20.5ZM8.5 10C8.5 8.067 10.067 6.5 12 6.5C13.933 6.5 15.5 8.067 15.5 10C15.5 11.933 13.933 13.5 12 13.5C10.067 13.5 8.5 11.933 8.5 10ZM6.5 20.5C6.5 17.462 8.962 15 12 15C15.038 15 17.5 17.462 17.5 20.5"/></svg><figcaption class="text-fine text-muted">account</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="add-to-queue"><path d="M4 6L20 6M4 11L20 11M4 16L11 16M16.5 13L16.5 21M12.5 17L20.5 17"/></svg><figcaption class="text-fine text-muted">add-to-queue</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="airplay"><path d="M12 15.5L17 21L7 21ZM9.79 15.33C8.319 14.355 7.661 12.531 8.17 10.842C8.679 9.152 10.235 7.996 12 7.996C13.765 7.996 15.321 9.152 15.83 10.842C16.339 12.531 15.681 14.355 14.21 15.33M7.08 18.31C4.387 16.209 3.324 12.63 4.435 9.4C5.545 6.17 8.584 4.002 12 4.002C15.416 4.002 18.455 6.17 19.565 9.4C20.676 12.63 19.613 16.209 16.92 18.31"/></svg><figcaption class="text-fine text-muted">airplay</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="album"><path d="M4 7.5L16.5 7.5L16.5 20L4 20ZM7.5 4L20 4L20 16.5"/></svg><figcaption class="text-fine text-muted">album</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="alert"><path d="M4 4L20 4L20 20L4 20ZM12 7.5L12 13M11.75 16L12.25 16"/></svg><figcaption class="text-fine text-muted">alert</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="appearance"><path d="M3.5 3.5L10.5 3.5L10.5 10.5L3.5 10.5ZM13.5 3.5L20.5 3.5L20.5 10.5L13.5 10.5ZM3.5 13.5L10.5 13.5L10.5 20.5L3.5 20.5ZM17 13L21 17L17 21L13 17Z"/></svg><figcaption class="text-fine text-muted">appearance</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="arrow-down"><path d="M12 4L12 19.5M6.5 14L12 19.5L17.5 14"/></svg><figcaption class="text-fine text-muted">arrow-down</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="arrow-right"><path d="M4 12L19.5 12M14 6.5L19.5 12L14 17.5"/></svg><figcaption class="text-fine text-muted">arrow-right</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="arrow-up"><path d="M12 20L12 4.5M6.5 10L12 4.5L17.5 10"/></svg><figcaption class="text-fine text-muted">arrow-up</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="artist"><path d="M10.5 9C10.5 6.515 12.515 4.5 15 4.5C17.485 4.5 19.5 6.515 19.5 9C19.5 11.485 17.485 13.5 15 13.5C12.515 13.5 10.5 11.485 10.5 9ZM11.8 12.2L5 19M7.5 16.5L4 20"/></svg><figcaption class="text-fine text-muted">artist</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="cable"><path d="M7 7L17 7L17 15L7 15ZM10 3.5L10 7M14 3.5L14 7M12 15L12 21"/></svg><figcaption class="text-fine text-muted">cable</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="check"><path d="M5 12.5L10 17.5L19 7"/></svg><figcaption class="text-fine text-muted">check</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="chevron-down"><path d="M4.5 8.5L12 16L19.5 8.5"/></svg><figcaption class="text-fine text-muted">chevron-down</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="chevron-left"><path d="M15 4.5L7.5 12L15 19.5"/></svg><figcaption class="text-fine text-muted">chevron-left</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="chevron-right"><path d="M9 4.5L16.5 12L9 19.5"/></svg><figcaption class="text-fine text-muted">chevron-right</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="chevron-up"><path d="M4.5 15.5L12 8L19.5 15.5"/></svg><figcaption class="text-fine text-muted">chevron-up</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="chevron-up-down"><path d="M8 9.5L12 5.5L16 9.5M8 14.5L12 18.5L16 14.5"/></svg><figcaption class="text-fine text-muted">chevron-up-down</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="clock"><path d="M3.5 12C3.5 7.306 7.306 3.5 12 3.5C16.694 3.5 20.5 7.306 20.5 12C20.5 16.694 16.694 20.5 12 20.5C7.306 20.5 3.5 16.694 3.5 12ZM12 7L12 12L16 12"/></svg><figcaption class="text-fine text-muted">clock</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="close"><path d="M6 6L18 18M18 6L6 18"/></svg><figcaption class="text-fine text-muted">close</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="cloud"><path d="M6.5 18C4.291 18 2.5 16.209 2.5 14C2.5 11.791 4.291 10 6.5 10C7.181 7.937 9.013 6.468 11.175 6.252C13.337 6.036 15.424 7.113 16.5 9C18.985 8.862 21.112 10.765 21.25 13.25C21.388 15.735 19.485 17.862 17 18Z"/></svg><figcaption class="text-fine text-muted">cloud</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="cloud-error"><path d="M6.5 18C4.291 18 2.5 16.209 2.5 14C2.5 11.791 4.291 10 6.5 10C7.181 7.937 9.013 6.468 11.175 6.252C13.337 6.036 15.424 7.113 16.5 9C18.985 8.862 21.112 10.765 21.25 13.25C21.388 15.735 19.485 17.862 17 18ZM11.75 10.5L11.75 13.5M11.5 15.75L12 15.75"/></svg><figcaption class="text-fine text-muted">cloud-error</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="cloud-kept"><path d="M6.5 18C4.291 18 2.5 16.209 2.5 14C2.5 11.791 4.291 10 6.5 10C7.181 7.937 9.013 6.468 11.175 6.252C13.337 6.036 15.424 7.113 16.5 9C18.985 8.862 21.112 10.765 21.25 13.25C21.388 15.735 19.485 17.862 17 18Z" fill="currentColor" stroke="none"/></svg><figcaption class="text-fine text-muted">cloud-kept</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="cloud-off"><path d="M6.5 18C4.291 18 2.5 16.209 2.5 14C2.5 11.791 4.291 10 6.5 10C7.181 7.937 9.013 6.468 11.175 6.252C13.337 6.036 15.424 7.113 16.5 9C18.985 8.862 21.112 10.765 21.25 13.25C21.388 15.735 19.485 17.862 17 18ZM4 4L20 20"/></svg><figcaption class="text-fine text-muted">cloud-off</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="copy"><path d="M4.5 16.5L4.5 3.5L15.5 3.5M8.5 7.5L19.5 7.5L19.5 20.5L8.5 20.5Z"/></svg><figcaption class="text-fine text-muted">copy</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="cut"><path d="M4.25 17.5C4.25 15.981 5.481 14.75 7 14.75C8.519 14.75 9.75 15.981 9.75 17.5C9.75 19.019 8.519 20.25 7 20.25C5.481 20.25 4.25 19.019 4.25 17.5ZM14.25 17.5C14.25 15.981 15.481 14.75 17 14.75C18.519 14.75 19.75 15.981 19.75 17.5C19.75 19.019 18.519 20.25 17 20.25C15.481 20.25 14.25 19.019 14.25 17.5ZM8.9 15.5L18 4M15.1 15.5L6 4"/></svg><figcaption class="text-fine text-muted">cut</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="devices"><path d="M3 5L14 5L14 14L3 14ZM2 17L15.5 17M17 7.5L21.5 7.5L21.5 19.5L17 19.5Z"/></svg><figcaption class="text-fine text-muted">devices</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="dice"><path d="M4 4L20 4L20 20L4 20ZM8.25 8.5L8.75 8.5M11.75 12L12.25 12M15.25 15.5L15.75 15.5"/></svg><figcaption class="text-fine text-muted">dice</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="display"><path d="M3 4L21 4L21 16L3 16ZM12 16L12 20M8 20L16 20"/></svg><figcaption class="text-fine text-muted">display</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="download"><path d="M12 4L12 15M7.5 10.5L12 15L16.5 10.5M5 19.5L19 19.5"/></svg><figcaption class="text-fine text-muted">download</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="drive"><path d="M3 8L21 8L21 16L3 16ZM6 12L11 12M17.25 12L17.75 12"/></svg><figcaption class="text-fine text-muted">drive</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="enso"><path d="M10.4 21.29L9.75 21.13L9.12 20.93L8.5 20.7L7.9 20.42L7.32 20.12L6.72 19.82L6.1 19.53L5.5 19.18L4.99 18.72L4.61 18.13L4.35 17.49L4.12 16.85L3.86 16.24L3.61 15.64L3.43 15.01L3.34 14.36L3.27 13.72L3.12 13.1L2.87 12.46L2.63 11.8L2.5 11.1L2.57 10.41L2.8 9.76L3.08 9.13L3.36 8.52L3.67 7.91L4.07 7.37L4.58 6.91L5.14 6.52L5.66 6.13L6.09 5.67L6.46 5.12L6.87 4.57L7.37 4.1L7.94 3.75L8.55 3.46L9.17 3.17L9.81 2.9L10.48 2.73L11.17 2.73L11.86 2.92L12.51 3.18L13.14 3.4L13.77 3.51L14.41 3.58L15.05 3.7L15.67 3.91L16.27 4.17L16.89 4.42L17.55 4.64L18.21 4.9L18.79 5.3L19.22 5.85L19.51 6.5L19.73 7.16L19.97 7.79L20.24 8.39L20.47 9L20.61 9.63L20.68 10.28L20.77 10.91L20.96 11.54L21.22 12.18L21.44 12.86L21.5 13.56L21.36 14.24L21.1 14.88L20.82 15.5L20.53 16.11L20.19 16.7L19.76 17.22L19.27 17.68L18.78 18.12L18.33 18.59L17.91 19.09L17.46 19.58L16.95 20.01L16.38 20.36L15.78 20.64L15.16 20.88"/></svg><figcaption class="text-fine text-muted">enso</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="envelope"><path d="M3 5.5L21 5.5L21 18.5L3 18.5ZM3 5.5L12 13L21 5.5"/></svg><figcaption class="text-fine text-muted">envelope</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="error"><path d="M20.55 15.54L15.54 20.55L8.46 20.55L3.45 15.54L3.45 8.46L8.46 3.45L15.54 3.45L20.55 8.46ZM9 9L15 15M15 9L9 15"/></svg><figcaption class="text-fine text-muted">error</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="export"><path d="M4 13L4 20L20 20L20 13M12 15.5L12 3.5M8 7.5L12 3.5L16 7.5"/></svg><figcaption class="text-fine text-muted">export</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="extensions"><path d="M4 7L9.75 7C9.75 5.757 10.757 4.75 12 4.75C13.243 4.75 14.25 5.757 14.25 7L18 7L18 11C19.243 11 20.25 12.007 20.25 13.25C20.25 14.493 19.243 15.5 18 15.5L18 20L4 20Z"/></svg><figcaption class="text-fine text-muted">extensions</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="filter"><path d="M3 6.5L21 6.5M15 4L15 9M3 12L21 12M8 9.5L8 14.5M3 17.5L21 17.5M13 15L13 20"/></svg><figcaption class="text-fine text-muted">filter</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="folder"><path d="M3 5.5L9.5 5.5L11.5 7.5L21 7.5L21 19L3 19Z"/></svg><figcaption class="text-fine text-muted">folder</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="folder-unknown"><path d="M3 5.5L9.5 5.5L11.5 7.5L21 7.5L21 19L3 19ZM9.75 11C9.75 9.757 10.757 8.75 12 8.75C13.243 8.75 14.25 9.757 14.25 11C14.25 12.243 13.243 13.25 12 13.25L12 14.25M11.75 16.5L12.25 16.5"/></svg><figcaption class="text-fine text-muted">folder-unknown</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="headphones"><path d="M4 17L4 12C4 7.582 7.582 4 12 4C16.418 4 20 7.582 20 12L20 17M3 14L7 14L7 20L3 20ZM17 14L21 14L21 20L17 20Z"/></svg><figcaption class="text-fine text-muted">headphones</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="heart"><path d="M12 19L6 13C4.38 11.337 4.397 8.681 6.039 7.039C7.681 5.397 10.337 5.38 12 7C13.663 5.38 16.319 5.397 17.961 7.039C19.603 8.681 19.62 11.337 18 13Z"/></svg><figcaption class="text-fine text-muted">heart</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="heart-filled"><path d="M12 19L6 13C4.38 11.337 4.397 8.681 6.039 7.039C7.681 5.397 10.337 5.38 12 7C13.663 5.38 16.319 5.397 17.961 7.039C19.603 8.681 19.62 11.337 18 13Z" fill="currentColor" stroke="none"/></svg><figcaption class="text-fine text-muted">heart-filled</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="history"><path d="M12 5C16.142 5 19.5 8.358 19.5 12.5C19.5 16.642 16.142 20 12 20C7.858 20 4.5 16.642 4.5 12.5M14.5 2.5L12 5L14.5 7.5M12 9L12 12.5L15 14.5"/></svg><figcaption class="text-fine text-muted">history</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="info"><path d="M4 4L20 4L20 20L4 20ZM12 11L12 16.5M11.75 7.75L12.25 7.75"/></svg><figcaption class="text-fine text-muted">info</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="keyboard"><path d="M2.5 6L21.5 6L21.5 18L2.5 18ZM5.75 9.5L6.25 9.5M9.25 9.5L9.75 9.5M12.75 9.5L13.25 9.5M16.25 9.5L16.75 9.5M7.5 12L8 12M11 12L11.5 12M14.5 12L15 12M8 14.5L16 14.5"/></svg><figcaption class="text-fine text-muted">keyboard</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="laptop"><path d="M4 5L20 5L20 16L4 16ZM2.5 19L21.5 19"/></svg><figcaption class="text-fine text-muted">laptop</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="library"><path d="M3.5 11L12 3.5L20.5 11M5.5 9.5L5.5 20L18.5 20L18.5 9.5M9 16.5C9 15.672 9.672 15 10.5 15C11.328 15 12 15.672 12 16.5C12 17.328 11.328 18 10.5 18C9.672 18 9 17.328 9 16.5ZM12 16.5L12 11L14.5 12"/></svg><figcaption class="text-fine text-muted">library</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="link"><path d="M13.13 15.12L8.88 10.87L2.87 16.88L7.12 21.13ZM21.13 7.12L16.88 2.87L10.87 8.88L15.12 13.13ZM9.5 14.5L14.5 9.5"/></svg><figcaption class="text-fine text-muted">link</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="list"><path d="M4.5 7L5 7M4.5 12L5 12M4.5 17L5 17M8.5 7L20 7M8.5 12L20 12M8.5 17L20 17"/></svg><figcaption class="text-fine text-muted">list</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="lyrics"><path d="M3 4L21 4L21 16L11 16L6 20.5L6 16L3 16ZM9.5 8L8.5 11.5M13 8L12 11.5"/></svg><figcaption class="text-fine text-muted">lyrics</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="minus"><path d="M4.5 12L19.5 12"/></svg><figcaption class="text-fine text-muted">minus</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="more"><path d="M5.25 12L5.75 12M11.75 12L12.25 12M18.25 12L18.75 12"/></svg><figcaption class="text-fine text-muted">more</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="next"><path d="M5 6L15 12L5 18ZM19 6L19 18"/></svg><figcaption class="text-fine text-muted">next</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="open-external"><path d="M11 4.5L4.5 4.5L4.5 19.5L19.5 19.5L19.5 13M14 4.5L19.5 4.5L19.5 10M19.5 4.5L11 13"/></svg><figcaption class="text-fine text-muted">open-external</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="organize"><path d="M3 5.5L9.5 5.5L11.5 7.5L21 7.5L21 19L3 19ZM7.5 13.5L16 13.5M13.5 11L16 13.5L13.5 16"/></svg><figcaption class="text-fine text-muted">organize</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="paste"><path d="M8.5 5L4.5 5L4.5 21L19.5 21L19.5 5L15.5 5M8.5 3L15.5 3L15.5 7L8.5 7Z"/></svg><figcaption class="text-fine text-muted">paste</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="pause"><path d="M8.5 5L8.5 19M15.5 5L15.5 19"/></svg><figcaption class="text-fine text-muted">pause</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="pending"><path d="M5.88 5L7.63 5M5.88 19L7.63 19M5 5.88L5 7.63M19 5.88L19 7.63M9.38 5L11.13 5M9.38 19L11.13 19M5 9.38L5 11.13M19 9.38L19 11.13M12.88 5L14.63 5M12.88 19L14.63 19M5 12.88L5 14.63M19 12.88L19 14.63M16.38 5L18.13 5M16.38 19L18.13 19M5 16.38L5 18.13M19 16.38L19 18.13"/></svg><figcaption class="text-fine text-muted">pending</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="people"><path d="M5.5 8.5C5.5 6.567 7.067 5 9 5C10.933 5 12.5 6.567 12.5 8.5C12.5 10.433 10.933 12 9 12C7.067 12 5.5 10.433 5.5 8.5ZM3 20.5C3 17.186 5.686 14.5 9 14.5C12.314 14.5 15 17.186 15 20.5M15 4.6C16.249 4.3 17.556 4.764 18.338 5.783C19.119 6.802 19.227 8.185 18.613 9.313C18 10.441 16.78 11.102 15.5 11M17 14C19.701 14.385 21.657 16.776 21.5 19.5"/></svg><figcaption class="text-fine text-muted">people</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="phone"><path d="M7 2.5L17 2.5L17 21.5L7 21.5ZM10.5 5.5L13.5 5.5"/></svg><figcaption class="text-fine text-muted">phone</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="play"><path d="M7 5L19 12L7 19Z"/></svg><figcaption class="text-fine text-muted">play</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="play-mark"><path d="M3.5 3.5L20.5 3.5L20.5 20.5L3.5 20.5ZM10 8L16 12L10 16Z"/></svg><figcaption class="text-fine text-muted">play-mark</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="play-next"><path d="M4 4.5L9 7.5L4 10.5ZM12.5 7.5L20 7.5M4 13.5L20 13.5M4 18.5L20 18.5"/></svg><figcaption class="text-fine text-muted">play-next</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="play-pause"><path d="M3.5 6L11 12L3.5 18ZM15.5 6L15.5 18M20 6L20 18"/></svg><figcaption class="text-fine text-muted">play-pause</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="playlist"><path d="M3 6L14 6M3 10.5L14 10.5M3 15L9.5 15M13 17.5C13 16.395 13.895 15.5 15 15.5C16.105 15.5 17 16.395 17 17.5C17 18.605 16.105 19.5 15 19.5C13.895 19.5 13 18.605 13 17.5ZM17 17.5L17 5.5L21 7.5"/></svg><figcaption class="text-fine text-muted">playlist</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="plus"><path d="M12 4.5L12 19.5M4.5 12L19.5 12"/></svg><figcaption class="text-fine text-muted">plus</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="previous"><path d="M19 6L9 12L19 18ZM5 6L5 18"/></svg><figcaption class="text-fine text-muted">previous</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="redo"><path d="M15 4.5L19.5 9L15 13.5M19.5 9L9 9C6.239 9 4 11.239 4 14C4 16.761 6.239 19 9 19L15 19"/></svg><figcaption class="text-fine text-muted">redo</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="remove"><path d="M4 4L20 4L20 20L4 20ZM8 12L16 12"/></svg><figcaption class="text-fine text-muted">remove</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="renderer"><path d="M12 12.5L12 21M11.75 9.5L12.25 9.5M8.94 12.07C7.694 10.583 7.694 8.417 8.94 6.93M5.87 14.64C3.377 11.667 3.377 7.333 5.87 4.36M15.06 6.93C16.306 8.417 16.306 10.583 15.06 12.07M18.13 4.36C20.623 7.333 20.623 11.667 18.13 14.64"/></svg><figcaption class="text-fine text-muted">renderer</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="repeat"><path d="M4 11L4 7L19 7M16.5 4.5L19 7L16.5 9.5M20 13L20 17L5 17M7.5 14.5L5 17L7.5 19.5"/></svg><figcaption class="text-fine text-muted">repeat</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="repeat-one"><path d="M4 11L4 7L19 7M16.5 4.5L19 7L16.5 9.5M20 13L20 17L5 17M7.5 14.5L5 17L7.5 19.5M11 10.5L12.5 10L12.5 14"/></svg><figcaption class="text-fine text-muted">repeat-one</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="rescan"><path d="M19.5 12.5C19.5 16.642 16.142 20 12 20C7.858 20 4.5 16.642 4.5 12.5C4.5 8.358 7.858 5 12 5M9.5 2.5L12 5L9.5 7.5"/></svg><figcaption class="text-fine text-muted">rescan</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="rescan-all"><path d="M19.5 12.5C19.5 16.642 16.142 20 12 20C7.858 20 4.5 16.642 4.5 12.5C4.5 8.358 7.858 5 12 5M9.5 2.5L12 5L9.5 7.5M10.5 11L13.5 11L13.5 14L10.5 14Z"/></svg><figcaption class="text-fine text-muted">rescan-all</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="save"><path d="M4 13L4 20L20 20L20 13M12 3.5L12 15M8 11L12 15L16 11"/></svg><figcaption class="text-fine text-muted">save</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="scope"><path d="M5.5 12C5.5 8.41 8.41 5.5 12 5.5C15.59 5.5 18.5 8.41 18.5 12C18.5 15.59 15.59 18.5 12 18.5C8.41 18.5 5.5 15.59 5.5 12ZM12 3L12 7.5M12 16.5L12 21M3 12L7.5 12M16.5 12L21 12"/></svg><figcaption class="text-fine text-muted">scope</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="search"><path d="M4.5 10.5C4.5 7.186 7.186 4.5 10.5 4.5C13.814 4.5 16.5 7.186 16.5 10.5C16.5 13.814 13.814 16.5 10.5 16.5C7.186 16.5 4.5 13.814 4.5 10.5ZM15 15L20.5 20.5"/></svg><figcaption class="text-fine text-muted">search</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="select"><path d="M4 4L20 4L20 20L4 20Z"/></svg><figcaption class="text-fine text-muted">select</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="select-all"><path d="M4 4L20 4L20 20L4 20ZM7.5 12L10.5 15L16.5 9"/></svg><figcaption class="text-fine text-muted">select-all</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="selecting"><path d="M7.5 12L10.5 15L16.5 9"/><path d="M4 4L20 4L20 20L4 20Z" fill="currentColor" stroke="none"/></svg><figcaption class="text-fine text-muted">selecting</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="server"><path d="M3 4L21 4L21 11L3 11ZM3 13L21 13L21 20L3 20ZM6 7.5L8 7.5M6 16.5L8 16.5"/></svg><figcaption class="text-fine text-muted">server</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="settings"><path d="M18.43 10.52L20.89 10.59L20.89 13.41L18.43 13.48L17.6 15.5L19.28 17.29L17.29 19.28L15.5 17.6L13.48 18.43L13.41 20.89L10.59 20.89L10.52 18.43L8.5 17.6L6.71 19.28L4.72 17.29L6.4 15.5L5.57 13.48L3.11 13.41L3.11 10.59L5.57 10.52L6.4 8.5L4.72 6.71L6.71 4.72L8.5 6.4L10.52 5.57L10.59 3.11L13.41 3.11L13.48 5.57L15.5 6.4L17.29 4.72L19.28 6.71L17.6 8.5ZM9.25 12C9.25 10.481 10.481 9.25 12 9.25C13.519 9.25 14.75 10.481 14.75 12C14.75 13.519 13.519 14.75 12 14.75C10.481 14.75 9.25 13.519 9.25 12Z"/></svg><figcaption class="text-fine text-muted">settings</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="shuffle"><path d="M3 7L8 7L16 17L20.5 17M3 17L8 17L16 7L20.5 7M18 4.5L20.5 7L18 9.5M18 14.5L20.5 17L18 19.5"/></svg><figcaption class="text-fine text-muted">shuffle</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="sidebar"><path d="M3 4.5L21 4.5L21 19.5L3 19.5ZM9 4.5L9 19.5"/></svg><figcaption class="text-fine text-muted">sidebar</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="skip-back"><path d="M12 5C16.142 5 19.5 8.358 19.5 12.5C19.5 16.642 16.142 20 12 20C7.858 20 4.5 16.642 4.5 12.5M14.5 2.5L12 5L14.5 7.5M9.5 10.5L10.5 10L10.5 15.5M12.5 10L15 10L15 15.5L12.5 15.5Z"/></svg><figcaption class="text-fine text-muted">skip-back</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="skip-forward"><path d="M19.5 12.5C19.5 16.642 16.142 20 12 20C7.858 20 4.5 16.642 4.5 12.5C4.5 8.358 7.858 5 12 5M9.5 2.5L12 5L9.5 7.5M9.5 10.5L10.5 10L10.5 15.5M12.5 10L15 10L15 15.5L12.5 15.5Z"/></svg><figcaption class="text-fine text-muted">skip-forward</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="sleep"><path d="M13.39 4.62C9.039 3.853 4.891 6.759 4.123 11.109C3.356 15.46 6.261 19.609 10.612 20.377C14.962 21.145 19.112 18.241 19.88 13.89C17.526 14.185 15.203 13.153 13.842 11.21C12.482 9.267 12.308 6.731 13.39 4.62Z"/></svg><figcaption class="text-fine text-muted">sleep</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="sleep-set"><path d="M11.22 7.11C8.432 6.615 5.62 7.849 4.096 10.236C2.573 12.623 2.637 15.692 4.26 18.013C5.882 20.334 8.743 21.449 11.508 20.837C14.273 20.226 16.397 18.009 16.89 15.22C14.832 15.474 12.803 14.57 11.615 12.871C10.427 11.172 10.275 8.955 11.22 7.11ZM14.5 3.5L20 3.5L14.5 9L20 9"/></svg><figcaption class="text-fine text-muted">sleep-set</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="sort"><path d="M8 20L8 4.5M4 8.5L8 4.5L12 8.5M16 4L16 19.5M12 15.5L16 19.5L20 15.5"/></svg><figcaption class="text-fine text-muted">sort</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="speaker"><path d="M6 3L18 3L18 21L6 21ZM8.5 14.5C8.5 12.567 10.067 11 12 11C13.933 11 15.5 12.567 15.5 14.5C15.5 16.433 13.933 18 12 18C10.067 18 8.5 16.433 8.5 14.5ZM10.75 7.5C10.75 6.81 11.31 6.25 12 6.25C12.69 6.25 13.25 6.81 13.25 7.5C13.25 8.19 12.69 8.75 12 8.75C11.31 8.75 10.75 8.19 10.75 7.5Z"/></svg><figcaption class="text-fine text-muted">speaker</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="sync"><path d="M5 12C5 9.169 6.705 6.616 9.321 5.532C11.937 4.449 14.948 5.048 16.95 7.05M17 3.5L17 7L13.5 7M19 12C19 14.831 17.295 17.384 14.679 18.468C12.063 19.551 9.052 18.952 7.05 16.95M7 20.5L7 17L10.5 17"/></svg><figcaption class="text-fine text-muted">sync</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="television"><path d="M3 4L21 4L21 17L3 17ZM8 20L16 20M10.5 8L14 10.5L10.5 13Z"/></svg><figcaption class="text-fine text-muted">television</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="track"><path d="M5.5 17.5C5.5 16.119 6.619 15 8 15C9.381 15 10.5 16.119 10.5 17.5C10.5 18.881 9.381 20 8 20C6.619 20 5.5 18.881 5.5 17.5ZM10.5 17.5L10.5 4.5L16.5 7.5"/></svg><figcaption class="text-fine text-muted">track</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="trash"><path d="M4 6.5L20 6.5M9.5 6.5L9.5 4L14.5 4L14.5 6.5M6 6.5L7 20L17 20L18 6.5M10.5 10L10.5 16.5M13.5 10L13.5 16.5"/></svg><figcaption class="text-fine text-muted">trash</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="tuning"><path d="M6.5 3L6.5 21M4 9L9 9M12 3L12 21M9.5 15L14.5 15M17.5 3L17.5 21M15 7L20 7"/></svg><figcaption class="text-fine text-muted">tuning</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="undo"><path d="M9 4.5L4.5 9L9 13.5M4.5 9L15 9C17.761 9 20 11.239 20 14C20 16.761 17.761 19 15 19L9 19"/></svg><figcaption class="text-fine text-muted">undo</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="unknown-album"><path d="M5 4L7 4M5 20L7 20M4 5L4 7M20 5L20 7M9 4L11 4M9 20L11 20M4 9L4 11M20 9L20 11M13 4L15 4M13 20L15 20M4 13L4 15M20 13L20 15M17 4L19 4M17 20L19 20M4 17L4 19M20 17L20 19M9.75 10C9.75 8.757 10.757 7.75 12 7.75C13.243 7.75 14.25 8.757 14.25 10C14.25 11.243 13.243 12.25 12 12.25L12 13.75M11.75 16.5L12.25 16.5"/></svg><figcaption class="text-fine text-muted">unknown-album</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="volume"><path d="M3.5 9L7 9L12 4.5L12 19.5L7 15L3.5 15ZM13.89 8.11C14.922 9.142 15.502 10.541 15.502 12C15.502 13.459 14.922 14.858 13.89 15.89M16.36 5.64C19.869 9.154 19.869 14.846 16.36 18.36"/></svg><figcaption class="text-fine text-muted">volume</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="volume-high"><path d="M2.5 9L6 9L11 4.5L11 19.5L6 15L2.5 15ZM12.18 8.82C13.935 10.577 13.935 13.423 12.18 15.18M14.66 6.34C16.162 7.841 17.006 9.877 17.006 12C17.006 14.123 16.162 16.159 14.66 17.66M17.13 3.87C21.619 8.361 21.619 15.639 17.13 20.13"/></svg><figcaption class="text-fine text-muted">volume-high</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="volume-low"><path d="M5.5 9L9 9L14 4.5L14 19.5L9 15L5.5 15Z"/></svg><figcaption class="text-fine text-muted">volume-low</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="warning"><path d="M12 3.5L21 19.5L3 19.5ZM12 9L12 14M11.75 16.75L12.25 16.75"/></svg><figcaption class="text-fine text-muted">warning</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="wifi"><path d="M8.82 15.82C10.577 14.065 13.423 14.065 15.18 15.82M5.64 12.64C9.154 9.131 14.846 9.131 18.36 12.64M2.45 9.45C4.982 6.916 8.418 5.492 12 5.492C15.582 5.492 19.018 6.916 21.55 9.45M11.75 18.5L12.25 18.5"/></svg><figcaption class="text-fine text-muted">wifi</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="wifi-blocked"><path d="M6.67 16.17C7.42 15.419 8.438 14.997 9.5 14.997C10.562 14.997 11.58 15.419 12.33 16.17M3.84 13.34C5.341 11.838 7.377 10.994 9.5 10.994C11.623 10.994 13.659 11.838 15.16 13.34M1.01 10.51C3.261 8.257 6.315 6.991 9.5 6.991C12.685 6.991 15.739 8.257 17.99 10.51M9.25 18.5L9.75 18.5M20 7L20 14M19.75 17.5L20.25 17.5"/></svg><figcaption class="text-fine text-muted">wifi-blocked</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="wifi-off"><path d="M8.82 15.82C10.577 14.065 13.423 14.065 15.18 15.82M5.64 12.64C9.154 9.131 14.846 9.131 18.36 12.64M2.45 9.45C4.982 6.916 8.418 5.492 12 5.492C15.582 5.492 19.018 6.916 21.55 9.45M11.75 18.5L12.25 18.5M4 4L20 20"/></svg><figcaption class="text-fine text-muted">wifi-off</figcaption></figure>
+</div>
 
-    <h2>fields</h2>
-    <form class="grid max-w-form gap-5">
-      <label class="field">
-        <span>api token</span>
-        <input type="password" placeholder="paste the token" />
-        <small>Stored sealed; the gateway never shows it again.</small>
-      </label>
-      <label class="field">
-        <span>region</span>
-        <select>
-          <option>eu-west</option>
-          <option>us-east</option>
-        </select>
-      </label>
-      <label class="field bad">
-        <span>server url</span>
-        <input type="url" value="htp://example" />
-        <small>Not a URL: it must start with https://.</small>
-      </label>
-      <label class="field">
-        <span>notes</span>
-        <textarea rows="3">Text a person wrote keeps its Case.</textarea>
-        <small class="warn">Saved locally only.</small>
-      </label>
-      <span class="combo">
-        <input placeholder="split on" aria-label="separator" />
-        <button>credit artists</button>
-      </span>
-      <span class="combo">
-        <input value="Artist Album" aria-label="search" />
-        <button class="primary">grab</button>
-      </span>
-      <label class="toggle">notify when done <input type="checkbox" checked /></label>
-      <label class="toggle">include lossy copies <input type="checkbox" /></label>
-      <fieldset class="grid gap-2">
-        <label class="flex items-center gap-3"><input type="radio" name="q" checked /> lossless</label>
-        <label class="flex items-center gap-3"><input type="radio" name="q" /> any</label>
-      </fieldset>
-      <input type="range" min="0" max="100" value="40" />
-    </form>
-
-    <h2>status</h2>
-    <div class="flex flex-wrap gap-5">
-      <span class="status ok">connected</span>
-      <span class="status warn">not configured</span>
-      <span class="status bad">rejected</span>
-      <span class="status wait">queued</span>
-      <span class="status busy">checking</span>
-    </div>
-
-    <h2>progress</h2>
-    <div class="grid max-w-form gap-4">
-      <progress class="meter" value="40" max="100"></progress>
-      <progress class="meter ok" value="80" max="100"></progress>
-      <progress class="meter warn" value="30" max="100"></progress>
-      <progress class="meter bad" value="60" max="100"></progress>
-      <progress class="meter"></progress>
-      <span class="flex items-center gap-2 text-meta text-muted"><span class="spinner"></span> loading</span>
-      <span class="skeleton block h-9 max-w-form">placeholder</span>
-    </div>
-
-    <h2>panels and notices</h2>
-    <section class="panel">
-      <h2>github</h2>
-      <p class="text-meta text-muted">A region of the page, told apart by a hairline.</p>
-      <span class="code">https://mcp.example.com/mcp/github</span>
-    </section>
-    <p class="notice">Saved. The next sign-in uses it.</p>
-    <p class="notice warn">The token expires in two days.</p>
-    <p class="notice bad">The server refused the token: 401. <button>retry</button></p>
-
-    <h2>codes</h2>
-    <p class="text-meta text-muted">A QR code to scan, and one-time codes to keep.</p>
-    <div class="qr" role="img" aria-label="An example QR code">
-      <svg viewBox="0 0 21 21" shape-rendering="crispEdges"><path fill="#000" d="M0 0h7v7H0zM14 0h7v7h-7zM0 14h7v7H0zM2 2h3v3H2zM16 2h3v3h-3zM2 16h3v3H2zM9 1h2v2H9zM8 8h2v2H8zM11 9h3v2h-3zM9 12h2v3H9zM14 14h2v2h-2zM17 17h3v2h-3zM15 9h2v3h-2zM12 17h2v3h-2z"/><path fill="#fff" d="M1 1h5v5H1zM15 1h5v5h-5zM1 15h5v5H1z"/><path fill="#000" d="M2 2h3v3H2zM16 2h3v3h-3zM2 16h3v3H2z"/></svg>
-    </div>
-    <ul class="codes" aria-label="Recovery codes">
-      <li>7hfk2-mqx9a-pe4ts</li>
-      <li>3wdbn-v8r2c-kyhq6</li>
-      <li>m9tpe-2xjsa-f7wdk</li>
-      <li>qa6vk-hn3ym-8ec2r</li>
-    </ul>
-
-    <h2>rows and tables</h2>
-    <ul class="rows">
-      <li><span class="flex-1">Polar Bear — Held on the Tips of Fingers</span><span class="text-meta text-muted">9 tracks</span></li>
-      <li><span class="flex-1">Phace — Impulse</span><span class="text-meta text-muted">12 tracks</span></li>
-    </ul>
-    <table class="dense mt-6">
-      <thead>
-        <tr><th>band</th><th class="num">freq</th><th class="num">gain</th><th class="num">q</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>low shelf</td><td class="num">105</td><td class="num">+4.2</td><td class="num">0.71</td></tr>
-        <tr><td>peak</td><td class="num">2400</td><td class="num">−1.5</td><td class="num">1.41</td></tr>
-      </tbody>
-    </table>
-
-    <h2>disclosure</h2>
-    <details class="disclosure">
-      <summary>connection details</summary>
-      <p class="text-meta text-muted">What only some readers need.</p>
-    </details>
-
-    <h2>dialog and toast</h2>
-    <div class="flex gap-3">
-      <button onclick="document.getElementById('sheet').showModal()">open sheet</button>
-      <button onclick="document.getElementById('toast').hidden = false">show toast</button>
-    </div>
-    <dialog id="sheet" class="sheet p-5">
-      <h2 class="mt-0">add a server</h2>
-      <p class="text-meta text-muted">A dialog that rises from the bottom on a phone.</p>
-      <form method="dialog" class="flex justify-end gap-3"><button class="quiet">cancel</button><button class="primary">add</button></form>
-    </dialog>
-    <div id="toast" class="toast" hidden>Copied.</div>
-    <script>
-      // WebKit draws the slider's done part from --fill.
-      for (const range of document.querySelectorAll('input[type="range"]')) {
-        const fill = () => range.style.setProperty("--fill", `${(100 * (range.value - range.min)) / (range.max - range.min)}%`);
-        fill();
-        range.addEventListener("input", fill);
-      }
-    </script>
-  </body>
+<h2 id="classes">classes</h2>
+<p class="text-meta text-muted">Containers whose markup is one element and a class stay classes: a component would only rename them.</p>
+<section class="panel">
+  <h3>panel</h3>
+  <p class="text-meta text-muted">A region of the page on the lighter ground.</p>
+  <span class="code">https://mcp.example.com/mcp/github</span>
+</section>
+<ul class="rows mt-6">
+  <li><span class="flex-1">Polar Bear — Held on the Tips of Fingers</span><span class="text-meta text-muted">9 tracks</span></li>
+  <li><span class="flex-1">Phace — Impulse</span><span class="text-meta text-muted">12 tracks</span></li>
+</ul>
+<table class="dense mt-6">
+  <thead>
+    <tr><th>band</th><th class="num">freq</th><th class="num">gain</th><th class="num">q</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>low shelf</td><td class="num">105</td><td class="num">+4.2</td><td class="num">0.71</td></tr>
+    <tr><td>peak</td><td class="num">2400</td><td class="num">−1.5</td><td class="num">1.41</td></tr>
+  </tbody>
+</table>
+<p class="mt-6 text-meta text-muted">A QR code to scan, and one-time codes to keep.</p>
+<div class="qr" role="img" aria-label="An example QR code">
+  <svg viewBox="0 0 21 21" shape-rendering="crispEdges"><path fill="#000" d="M0 0h7v7H0zM14 0h7v7h-7zM0 14h7v7H0zM2 2h3v3H2zM16 2h3v3h-3zM2 16h3v3H2zM9 1h2v2H9zM8 8h2v2H8zM11 9h3v2h-3zM9 12h2v3H9zM14 14h2v2h-2zM17 17h3v2h-3zM15 9h2v3h-2zM12 17h2v3h-2z"/><path fill="#fff" d="M1 1h5v5H1zM15 1h5v5h-5zM1 15h5v5H1z"/><path fill="#000" d="M2 2h3v3H2zM16 2h3v3h-3zM2 16h3v3H2z"/></svg>
+</div>
+<ul class="codes mt-4" aria-label="Recovery codes">
+  <li>7hfk2-mqx9a-pe4ts</li>
+  <li>3wdbn-v8r2c-kyhq6</li>
+  <li>m9tpe-2xjsa-f7wdk</li>
+  <li>qa6vk-hn3ym-8ec2r</li>
+</ul>
+<div class="mt-6 flex flex-wrap items-center gap-5">
+  <span class="flex items-center gap-2 text-meta text-muted"><span class="spinner"></span> loading</span>
+  <span class="skeleton block h-9 w-64">placeholder</span>
+</div>
+</main>
+<dialog class="sheet" closedby="any" data-attr:closedby="$_kitconfirmbusy ? 'none' : 'any'" aria-labelledby="kit-confirm-question" id="kit-confirm"
+  data-signals__ifmissing="{_kitconfirm: {ask: '', detail: '', yes: '', url: '', preview: '', bad: false, ready: false, open: false, n: 0}}">
+  <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; el.closest('dialog').close()">
+    <h2 id="kit-confirm-question" data-text="$_kitconfirm.ask"></h2>
+  </header>
+  <p id="kit-confirm-error" class="notice bad" role="alert" hidden></p>
+  <p id="kit-confirm-detail" hidden data-text="$_kitconfirm.detail" data-attr:hidden="!$_kitconfirm.detail"></p>
+  <section id="kit-confirm-preview" data-attr:aria-busy="$_kitconfirm.ready ? 'false' : 'true'"
+    data-effect="$_kitconfirm.n &amp;&amp; (el._kitpreview?.abort(), el.replaceChildren(), document.getElementById('kit-confirm-error').hidden = true, $_kitconfirm.preview &amp;&amp; @get($_kitconfirm.preview, {requestCancellation: el._kitpreview = new AbortController()}))"></section>
+  <footer class="actions">
+    <button type="button" class="quiet" commandfor="kit-confirm" command="close" data-attr:disabled="$_kitconfirmbusy" autofocus>cancel</button>
+    <button type="button" data-class:primary="!$_kitconfirm.bad" data-class:bad="$_kitconfirm.bad" data-class:fill="$_kitconfirm.bad"
+      data-indicator="_kitconfirmbusy" data-class:busy="$_kitconfirmbusy" data-attr:disabled="!$_kitconfirm.ready || $_kitconfirmbusy"
+      data-text="$_kitconfirm.yes" data-on:click="@post($_kitconfirm.url)"></button>
+  </footer>
+</dialog>
+<div id="flash" role="status"></div>
+</body>
 </html>

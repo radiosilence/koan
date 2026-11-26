@@ -143,15 +143,15 @@ release version *args:
     scripts/release.sh {{version}} {{args}}
 
 # Compile the web UI and share page stylesheets. The output is committed, since
-# the server embeds it; CI fails a build where it is stale. The theme they
-# import is an npm package, installed first (scripts/styles-deps.sh). kit-check
-# then fails on markup outside the kit: classes that compile to nothing, such
-# as rounded corners or Tailwind's type sizes, and inline styles.
+# the server embeds it; CI fails a build where it is stale. They import the
+# kōan web kit from koan-kit-web/ in the tree, the same kit koan-server renders
+# components from. kit-check then fails on markup outside the kit, the kit's
+# own templates included: classes that compile to nothing, such as rounded
+# corners or Tailwind's type sizes, and inline styles.
 css:
-    scripts/styles-deps.sh
     tailwindcss --input crates/koan-server/styles/ui.css --output crates/koan-server/assets/ui.css
     tailwindcss --input crates/koan-server/styles/share.css --output crates/koan-server/assets/share.css
-    node node_modules/@radiosilence/koan-kit-web/kit-check.mjs crates/koan-server/templates crates/koan-server/src crates/koan-server/scripts
+    node koan-kit-web/kit-check.mjs crates/koan-server/templates crates/koan-server/src crates/koan-server/scripts koan-kit-web/templates koan-kit-web/src
 
 # Typecheck the web UI and share page scripts (crates/koan-server/scripts/*.ts).
 # Cargo strips their types when it builds koan-server (build.rs). Zod's types
@@ -169,7 +169,9 @@ zod:
     bun build crates/koan-server/vendor/zod.ts --target browser --format esm --minify --outfile crates/koan-server/assets/zod.js
 
 # Compile the kōan icon set (apps/ios/Resources/Icons/*.svg) into
-# Support/KoanGlyphs.swift and the web's crates/koan-server/src/icon/glyphs.rs. The output is committed; `--check` fails if stale.
+# Support/KoanGlyphs.swift, koan-kit's glyphs, and the web kit's
+# koan-kit-web/src/icon/glyphs.rs, with the glyphs only the web draws
+# (koan-kit-web/icons/*.svg). The output is committed; `--check` fails if stale.
 icons *args:
     python3 scripts/icons.py {{args}}
 

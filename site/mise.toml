@@ -1,10 +1,9 @@
 [tools]
-# The Tailwind CLI for the stylesheet, pandoc for the documentation pages, nano-web, the server the image runs, for
-# previewing, and aube for the theme the stylesheet imports (the repository's package.json).
+# The Tailwind CLI for the stylesheet, pandoc for the documentation pages, and nano-web, the server the image runs, for
+# previewing. The stylesheet imports the kit's tokens from koan-kit-web/ in the tree.
 "github:radiosilence/nano-web" = "1"
 "github:tailwindlabs/tailwindcss" = "4"
 pandoc = "3.12"
-aube = "2.8.5"
 
 [tasks.docs]
 description = "Render docs/ and the changelog into public/docs/"
@@ -15,10 +14,9 @@ run = "src/docs.sh"
 description = "Compile the stylesheet into public/"
 depends = ["docs"]
 run = [
-  "../scripts/styles-deps.sh",
   "tailwindcss --input src/style.css --output public/style.css --minify",
   # src/og.html and src/hero.html are drawn into images, not served, so they are not checked.
-  "node ../node_modules/@radiosilence/koan-kit-web/kit-check.mjs public src/docs.html",
+  "node ../koan-kit-web/kit-check.mjs public src/docs.html",
 ]
 
 # The web kit's storybook, from koan-kit-web/ as it is in this commit rather than as published, served at ui.koan.rocks (a
