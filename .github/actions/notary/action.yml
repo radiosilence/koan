@@ -1,0 +1,48 @@
+name: Apple notary
+description: >
+  Installs rcodesign (apple-codesign), which submits to Apple's Notary API and
+  staples tickets without macOS, and writes the App Store Connect API key
+  scripts/notarise.sh reads (APPLE_API_KEY_PATH, APPLE_API_KEY_ID,
+  APPLE_API_ISSUER_ID). For a Linux x86_64 runner, so notarising never waits
+  for one of the few macOS runners.
+
+inputs:
+  api-key-p8:
+    description: Base64 of the App Store Connect API key (.p8).
+    required: true
+  api-key-id:
+    description: The API key's id.
+    required: true
+  api-issuer-id:
+    description: The API key's issuer id.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        API_KEY_P8: ${{ inputs.api-key-p8 }}
+        API_KEY_ID: ${{ inputs.api-key-id }}
+        API_ISSUER_ID: ${{ inputs.api-issuer-id }}
+      run: |
+        set -euo pipefail
+        if [ -z "$API_KEY_P8" ] || [ -z "$API_KEY_ID" ] || [ -z "$API_ISSUER_ID" ]; then
+          echo "::error::notary: set the APPLE_API_KEY_P8, APPLE_API_KEY_ID and APPLE_API_ISSUER_ID secrets"
+          exit 1
+        fi
+        version=0.29.0
+        sha=dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002
+        tarball="$RUNNER_TEMP/rcodesign.tar.gz"
+        curl -fsSL --retry 3 -o "$tarball" \
+          "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F$version/apple-codesign-$version-x86_64-unknown-linux-musl.tar.gz"
+        echo "$sha  $tarball" | sha256sum -c -
+        mkdir -p "$RUNNER_TEMP/rcodesign"
+        tar xzf "$tarball" -C "$RUNNER_TEMP/rcodesign" --strip-components=1
+        echo "$RUNNER_TEMP/rcodesign" >> "$GITHUB_PATH"
+        printf '%s' "$API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+        {
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_ID=$API_KEY_ID"
+          echo "APPLE_API_ISSUER_ID=$API_ISSUER_ID"
+        } >> "$GITHUB_ENV"
