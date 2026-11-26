@@ -1266,11 +1266,14 @@ mod tests {
         let albums = [
             album(1, ReleaseSection::Albums),
             album(2, ReleaseSection::Albums),
-            album(3, ReleaseSection::Live),
+            album(3, ReleaseSection::Compilations),
         ];
         assert_eq!(
             sections(&albums),
-            vec![(ReleaseSection::Albums, 0, 2), (ReleaseSection::Live, 2, 1)]
+            vec![
+                (ReleaseSection::Albums, 0, 2),
+                (ReleaseSection::Compilations, 2, 1)
+            ]
         );
         assert!(sections(&[]).is_empty());
     }
@@ -1286,7 +1289,7 @@ mod tests {
                         if i < 4 {
                             ReleaseSection::Albums
                         } else {
-                            ReleaseSection::Live
+                            ReleaseSection::Compilations
                         },
                     )
                 })
@@ -1312,10 +1315,10 @@ mod tests {
             shape,
             [
                 "header",
-                "[Albums]",
+                "[Albums / Live Albums]",
                 "0..3",
                 "3..4",
-                "[Live]",
+                "[Compilations]",
                 "4..5",
                 "[features]",
                 "0..1",
@@ -1330,6 +1333,6 @@ mod tests {
             appearances: Vec::new(),
         };
         let items = ArtistPage::cut(&alone, grid);
-        assert!(matches!(&items[1], Item::Heading(t, _) if t.as_ref() == "Albums"));
+        assert!(matches!(&items[1], Item::Heading(t, _) if t.as_ref() == "Albums / Live Albums"));
     }
 }
