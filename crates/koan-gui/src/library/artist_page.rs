@@ -1333,6 +1333,6 @@ mod tests {
             appearances: Vec::new(),
         };
         let items = ArtistPage::cut(&alone, grid);
-        assert!(matches!(&items[1], Item::Heading(t, _) if t.as_ref() == "Albums"));
+        assert!(matches!(&items[1], Item::Heading(t, _) if t.as_ref() == "Albums / Live Albums"));
     }
 }
