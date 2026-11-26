@@ -272,9 +272,10 @@
     @apply -ml-px;
   }
 
-  /* `min-w-0`, or a field's intrinsic width overflows a narrow column. */
+  /* Its own width to start from, so a select is not drawn narrower than its options, growing into spare room;
+   * `min-w-0`, or a field's intrinsic width overflows a narrow column. */
   .combo > :is(input, select) {
-    @apply min-w-0 flex-1;
+    @apply min-w-0 flex-auto;
   }
 
   /* Its outline inside it, so it does not cross the neighbour it is joined to. */
@@ -710,11 +711,24 @@
   }
 
   /* The compact size, for a control in a row or a toolbar rather than a form: `meta` type and tight padding. A field,
-   * a select and a button at this size are the same height, a line of `meta` and the same padding and border, so a
-   * compact field, combo and button in one row line up. On the control itself, or on any container of controls. */
+   * a select, a button and a glyph alone are one height at this size, a line of `meta`, the padding and the border,
+   * stated rather than left to each engine's rounding of the line, so a compact field, combo and button in one row line
+   * up. On the control itself, or on any container of controls. A textarea keeps its rows. */
   :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select, textarea).compact,
   .compact :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select, textarea) {
-    @apply px-2 py-1 text-meta;
+    @apply py-1 pl-2 text-meta;
+  }
+
+  :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), textarea).compact,
+  .compact :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), textarea) {
+    @apply pr-2;
+  }
+
+  :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select).compact,
+  .compact :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select),
+  :is(button, .button):not(.link).compact,
+  .compact :is(button, .button):not(.link) {
+    @apply h-[calc(var(--text-meta)*1.35+10px)];
   }
 
   :is(select.compact, .compact select) {
@@ -727,10 +741,10 @@
     @apply px-2 py-1 text-meta;
   }
 
-  /* A glyph alone at the compact size: square, and as tall as a compact field. */
+  /* A glyph alone at the compact size: square. */
   .icon-button.compact,
   .compact .icon-button {
-    @apply size-[calc(var(--text-meta)*1.35+10px)];
+    @apply w-[calc(var(--text-meta)*1.35+10px)];
   }
 
   .field.compact {
