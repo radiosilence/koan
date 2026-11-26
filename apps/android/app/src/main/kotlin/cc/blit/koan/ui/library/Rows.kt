@@ -165,8 +165,9 @@ private fun Modifier.tap(playable: Playable, selection: Selection<Playable>?, on
 
 /**
  * One record in a grid: the sleeve with its codec, the title, and the artist
- * and year. A tap on the sleeve plays it, a tap below opens it, either ticks
- * it while picking; a long press offers the rest.
+ * and year. A tap anywhere opens it, or ticks it while picking; a long press
+ * offers the rest. Playing replaces the queue, which no stray tap should do,
+ * so the record's page and the long press play it.
  */
 @Composable
 fun AlbumTile(
@@ -187,9 +188,7 @@ fun AlbumTile(
             .padding(KoanSpace.xs),
         verticalArrangement = Arrangement.spacedBy(KoanSpace.xs),
     ) {
-        // The sleeve plays the record and opens it, as the Apple apps' does;
-        // the words under it open it. While picking, either ticks it.
-        Box(Modifier.fillMaxWidth().aspectRatio(1f).tap(playable, selection, { menu = true }, rememberPlayNow(playable))) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
             Sleeve(Art.album(album.id), Modifier.matchParentSize())
             album.codec?.let { KoanBadge(it.uppercase(), Modifier.align(Alignment.TopEnd).padding(KoanSpace.s)) }
             // The tick takes this corner while picking.
