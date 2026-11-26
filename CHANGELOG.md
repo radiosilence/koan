@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.77.1
+
+### Internal
+
+- **koan-kit-web 0.6.0.** Forms with several actions and forms that ask first, busy groups that disable together and spin alone, links that load in place, a compact size for controls in a row, and the ensō for every wait the kit draws. Its own changelog has the rest.
+- **koan-kit-web 0.7.0 on askama_datastar 0.3.** The web kit and the web UI take askama_datastar 0.3, so apps on 0.3 share one `Html` type with the kit.
+
 ## 0.77.0
 
 ### Changed
