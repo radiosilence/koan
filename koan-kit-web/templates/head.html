@@ -1,0 +1,20 @@
+{#- The kit's part of a page's head, before the app's own. The charset first, within the bytes a browser sniffs. -#}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+{%- if noindex %}
+<meta name="robots" content="noindex, nofollow">
+{%- endif %}
+{%- if let Some(title) = title.present() %}
+<title>{{ title }}</title>
+{%- endif %}
+<link rel="preload" href="{{ self.font() }}" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="{{ stylesheet }}">
+{%- if let Some(map) = self.map() %}
+<script type="importmap">{{ map }}</script>
+{%- endif %}
+{%- if let Some(src) = datastar %}
+<script type="module" src="{{ src }}"></script>
+{%- endif %}

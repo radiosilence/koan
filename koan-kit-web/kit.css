@@ -2,7 +2,7 @@
  * The kōan web kit: the controls every server-rendered page is drawn with, built from tokens.css. Plain elements come
  * out in the theme (a `<button>` is the bordered button, an `<input>` the square field), and a handful of classes give
  * the rest: the button weights, a labelled field, a field joined to its button, a panel, a notice, a status, the
- * progress meter and the toast.
+ * progress meter and the toast. The koan-kit-web crate writes the markup for each, using these classes and no others.
  *
  * Element rules are in `@layer base` and the classes in `@layer components`, so any utility in a template still wins.
  * The rules and their reasons are in the README; koan's docs/design/koan-theme.md is the specification.
@@ -201,6 +201,12 @@
     @apply border-bad text-bad;
   }
 
+  /* A link drawn as a button that is unavailable: the kit writes it with no href, so it neither navigates nor takes
+   * focus, and it is drawn as a disabled button is. */
+  a.button:not([href]) {
+    @apply cursor-default opacity-40 hover:bg-transparent;
+  }
+
   :is(.quiet, .standard, .link).bad {
     @apply border-transparent hover:text-bad;
   }
@@ -252,12 +258,14 @@
     @apply -ml-px;
   }
 
+  /* `min-w-0`, or a field's intrinsic width overflows a narrow column. */
   .combo > :is(input, select) {
-    @apply flex-1;
+    @apply min-w-0 flex-1;
   }
 
+  /* Its outline inside it, so it does not cross the neighbour it is joined to. */
   .combo > :focus-visible {
-    @apply relative z-10;
+    @apply relative z-10 -outline-offset-2;
   }
 
   /* A toggle in a form: the label leads, the box sits at the trailing edge, where a switch would. */
@@ -379,11 +387,26 @@
     @apply bg-transparent;
   }
 
-  /* In flight. On a control, for as long as its request runs (Datastar's indicator sets the class); `.spinner` is the
-   * same mark standing alone. */
+  /* In flight: the ensō drawing itself, its head running round and then its tail following it off, looping, as
+   * koan-kit's Spinner draws it (crates/koan-kit/src/components/spinner.rs: the same trace, brush and 1.6-second
+   * turn, each half smooth at both ends). A mask over the text's colour, so it needs no markup and no style
+   * attribute; under reduced motion the whole mark stands still. On a control, for as long as its request runs
+   * (Datastar's indicator sets the class); `.spinner` is the same mark standing alone. */
+  :root {
+    --enso-turning: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2279.9 76.6 352.4 352.4%22%3E%3Cpath d=%22M230.3 401.8L222.0 399.7L213.9 397.3L205.8 394.6L198.0 391.4L190.3 387.7L182.8 383.8L175.2 380.0L167.3 376.2L159.4 372.4L151.7 367.8L145.0 362.1L139.7 355.0L135.7 347.0L132.6 338.6L129.7 330.4L126.3 322.6L123.0 314.9L120.2 307.1L118.3 298.9L117.2 290.6L116.3 282.4L114.8 274.3L112.2 266.3L108.8 258.1L105.7 249.4L103.9 240.6L104.0 231.7L106.1 223.0L109.3 214.8L113.0 206.8L116.6 198.8L120.4 191.0L124.8 183.6L130.3 176.8L136.9 171.1L144.2 166.1L151.1 161.2L157.2 155.8L162.4 149.5L167.2 142.4L172.4 135.3L178.4 128.8L185.3 123.6L192.9 119.4L200.8 115.8L208.7 112.1L216.8 108.5L225.1 105.4L233.8 103.8L242.7 104.1L251.6 106.4L260.1 109.7L268.3 112.9L276.3 115.2L284.4 116.6L292.6 117.4L300.9 118.6L309.0 120.8L316.8 123.8L324.5 127.2L332.4 130.4L340.6 133.3L349.2 136.2L357.5 140.0L364.8 145.2L370.6 152.1L374.7 160.2L377.8 168.8L380.7 177.2L383.8 185.2L387.2 192.8L390.4 200.6L392.8 208.6L394.3 216.9L395.1 225.2L396.2 233.3L398.3 241.3L401.3 249.4L404.7 257.8L407.4 266.6L408.3 275.5L407.2 284.3L404.5 292.8L401.0 300.9L397.3 308.8L393.7 316.7L389.6 324.4L384.7 331.5L378.9 337.9L372.5 343.8L366.2 349.4L360.3 355.3L354.8 361.6L349.3 368.0L343.5 374.2L337.0 379.8L329.9 384.6L322.4 388.6L314.6 392.1L306.6 395.1%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%2248%22 stroke-linejoin=%22round%22 pathLength=%221%22 stroke-dasharray=%221 1%22%3E%3Canimate attributeName=%22stroke-dashoffset%22 values=%221;0;-1%22 keyTimes=%220;.5;1%22 calcMode=%22spline%22 keySplines=%22.42 0 .58 1;.42 0 .58 1%22 dur=%221.6s%22 repeatCount=%22indefinite%22/%3E%3C/path%3E%3C/svg%3E");
+    --enso-still: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2279.9 76.6 352.4 352.4%22%3E%3Cpath d=%22M230.3 401.8L222.0 399.7L213.9 397.3L205.8 394.6L198.0 391.4L190.3 387.7L182.8 383.8L175.2 380.0L167.3 376.2L159.4 372.4L151.7 367.8L145.0 362.1L139.7 355.0L135.7 347.0L132.6 338.6L129.7 330.4L126.3 322.6L123.0 314.9L120.2 307.1L118.3 298.9L117.2 290.6L116.3 282.4L114.8 274.3L112.2 266.3L108.8 258.1L105.7 249.4L103.9 240.6L104.0 231.7L106.1 223.0L109.3 214.8L113.0 206.8L116.6 198.8L120.4 191.0L124.8 183.6L130.3 176.8L136.9 171.1L144.2 166.1L151.1 161.2L157.2 155.8L162.4 149.5L167.2 142.4L172.4 135.3L178.4 128.8L185.3 123.6L192.9 119.4L200.8 115.8L208.7 112.1L216.8 108.5L225.1 105.4L233.8 103.8L242.7 104.1L251.6 106.4L260.1 109.7L268.3 112.9L276.3 115.2L284.4 116.6L292.6 117.4L300.9 118.6L309.0 120.8L316.8 123.8L324.5 127.2L332.4 130.4L340.6 133.3L349.2 136.2L357.5 140.0L364.8 145.2L370.6 152.1L374.7 160.2L377.8 168.8L380.7 177.2L383.8 185.2L387.2 192.8L390.4 200.6L392.8 208.6L394.3 216.9L395.1 225.2L396.2 233.3L398.3 241.3L401.3 249.4L404.7 257.8L407.4 266.6L408.3 275.5L407.2 284.3L404.5 292.8L401.0 300.9L397.3 308.8L393.7 316.7L389.6 324.4L384.7 331.5L378.9 337.9L372.5 343.8L366.2 349.4L360.3 355.3L354.8 361.6L349.3 368.0L343.5 374.2L337.0 379.8L329.9 384.6L322.4 388.6L314.6 392.1L306.6 395.1%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%2248%22 stroke-linejoin=%22round%22%3E%3C/path%3E%3C/svg%3E");
+  }
+
   .busy:is(button, .button, a)::after,
-  .spinner {
-    @apply inline-block size-[.8em] flex-none animate-busy border-2 border-current border-r-transparent align-[-.1em] motion-reduce:animate-none motion-reduce:border-r-current;
+  .spinner,
+  dialog.sheet > section[aria-busy="true"]:empty::before {
+    @apply inline-block size-[.9em] flex-none align-[-.12em];
+    background: currentColor;
+    mask: var(--enso-turning) center / contain no-repeat;
+
+    @media (prefers-reduced-motion: reduce) {
+      mask-image: var(--enso-still);
+    }
   }
 
   .busy:is(button, .button, a)::after {
@@ -506,5 +529,112 @@
       border-width: 1px;
       padding-bottom: var(--sheet-padding-bottom, 0px);
     }
+  }
+
+  /* A glyph of the set, at the size its component drew it: it keeps that size in a flex row, and sits on the baseline
+   * of the words beside it. */
+  .icon {
+    @apply inline-block flex-none align-[-0.2em];
+  }
+
+  /* A checkbox or radio leading its words, inline: a choice in a row of filters, or one of a set of radios. A form's
+   * row with the box trailing is a `toggle`. */
+  .check {
+    @apply inline-flex cursor-pointer items-center gap-2 text-control;
+  }
+
+  /* A row of actions: a sheet's foot, a form's end. Trailing, as a dialog's buttons are, and wrapping when narrow. */
+  .actions {
+    @apply flex flex-wrap items-center justify-end gap-2;
+  }
+
+  /* Labels and their values on two columns, the labels muted. A long value wraps anywhere rather than widen the page. */
+  dl.pairs {
+    @apply m-0 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-control;
+  }
+
+  dl.pairs > dt {
+    @apply text-muted;
+  }
+
+  dl.pairs > dd {
+    @apply m-0 wrap-anywhere;
+  }
+
+  /* Where a list would be, when it has nothing: quiet and centred, the title a step stronger than why. */
+  .empty {
+    @apply grid justify-items-center gap-2 py-12 text-center text-control text-muted;
+  }
+
+  /* In a sidebar's list or a panel, where a page's empty state would tower. */
+  .empty.compact {
+    @apply gap-1 py-3;
+  }
+
+  .empty > strong {
+    @apply font-normal text-strong;
+  }
+
+  .empty > :is(p, div) {
+    @apply m-0 max-w-form;
+  }
+
+  /* The link a keyboard reaches first: out of sight until it is focused, then over the page's top-left corner. */
+  .skip {
+    @apply sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-bg focus:px-3 focus:py-2;
+  }
+
+  /* The release a page was built from: fine print that leads somewhere, receding until it is hovered. */
+  a.release {
+    @apply text-fine text-muted hover:text-ink hover:no-underline;
+  }
+
+  /* A notice's glyph leads its words. */
+  .notice > .icon {
+    @apply me-1.5;
+  }
+
+  /* A disclosure's body sits under its summary's words, past the chevron. */
+  details.disclosure > summary + * {
+    @apply pt-1 pb-2 pl-[1em];
+  }
+
+  /* A sheet's parts: its header (the title, and a close), what it holds, and its actions along the foot. The parts
+   * carry the padding, so what it holds can run edge to edge. */
+  dialog.sheet > header {
+    @apply flex items-baseline justify-between gap-4 px-5 pt-5 pb-3;
+  }
+
+  dialog.sheet > header > h2 {
+    @apply m-0;
+  }
+
+  /* Confirm's detail: what the change does, in more words, under the question. */
+  #kit-confirm-detail {
+    @apply m-0 px-5 pb-3 text-control text-muted;
+  }
+
+  /* Confirm's question keeps its case: it so often names a record or a person that the app writes its own words in it
+   * lowercase in the source, as it does a label's. */
+  #kit-confirm-question {
+    @apply normal-case;
+  }
+
+  dialog.sheet > section {
+    @apply px-5 pb-4 text-control;
+  }
+
+  dialog.sheet > section:empty:not([aria-busy="true"]) {
+    @apply hidden;
+  }
+
+  /* A preview on its way: the spinner, where it will be. */
+  dialog.sheet > section[aria-busy="true"]:empty::before {
+    content: "";
+    @apply mx-auto my-4 block size-4 text-muted;
+  }
+
+  dialog.sheet > footer {
+    @apply px-5 pb-5;
   }
 }

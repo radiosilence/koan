@@ -1,0 +1,6 @@
+{#- Labels and values on two columns, the labels muted. -#}
+<dl class="pairs{{ attrs.classes() }}"{{ attrs }}>
+{%- for (label, value) in pairs -%}
+<dt>{{ label }}</dt><dd>{{ value }}</dd>
+{%- endfor -%}
+</dl>

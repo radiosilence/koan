@@ -8,12 +8,13 @@
  * arbitrary values) `kit-check` reports. The look has square corners, no shadows or blur, one accent and seven type roles
  * (koan's docs/design/koan-theme.md); a vocabulary that cannot say anything else keeps it that way.
  *
- * The font URL is relative, so it resolves beside the compiled stylesheet. A project serves geist-mono.woff2 from this
- * package next to its CSS.
+ * The font URL is relative, so it resolves beside the compiled stylesheet, where an app routes the koan-kit-web crate's
+ * `font::serve`. Its query is a hash of the font (FNV-1a), so the font can be kept for good and a new one is fetched
+ * again; the crate's tests fail when the hash here is not the font's.
  */
 @font-face {
   font-family: "Geist Mono";
-  src: url("geist-mono.woff2") format("woff2-variations");
+  src: url("geist-mono.woff2?v=4a0c51217eb6bd13") format("woff2-variations");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -98,16 +99,9 @@
   --container-form: 520px;
   --container-panel: 560px;
 
-  --animate-busy: busy 0.7s linear infinite;
   --animate-sweep: sweep 1.6s ease-in-out infinite alternate;
   /* A confirmation: seen, then gone by itself. */
   --animate-fade: fade 4s forwards;
-
-  @keyframes busy {
-    to {
-      transform: rotate(360deg);
-    }
-  }
 
   @keyframes sweep {
     from {

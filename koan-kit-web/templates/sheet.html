@@ -1,0 +1,19 @@
+{#- A sheet: named by its title, closed by its header's button through commandfor, a press outside it or Escape. -#}
+<dialog class="sheet{{ attrs.classes() }}" closedby="any" aria-labelledby="{{ attrs.id() }}-title"{{ attrs }}>
+  <header>
+    <h2 id="{{ attrs.id() }}-title">{{ title }}</h2>
+    {%- if !close.is_empty() %}
+    <button type="button" class="quiet" commandfor="{{ attrs.id() }}" command="close">{{ close }}</button>
+    {%- endif %}
+  </header>
+  {%- if !body.is_empty() %}
+  <section>{{ body }}</section>
+  {%- endif %}
+  {%- if !actions.is_empty() %}
+  <footer class="actions">
+    {%- for action in actions %}
+    {{ action }}
+    {%- endfor %}
+  </footer>
+  {%- endif %}
+</dialog>

@@ -1,0 +1,12 @@
+{#- The region every flash replaces, a live region whatever it holds. A brief one fades; an error waits to be dismissed. -#}
+<div{{ attrs }}{% if !attrs.classes().is_empty() %} class="{{ attrs.classes() }}"{% endif %} role="status">
+{%- if let Some(message) = message.present() -%}
+{%- if bad %}
+  <p class="toast bad" role="alert"{% if dismiss.is_empty() %} data-on:click="el.remove()"{% endif %}>{{ message }}
+  {%- if let Some(label) = dismiss.present() %} <button type="button" class="link" data-on:click="el.parentElement.remove()">{{ label }}</button>{% endif -%}
+  </p>
+{%- else %}
+  <p id="{{ self::serial() }}" class="toast brief">{{ message }}</p>
+{%- endif %}
+{% endif -%}
+</div>

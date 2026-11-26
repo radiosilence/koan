@@ -3,7 +3,7 @@ name: Site
 # Builds the koan.rocks image and, on main, publishes it and asks the jaritanet deployment to pick it up. What version
 # is deployed, and how the pin is moved, belong to jaritanet's updater; this only says a build exists.
 
-# packages: write also covers reading the theme the stylesheet imports from GitHub Packages.
+# packages: write pushes the image.
 permissions:
   contents: read
   packages: write
@@ -21,10 +21,6 @@ on:
       - "CHANGELOG.md"
       - "changelog.d/**"
       - "scripts/changelog.py"
-      - "package.json"
-      - "aube-lock.yaml"
-      - ".npmrc"
-      - "scripts/styles-deps.sh"
       - ".github/workflows/site.yml"
 
 env:
@@ -41,9 +37,9 @@ jobs:
         run: "! grep -rnI '__[A-Z]*__' site/public"
 
       # The documentation pages and the stylesheet are generated rather than committed, and the image serves public/ as
-      # it is, so they have to exist before the build. pandoc, the Tailwind CLI and aube come from site/mise.toml; the css
-      # task renders the docs first, and fails on a link to a page or heading that does not exist, then installs the
-      # theme from GitHub Packages.
+      # it is, so they have to exist before the build. pandoc and the Tailwind CLI come from site/mise.toml; the css task
+      # renders the docs first, and fails on a link to a page or heading that does not exist. The stylesheet imports the
+      # kit's tokens from koan-kit-web/ in the tree.
       - name: Set up mise
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
@@ -52,8 +48,6 @@ jobs:
       - name: Build the docs, the stylesheet and the kit's storybook
         working-directory: site
         run: mise run css && mise run ui
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # The server marks every file immutable for a year, so a stylesheet at a fixed URL is never fetched again once a
       # browser has it: new markup would render against old rules. Its URL carries a hash of its content instead.

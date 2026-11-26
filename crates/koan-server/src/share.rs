@@ -182,6 +182,10 @@ pub fn router(
             get(|q: RawQuery| async move { asset(PAGE_CSS, "text/css; charset=utf-8", q) }),
         )
         .route(
+            "/share/assets/geist-mono.woff2",
+            get(koan_kit_web::font::serve),
+        )
+        .route(
             "/share/assets/{name}",
             get(|Path(name): Path<String>| async move { binary_asset(&name).unwrap_or_else(not_found) }),
         )
@@ -240,8 +244,8 @@ fn live_track(pool: &Pool, id: &str, n: usize) -> Option<TrackRow> {
 }
 
 /// The app icon, as the browser tab and home-screen icons of the web UI and
-/// the share pages, and the typeface both set their text in. The same files
-/// koan.rocks uses.
+/// the share pages. The same files koan.rocks uses. The typeface is the web
+/// kit's, routed to `koan_kit_web::font::serve` beside each stylesheet.
 pub(crate) fn binary_asset(name: &str) -> Option<Response> {
     let (bytes, kind): (&'static [u8], _) = match name {
         "icon-32.png" => (include_bytes!("../assets/icon-32.png"), "image/png"),
@@ -250,7 +254,6 @@ pub(crate) fn binary_asset(name: &str) -> Option<Response> {
             include_bytes!("../assets/apple-touch-icon.png"),
             "image/png",
         ),
-        "geist-mono.woff2" => (include_bytes!("../assets/geist-mono.woff2"), "font/woff2"),
         _ => return None,
     };
     Some(
