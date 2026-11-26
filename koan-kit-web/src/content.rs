@@ -99,7 +99,7 @@ impl Disclosure<'_> {
         let body: Content<'c> = body.into();
         askama_datastar::Html::trusted(body.to_string())
             .patch()
-            .selector(&format!("#{id} > div"))
+            .selector(format!("#{id} > div"))
             .mode(askama_datastar::ElementPatchMode::Inner)
     }
 }
