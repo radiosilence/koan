@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.77.0
+
+### Changed
+
+- **koan.rocks and the README say the server has two-step sign-in and passkeys.** The home page, the server guide and the comparison of servers name them, beside invites and app passwords.
+- **koan.rocks' comparison is checked again.** Every other project's cells were checked against its current release in November 2026 and moved where a source showed they had: NaviBeat's new platforms and features, share links in Psysonic, Feishin and Supersonic, Poweramp's AutoEQ database, Gonic 0.23, and the servers' versions.
+- **Artist page sections.** An artist's records are grouped under Albums / Live Albums, Singles / EPs / Demos, Mixes / Mixtapes, Spokenword / Interview / Audiobook and Compilations, in place of EPs & Singles, Live and Other releases. A record with several types goes to the first of spoken word, mixes, compilations and singles it carries, so a mixed compilation is a mix; live albums sit with the albums, and soundtracks and broadcasts with them too. A tile names the spoken word or mix type first, so a mixed compilation says DJ Mix rather than Compilation.
+
+### Fixed
+
+- **A tap on a record's sleeve on Android opens the record.** It played the record in place of the queue, so its tracks could not be seen without playing them. The record's page and the long-press menu play it, as on the iPhone and iPad.
+
+### Internal
+
+- **Notarisation runs on Linux** ([#2357](https://github.com/radiosilence/koan/pull/2357)). rcodesign submits to Apple's notary and staples from ubuntu runners, so the Mac app and CLI are notarised as soon as they are signed rather than after the release has published and a macOS runner has come free. The Linux packages are attached to the release without waiting on Apple.
+- **GPUI keeps measured text between frames.** Text whose content and style are unchanged is neither measured nor shaped again, which makes frames cheaper on pages full of text.
+- **The web kit's components, as a crate koan's web UI draws from.** `koan-kit-web` holds the kōan web kit's controls as askama components wired for Datastar, and carries the stylesheet, so radiosilence's other servers draw a field, a sheet or a busy button as koan does rather than each writing its own; its storybook at ui.koan.rocks is now generated from them. koan-server takes its icons and font from it, and the web UI's and koan.rocks's stylesheets import it from the tree, so building koan no longer needs a GitHub Packages token. The kit keeps its own version, and a koan release waits until the kit's changes are released under one.
+- **STANDARD: controls from the kōan web kit's crate.** A web UI draws every control `koan-kit-web` has with its component, asks before a change through the page's one `kit::Confirm` rather than `confirm()`, and takes the kit's stylesheet from the crate's source, so the markup and its rules are one version.
+
 ## 0.76.1
 
 ### Fixed
