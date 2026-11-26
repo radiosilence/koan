@@ -44,8 +44,10 @@ component!(Pairs);
 ///
 /// Its body is [`body`](Self::body), or the markup of a `{% filter kit::wrap(disclosure) %}` block. One that
 /// [`loads`](Self::loads) fetches its body when it opens: the handler answers with the same disclosure, under the
-/// same [`id`](Self::id), open and holding what it read, so one component draws both. An answer without `loads`
-/// stops it fetching; one that keeps `loads` fetches again on every opening, for what changes while the page is open.
+/// same [`id`](Self::id), open and holding what it read and without `loads`, so one component draws both and it stops
+/// fetching. For a body that changes while the page is open, answer with [`Disclosure::fill`] instead, which replaces
+/// the body alone and keeps the element, so it fetches again on every opening. Never answer with the disclosure open
+/// and still loading: putting an open `<details>` in place fires its toggle, and it would fetch without end.
 #[must_use = "a disclosure draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "disclosure.html")]
@@ -87,6 +89,18 @@ impl<'a> Disclosure<'a> {
         self.loads = url.into();
         self.body = placeholder.into();
         self
+    }
+}
+
+impl Disclosure<'_> {
+    /// A loading handler's answer that replaces the body of the disclosure `id` alone, keeping the element and its
+    /// `loads`, so it fetches again when next opened: `events([kit::Disclosure::fill("files-1", list).into()])`.
+    pub fn fill<'c>(id: &str, body: impl Into<Content<'c>>) -> askama_datastar::PatchElements {
+        let body: Content<'c> = body.into();
+        askama_datastar::Html::trusted(body.to_string())
+            .patch()
+            .selector(&format!("#{id} > div"))
+            .mode(askama_datastar::ElementPatchMode::Inner)
     }
 }
 
@@ -166,6 +180,16 @@ mod tests {
             html.contains("data-on:toggle=\"el.open &amp;&amp; @get(el.dataset.url)\"")
                 && html.contains("data-init=\"el.open &amp;&amp; @get(el.dataset.url)\""),
             "{html}"
+        );
+    }
+
+    #[test]
+    fn a_fill_replaces_the_body_alone() {
+        let patch = format!("{:?}", Disclosure::fill("files-1", "two files"));
+        assert!(patch.contains("#files-1 > div"), "{patch}");
+        assert!(
+            !patch.contains("details"),
+            "the element and its loads stay: {patch}"
         );
     }
 
