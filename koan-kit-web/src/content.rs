@@ -96,11 +96,13 @@ impl Disclosure<'_> {
     /// A loading handler's answer that replaces the body of the disclosure `id` alone, keeping the element and its
     /// `loads`, so it fetches again when next opened: `events([kit::Disclosure::fill("files-1", list).into()])`.
     pub fn fill<'c>(id: &str, body: impl Into<Content<'c>>) -> askama_datastar::PatchElements {
+        // Replaced, not morphed: Datastar morphs nothing inside an element that keeps `data-ignore-morph`, as a
+        // disclosure in a streamed list does, and a replacement it makes.
         let body: Content<'c> = body.into();
-        askama_datastar::Html::trusted(body.to_string())
+        askama_datastar::Html::trusted(format!("<div>{body}</div>"))
             .patch()
             .selector(format!("#{id} > div"))
-            .mode(askama_datastar::ElementPatchMode::Inner)
+            .mode(askama_datastar::ElementPatchMode::Replace)
     }
 }
 
@@ -187,6 +189,10 @@ mod tests {
     fn a_fill_replaces_the_body_alone() {
         let patch = format!("{:?}", Disclosure::fill("files-1", "two files"));
         assert!(patch.contains("#files-1 > div"), "{patch}");
+        assert!(
+            patch.contains("Replace"),
+            "a morph would leave a disclosure that ignores morphs alone: {patch}"
+        );
         assert!(
             !patch.contains("details"),
             "the element and its loads stay: {patch}"
