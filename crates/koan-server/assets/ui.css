@@ -1541,6 +1541,7 @@
     margin-left: -1px;
   }
   .combo > :is(input, select) {
+    min-width: 0px;
     flex: 1;
   }
   .combo > :focus-visible {

@@ -258,8 +258,9 @@
     @apply -ml-px;
   }
 
+  /* `min-w-0`, or a field's intrinsic width overflows a narrow column. */
   .combo > :is(input, select) {
-    @apply flex-1;
+    @apply min-w-0 flex-1;
   }
 
   /* Its outline inside it, so it does not cross the neighbour it is joined to. */
