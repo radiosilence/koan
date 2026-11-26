@@ -351,6 +351,12 @@ impl Default for Content<'_> {
 }
 
 impl Content<'_> {
+    /// Whether it is markup, which may hold blocks, rather than words.
+    #[must_use]
+    pub fn is_markup(&self) -> bool {
+        matches!(self, Self::Markup(_))
+    }
+
     /// Whether there is nothing to show.
     #[must_use]
     pub fn is_empty(&self) -> bool {

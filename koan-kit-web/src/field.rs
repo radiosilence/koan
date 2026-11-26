@@ -94,12 +94,23 @@ struct Common<'a> {
 
 impl Common<'_> {
     /// `name`, the state props, the binding and the aria the control's field gives it.
-    fn write(&self, f: &mut fmt::Formatter<'_>, note: Option<&str>, invalid: bool) -> fmt::Result {
+    fn write(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        label: Option<&str>,
+        note: Option<&str>,
+        invalid: bool,
+    ) -> fmt::Result {
         if let Some(name) = self.name.present() {
             attribute(f, "name", name)?;
         }
         if let Some(label) = self.label.present() {
             attribute(f, "aria-label", label)?;
+        }
+        // Named by the field's label alone, so the note it holds is read once, as the description, not as part of the
+        // name too.
+        if let Some(label) = label {
+            attribute(f, "aria-labelledby", label)?;
         }
         if let Some(note) = note {
             attribute(f, "aria-describedby", note)?;
@@ -223,7 +234,7 @@ macro_rules! control {
 
         impl fmt::Display for $control<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.write(f, None, false)
+                self.write(f, None, None, false)
             }
         }
 
@@ -350,7 +361,13 @@ impl<'a> Input<'a> {
         self
     }
 
-    fn write(&self, f: &mut fmt::Formatter<'_>, note: Option<&str>, invalid: bool) -> fmt::Result {
+    fn write(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        label: Option<&str>,
+        note: Option<&str>,
+        invalid: bool,
+    ) -> fmt::Result {
         write!(f, "<input type=\"{}\"", self.kind.attribute())?;
         self.common.class(f)?;
         if let Some(value) = self.value.present() {
@@ -370,7 +387,7 @@ impl<'a> Input<'a> {
         if self.readonly {
             f.write_str(" readonly")?;
         }
-        self.common.write(f, note, invalid)?;
+        self.common.write(f, label, note, invalid)?;
         f.write_str(">")
     }
 }
@@ -459,10 +476,16 @@ impl<'a> Select<'a> {
         self
     }
 
-    fn write(&self, f: &mut fmt::Formatter<'_>, note: Option<&str>, invalid: bool) -> fmt::Result {
+    fn write(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        label: Option<&str>,
+        note: Option<&str>,
+        invalid: bool,
+    ) -> fmt::Result {
         f.write_str("<select")?;
         self.common.class(f)?;
-        self.common.write(f, note, invalid)?;
+        self.common.write(f, label, note, invalid)?;
         f.write_str(">")?;
         for choice in &self.choices {
             f.write_str("<option")?;
@@ -530,7 +553,13 @@ impl<'a> Textarea<'a> {
         self
     }
 
-    fn write(&self, f: &mut fmt::Formatter<'_>, note: Option<&str>, invalid: bool) -> fmt::Result {
+    fn write(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        label: Option<&str>,
+        note: Option<&str>,
+        invalid: bool,
+    ) -> fmt::Result {
         f.write_str("<textarea")?;
         self.common.class(f)?;
         if let Some(placeholder) = self.placeholder.present() {
@@ -542,7 +571,7 @@ impl<'a> Textarea<'a> {
         if self.readonly {
             f.write_str(" readonly")?;
         }
-        self.common.write(f, note, invalid)?;
+        self.common.write(f, label, note, invalid)?;
         // The parser drops one newline after the start tag, so this one goes and the value's own stays.
         f.write_str(">\n")?;
         escape(f, self.value.as_str())?;
@@ -575,11 +604,17 @@ impl Control<'_> {
         }
     }
 
-    fn write(&self, f: &mut fmt::Formatter<'_>, note: Option<&str>, invalid: bool) -> fmt::Result {
+    fn write(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        label: Option<&str>,
+        note: Option<&str>,
+        invalid: bool,
+    ) -> fmt::Result {
         match self {
-            Self::Input(input) => input.write(f, note, invalid),
-            Self::Select(select) => select.write(f, note, invalid),
-            Self::Textarea(textarea) => textarea.write(f, note, invalid),
+            Self::Input(input) => input.write(f, label, note, invalid),
+            Self::Select(select) => select.write(f, label, note, invalid),
+            Self::Textarea(textarea) => textarea.write(f, label, note, invalid),
             Self::Custom(markup) => f.write_str(markup.as_str()),
         }
     }
@@ -850,6 +885,26 @@ impl<'a> Field<'a> {
         format!("{base}-note")
     }
 
+    /// The label's id, when the field has a name to build it from.
+    fn label_id(&self) -> Option<String> {
+        let base = if self.attrs.id().is_empty() {
+            self.control.name()
+        } else {
+            self.attrs.id()
+        };
+        (!base.is_empty() && !self.is_custom()).then(|| format!("{base}-label"))
+    }
+
+    /// The element it is drawn as: a `<label>`, or a `div` round a control of the app's own.
+    fn element(&self) -> &'static str {
+        if self.is_custom() { "div" } else { "label" }
+    }
+
+    /// Whether its control is the app's own, which may be a group a `<label>` cannot hold.
+    fn is_custom(&self) -> bool {
+        matches!(self.control, Control::Custom(_))
+    }
+
     /// The control, described by the note when there is one.
     fn control(&self) -> FieldControl<'_, 'a> {
         FieldControl(self)
@@ -875,9 +930,13 @@ impl fmt::Display for FieldControl<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let field = self.0;
         let note = field.note().map(|_| field.note_id());
-        field
-            .control
-            .write(f, note.as_deref(), field.error.present().is_some())
+        let label = field.label_id();
+        field.control.write(
+            f,
+            label.as_deref(),
+            note.as_deref(),
+            field.error.present().is_some(),
+        )
     }
 }
 
@@ -922,7 +981,7 @@ struct ComboControl<'c, 'a>(&'c Control<'a>);
 
 impl fmt::Display for ComboControl<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.write(f, None, false)
+        self.0.write(f, None, None, false)
     }
 }
 

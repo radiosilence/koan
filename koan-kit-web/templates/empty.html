@@ -5,7 +5,11 @@
 {%- endif %}
   <strong>{{ title }}</strong>
 {%- if !detail.is_empty() %}
+  {%- if detail.is_markup() %}
+  <div>{{ detail }}</div>
+  {%- else %}
   <p>{{ detail }}</p>
+  {%- endif %}
 {%- endif %}
 {%- if let Some(action) = action %}
   {{ action }}

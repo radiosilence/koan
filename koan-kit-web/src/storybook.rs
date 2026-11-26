@@ -293,6 +293,7 @@ struct Page {
 /// Never: the page holds components and markup, whose `Display` cannot fail.
 #[must_use]
 pub fn page(live: bool) -> Html {
+    crate::action::repeat_serials();
     let head = kit::Head::new("out.css").title("kōan web kit");
     let head = if live {
         head.datastar("/datastar.js")

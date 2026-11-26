@@ -136,14 +136,10 @@ impl<'a> Flash<'a> {
     }
 }
 
-/// An id no earlier message had, so a patch makes each message a new element: a morph would keep the last one,
-/// faded and hidden, and only change its words.
+/// An id no earlier message had, in this process or an earlier one a tab outlived, so a patch makes each message a
+/// new element: a morph would keep the last one, faded and hidden, and only change its words.
 fn serial() -> String {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    format!(
-        "flash-{}",
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    )
+    format!("flash-{:016x}", crate::action::serial())
 }
 
 component!(Flash);

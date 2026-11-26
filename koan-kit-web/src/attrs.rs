@@ -63,10 +63,6 @@ impl<'a> Attrs<'a> {
     }
 
     pub(crate) fn add_class(&mut self, class: &'static str) {
-        assert!(
-            !class.contains(['"', '<', '>', '&']),
-            "a class is a list of class names; {class:?} holds markup"
-        );
         self.classes.push(class);
     }
 
@@ -178,13 +174,22 @@ impl fmt::Display for Classes<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for class in self.0 {
             f.write_str(" ")?;
-            f.write_str(class)?;
+            escape(f, class)?;
         }
         Ok(())
     }
 }
 
 impl HtmlSafe for Classes<'_> {}
+
+/// Text written escaped, as `Display`.
+pub(crate) struct Escaped<'t>(pub(crate) &'t str);
+
+impl fmt::Display for Escaped<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        escape(f, self.0)
+    }
+}
 
 /// ` name="value"`, the value escaped.
 pub(crate) fn attribute(f: &mut fmt::Formatter<'_>, name: &str, value: &str) -> fmt::Result {

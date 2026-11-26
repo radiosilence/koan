@@ -10,7 +10,7 @@ use std::fmt;
 
 use crate::action::{Busy, Method};
 use crate::arg::{Flag, Text};
-use crate::attrs::{Attrs, attribute, component, escape};
+use crate::attrs::{Attrs, Escaped, attribute, component, escape};
 use crate::icon::Glyph;
 use crate::sheet::{CONFIRM_ID, OPEN_CONFIRM};
 
@@ -237,7 +237,12 @@ impl<'a> Button<'a> {
 
     /// Reads `url` when pressed, busy while its request runs: for a fragment the page shows on demand. A change is a
     /// [`post`](Self::post).
+    ///
+    /// # Panics
+    ///
+    /// When a question was given: a question guards a change, and a GET changes nothing.
     pub fn get(mut self, url: impl Into<Text<'a>>) -> Self {
+        self.refuse_pending("reads with .get()");
         self.act = Act::Request {
             method: Method::Get,
             url: url.into(),
@@ -297,13 +302,23 @@ impl<'a> Button<'a> {
     }
 
     /// Goes to `href`: drawn as a link, so it works before any script and a modified click opens a tab.
+    ///
+    /// # Panics
+    ///
+    /// When a question was given: a link goes before anything could ask it.
     pub fn href(mut self, href: impl Into<Text<'a>>) -> Self {
+        self.refuse_pending("is a link");
         self.act = Act::Link(href.into());
         self
     }
 
     /// Opens the dialog `id` as a modal (a [`Sheet`](crate::Sheet)), through `commandfor`, with no script.
+    ///
+    /// # Panics
+    ///
+    /// When a question was given, which only a post can ask.
     pub fn opens(mut self, id: impl Into<Text<'a>>) -> Self {
+        self.refuse_pending("opens a dialog");
         self.act = Act::Command {
             command: "show-modal",
             target: id.into(),
@@ -312,7 +327,12 @@ impl<'a> Button<'a> {
     }
 
     /// Closes the dialog `id`, through `commandfor`, with no script: a sheet's cancel.
+    ///
+    /// # Panics
+    ///
+    /// When a question was given, which only a post can ask.
     pub fn closes(mut self, id: impl Into<Text<'a>>) -> Self {
+        self.refuse_pending("closes a dialog");
         self.act = Act::Command {
             command: "close",
             target: id.into(),
@@ -321,38 +341,50 @@ impl<'a> Button<'a> {
     }
 
     /// Submits its form. [`Form::submit`](crate::Form::submit) gives one that is busy while the form's request runs.
+    ///
+    /// # Panics
+    ///
+    /// When a question was given: a submit would go without asking it. A form that asks first is #2361.
     pub fn submit(mut self) -> Self {
+        self.refuse_pending("submits its form");
         self.act = Act::Submit(None);
         self
     }
 
     /// A submit busy by `signal`, the form's.
     pub(crate) fn submits_with(mut self, signal: Busy) -> Self {
+        self.refuse_pending("submits its form");
         self.act = Act::Submit(Some(signal));
         self
     }
 
     /// Puts a question on the request this button sends, or keeps it for the request it will be given, so the
     /// order of `.post()` and `.confirm()` does not matter.
+    ///
+    /// A question that could not be asked is refused in every build, since dropping it would let a destructive press
+    /// go without asking.
     fn ask(&mut self, ask: Ask<'a>) {
         match &mut self.act {
             Act::Request {
                 method, ask: slot, ..
             } => {
-                debug_assert!(
+                assert!(
                     *method == Method::Post,
-                    "a question guards a change; a GET changes nothing"
+                    "a question guards a change; this button reads with .get(), which changes nothing"
                 );
                 *slot = Some(ask);
             }
-            act => {
-                debug_assert!(
-                    matches!(act, Act::Nothing),
-                    "a question guards a request; give the button .post(url) as well"
-                );
-                self.pending = Some(ask);
-            }
+            Act::Nothing => self.pending = Some(ask),
+            _ => panic!("a question guards a .post(); this button does something else"),
         }
+    }
+
+    /// Refuses a question given before an action that cannot ask it.
+    fn refuse_pending(&self, does: &str) {
+        assert!(
+            self.pending.is_none(),
+            "a question guards a .post(); this button {does}, so the question would never be asked"
+        );
     }
 
     fn take_ask(&mut self) -> Option<Ask<'a>> {
@@ -402,6 +434,10 @@ impl Button<'_> {
 }
 
 impl fmt::Display for Button<'_> {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one element, its attributes written in order, read top to bottom"
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let link = matches!(self.act, Act::Link(_));
         if link {
@@ -419,7 +455,7 @@ impl fmt::Display for Button<'_> {
             write!(
                 f,
                 " class=\"{}{}\"",
-                classes.join(" "),
+                Escaped(&classes.join(" ")),
                 self.attrs.classes()
             )?;
         }
@@ -441,14 +477,20 @@ impl fmt::Display for Button<'_> {
                 url,
                 ask: None,
             } => {
-                let busy = self
-                    .busy_key
-                    .present()
-                    .map_or_else(|| Busy::of(*method, url.as_str()), Busy::keyed);
+                let busy = self.busy_key.present().map_or_else(Busy::own, Busy::keyed);
                 attribute(f, "data-url", url.as_str())?;
                 write!(f, " data-indicator=\"{busy}\"")?;
                 self.busy_attributes(f, busy)?;
-                write!(f, " data-on:click=\"{}(el.dataset.url)\"", method.action())?;
+                let options = busy.options();
+                if options.is_empty() {
+                    write!(f, " data-on:click=\"{}(el.dataset.url)\"", method.action())?;
+                } else {
+                    write!(
+                        f,
+                        " data-on:click=\"{}(el.dataset.url, {{{options}}})\"",
+                        method.action()
+                    )?;
+                }
             }
             Act::Request {
                 url,
@@ -530,14 +572,18 @@ mod tests {
         assert!(button.contains("class=\"quiet bad\""), "{button}");
     }
 
+    /// The busy signal a rendered control declares.
+    fn signal(html: &str) -> &str {
+        let (_, rest) = html
+            .split_once("data-indicator=\"")
+            .expect("a request declares its busy signal");
+        rest.split('"').next().expect("the attribute is closed")
+    }
+
     #[test]
     fn a_request_is_busy_by_its_own_signal() {
         let button = Button::primary("scan").post("/scan").to_string();
-        let busy = Busy::of(Method::Post, "/scan");
-        assert!(
-            button.contains(&format!("data-indicator=\"{busy}\"")),
-            "{button}"
-        );
+        let busy = signal(&button);
         assert!(
             button.contains(&format!("data-class:busy=\"${busy}\"")),
             "{button}"
@@ -546,6 +592,46 @@ mod tests {
             button.contains(&format!("data-attr:disabled=\"${busy}\"")),
             "{button}"
         );
+        let other = Button::bordered("retry").post("/scan").to_string();
+        assert_ne!(
+            busy,
+            signal(&other),
+            "a patch adding or removing one would clear the other's busy state"
+        );
+    }
+
+    #[test]
+    fn a_shared_key_is_busy_together_and_cancels_nothing() {
+        let first = Button::bordered("retry")
+            .post("/jobs/1/retry")
+            .busy_key("card-1")
+            .to_string();
+        let second = Button::bordered("next")
+            .post("/jobs/1/next")
+            .busy_key("card-1")
+            .to_string();
+        assert_eq!(signal(&first), signal(&second));
+        assert!(
+            first.contains("@post(el.dataset.url, {requestCancellation: 'disabled'})"),
+            "{first}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "would never be asked")]
+    fn a_question_before_a_submit_is_refused() {
+        let _ = Button::primary("delete account")
+            .bad()
+            .confirm("delete your account?", "delete")
+            .submit();
+    }
+
+    #[test]
+    #[should_panic(expected = "changes nothing")]
+    fn a_question_on_a_read_is_refused() {
+        let _ = Button::bordered("export")
+            .get("/export")
+            .confirm("export?", "export");
     }
 
     #[test]
@@ -595,11 +681,11 @@ mod tests {
 
     #[test]
     fn what_the_server_set_survives_datastar_binding() {
-        let busy = Busy::of(Method::Post, "/scan");
         let button = Button::primary("rescan")
             .post("/scan")
             .busy(true)
             .to_string();
+        let busy = signal(&button);
         assert!(
             button.contains(&format!("data-class:busy=\"true || ${busy}\"")),
             "{button}"

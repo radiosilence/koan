@@ -43,8 +43,9 @@ component!(Pairs);
 /// A summary that opens onto more: `kit::Disclosure::new("files")`.
 ///
 /// Its body is [`body`](Self::body), or the markup of a `{% filter kit::wrap(disclosure) %}` block. One that
-/// [`loads`](Self::loads) fetches its body when first opened: the handler answers with the same disclosure, under the
-/// same [`id`](Self::id), open and holding what it read, so one component draws both.
+/// [`loads`](Self::loads) fetches its body when it opens: the handler answers with the same disclosure, under the
+/// same [`id`](Self::id), open and holding what it read, so one component draws both. An answer without `loads`
+/// stops it fetching; one that keeps `loads` fetches again on every opening, for what changes while the page is open.
 #[must_use = "a disclosure draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "disclosure.html")]
@@ -53,7 +54,6 @@ pub struct Disclosure<'a> {
     body: Content<'a>,
     open: bool,
     loads: Text<'a>,
-    reloads: bool,
     attrs: Attrs<'a>,
 }
 
@@ -65,7 +65,6 @@ impl<'a> Disclosure<'a> {
             body: Content::default(),
             open: false,
             loads: Text::default(),
-            reloads: false,
             attrs: Attrs::default(),
         }
     }
@@ -87,14 +86,6 @@ impl<'a> Disclosure<'a> {
     pub fn loads(mut self, url: impl Into<Text<'a>>, placeholder: impl Into<Content<'a>>) -> Self {
         self.loads = url.into();
         self.body = placeholder.into();
-        self
-    }
-}
-
-impl Disclosure<'_> {
-    /// Fetches its body again every time it opens, not only the first: for what changes while the page is open.
-    pub fn reloads(mut self) -> Self {
-        self.reloads = true;
         self
     }
 }
@@ -165,14 +156,15 @@ mod tests {
     }
 
     #[test]
-    fn a_disclosure_that_loads_fetches_once_with_a_constant_expression() {
+    fn a_disclosure_that_loads_fetches_with_a_constant_expression() {
         let html = Disclosure::new("files")
             .loads("/jobs/1/files", "Reading…")
             .id("files-1")
             .to_string();
         assert!(html.contains("data-url=\"/jobs/1/files\""), "{html}");
         assert!(
-            html.contains("data-on:toggle__once=\"el.open &amp;&amp; @get(el.dataset.url)\""),
+            html.contains("data-on:toggle=\"el.open &amp;&amp; @get(el.dataset.url)\"")
+                && html.contains("data-init=\"el.open &amp;&amp; @get(el.dataset.url)\""),
             "{html}"
         );
     }

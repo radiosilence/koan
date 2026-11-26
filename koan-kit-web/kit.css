@@ -559,7 +559,7 @@
     @apply font-normal text-strong;
   }
 
-  .empty > p {
+  .empty > :is(p, div) {
     @apply m-0 max-w-form;
   }
 

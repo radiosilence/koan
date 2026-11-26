@@ -47,10 +47,15 @@ fi
 # The published koan-server names the web kit by the kit's own version (koan-kit-web/, released on its own by
 # koan-kit-web.yml), so the kit in the tree must be the kit that version holds: a change to it since its version last
 # moved would ship a koan-server built against a kit nobody can download. Its docs and storybook do not count.
+# The check needs the history: a shallow clone, as CI's checkout is, would see none and pass anything.
+if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+  git fetch -q --unshallow origin
+fi
 kit_bump=$(git log -1 --format=%H -G '^version = ' origin/main -- koan-kit-web/Cargo.toml)
 if [ -n "$kit_bump" ]; then
   kit_changes=$(git diff --name-only "$kit_bump" origin/main -- koan-kit-web/Cargo.toml koan-kit-web/src \
-    koan-kit-web/templates 'koan-kit-web/*.css' koan-kit-web/kit-check.mjs koan-kit-web/geist-mono.woff2)
+    koan-kit-web/templates koan-kit-web/kit.css koan-kit-web/tokens.css koan-kit-web/theme.css \
+    koan-kit-web/kit-check.mjs koan-kit-web/geist-mono.woff2)
   if [ -n "$kit_changes" ]; then
     echo "koan-kit-web/ has changed since its version last moved, so the published koan-server would name a kit" >&2
     echo "without these changes:" >&2

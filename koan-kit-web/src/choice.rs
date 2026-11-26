@@ -16,7 +16,7 @@ use crate::field::signal_name;
 struct Tick<'a> {
     radio: bool,
     name: Text<'a>,
-    value: Text<'a>,
+    value: Option<Text<'a>>,
     label: Text<'a>,
     checked: bool,
     disabled: bool,
@@ -47,7 +47,7 @@ macro_rules! tick {
             ) -> Self {
                 let mut tick = Self::new(name, label);
                 tick.tick.radio = true;
-                tick.tick.value = value.into();
+                tick.tick.value = Some(value.into());
                 tick
             }
 
@@ -71,7 +71,7 @@ macro_rules! tick {
 
             /// What a ticked checkbox sends, in place of `on`.
             pub fn value(mut self, value: impl Into<Text<'a>>) -> Self {
-                self.tick.value = value.into();
+                self.tick.value = Some(value.into());
                 self
             }
 
@@ -138,6 +138,12 @@ mod tests {
             toggle.contains("<span>notify when done</span><input type=\"checkbox\""),
             "{toggle}"
         );
+    }
+
+    #[test]
+    fn an_empty_value_is_sent_as_empty_not_on() {
+        let radio = Check::radio("quality", "", "any").to_string();
+        assert!(radio.contains("value=\"\""), "{radio}");
     }
 
     #[test]

@@ -1253,7 +1253,7 @@
     font-weight: var(--font-weight-normal);
     color: var(--strong);
   }
-  .empty > p {
+  .empty > :is(p, div) {
     margin: 0px;
     max-width: var(--container-form);
   }

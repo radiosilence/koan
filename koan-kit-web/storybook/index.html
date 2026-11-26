@@ -107,23 +107,23 @@
 <p class="text-meta text-muted">A request carries its URL as data, and the button is busy for exactly as long as its own request runs.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
   <figure class="m-0 grid gap-2">
-    <div><button type="button" class="primary" data-url="/stub/slow" data-indicator="_busyc3759808f700" data-class:busy="$_busyc3759808f700" data-attr:disabled="$_busyc3759808f700" data-on:click="@post(el.dataset.url)">rescan</button></div>
+    <div><button type="button" class="primary" data-url="/stub/slow" data-indicator="_busyadcb76ddf8a7" data-class:busy="$_busyadcb76ddf8a7" data-attr:disabled="$_busyadcb76ddf8a7" data-on:click="@post(el.dataset.url)">rescan</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;rescan&#34;).post(&#34;/stub/slow&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" data-url="/stub/slow" data-indicator="_busyfb539b5f8e0c" data-class:busy="$_busyfb539b5f8e0c" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url)">retry</button></div>
+    <div><button type="button" data-url="/stub/slow" data-indicator="_busyfb539b5f8e0c" data-class:busy="$_busyfb539b5f8e0c" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url, {requestCancellation: 'disabled'})">retry</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;retry&#34;).post(&#34;/stub/slow&#34;).busy_key(&#34;card-1&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" data-url="/stub/slow?next" data-indicator="_busyfb539b5f8e0c" data-class:busy="$_busyfb539b5f8e0c" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url)">next copy</button></div>
+    <div><button type="button" data-url="/stub/slow?next" data-indicator="_busyfb539b5f8e0c" data-class:busy="$_busyfb539b5f8e0c" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url, {requestCancellation: 'disabled'})">next copy</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;next copy&#34;).post(&#34;/stub/slow?next&#34;).busy_key(&#34;card-1&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" data-url="/stub/flash" data-indicator="_busy30c75f7230c9" data-class:busy="$_busy30c75f7230c9" data-attr:disabled="$_busy30c75f7230c9" data-on:click="@get(el.dataset.url)">say saved</button></div>
+    <div><button type="button" data-url="/stub/flash" data-indicator="_busye6c26beeae86" data-class:busy="$_busye6c26beeae86" data-attr:disabled="$_busye6c26beeae86" data-on:click="@get(el.dataset.url)">say saved</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;say saved&#34;).get(&#34;/stub/flash&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" data-url="/stub/failed" data-indicator="_busyefff0707a774" data-class:busy="$_busyefff0707a774" data-attr:disabled="$_busyefff0707a774" data-on:click="@get(el.dataset.url)">say it failed</button></div>
+    <div><button type="button" data-url="/stub/failed" data-indicator="_busy039535423be1" data-class:busy="$_busy039535423be1" data-attr:disabled="$_busy039535423be1" data-on:click="@get(el.dataset.url)">say it failed</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;say it failed&#34;).get(&#34;/stub/failed&#34;)</pre></figcaption>
   </figure>
 </div>
@@ -190,8 +190,8 @@
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
   <figure class="m-0 grid gap-2">
     <div><label class="field">
-  <span>api token</span>
-  <input type="password" placeholder="paste the token" name="token" aria-describedby="token-note">
+  <span id="token-label">api token</span>
+  <input type="password" placeholder="paste the token" name="token" aria-labelledby="token-label" aria-describedby="token-note">
   <small id="token-note">Stored sealed; the gateway never shows it again.</small>
 </label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::password(&#34;token&#34;,
@@ -199,16 +199,16 @@
   </figure>
   <figure class="m-0 grid gap-2">
     <div><label class="field">
-  <span>region</span>
-  <select name="region"><option value="eu-west">eu-west</option><option value="us-east" selected>us-east</option></select>
+  <span id="region-label">region</span>
+  <select name="region" aria-labelledby="region-label"><option value="eu-west">eu-west</option><option value="us-east" selected>us-east</option></select>
 </label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::select(&#34;region&#34;, &#34;region&#34;,
 [(&#34;eu-west&#34;, &#34;eu-west&#34;), (&#34;us-east&#34;, &#34;us-east&#34;)]).value(&#34;us-east&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
     <div><label class="field bad">
-  <span>server url</span>
-  <input type="url" value="htp://example" name="server" aria-describedby="server-note" aria-invalid="true">
+  <span id="server-label">server url</span>
+  <input type="url" value="htp://example" name="server" aria-labelledby="server-label" aria-describedby="server-note" aria-invalid="true">
   <small id="server-note">Not a URL: it must start with https://.</small>
 </label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::url(&#34;server&#34;,
@@ -216,8 +216,8 @@
   </figure>
   <figure class="m-0 grid gap-2">
     <div><label class="field warn">
-  <span>notes</span>
-  <textarea name="notes" aria-describedby="notes-note">
+  <span id="notes-label">notes</span>
+  <textarea name="notes" aria-labelledby="notes-label" aria-describedby="notes-note">
 Text a person wrote keeps its Case.</textarea>
   <small id="notes-note">Saved on this device only.</small>
 </label></div>
@@ -226,8 +226,8 @@ Text a person wrote keeps its Case.</textarea>
   </figure>
   <figure class="m-0 grid gap-2">
     <div><label class="field">
-  <span>upload slots</span>
-  <input type="number" value="4" min="0" max="20" name="slots">
+  <span id="slots-label">upload slots</span>
+  <input type="number" value="4" min="0" max="20" name="slots" aria-labelledby="slots-label">
 </label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::number(&#34;slots&#34;, &#34;upload slots&#34;).value(&#34;4&#34;).min(0).max(20)</pre></figcaption>
   </figure>
@@ -270,11 +270,11 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
 <p class="text-meta text-muted">A form keeps its method and action, and its submit is busy while the form&#39;s request runs.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
   <figure class="m-0 grid gap-2">
-    <div><form action="/stub/slow" method="post" data-indicator="_busyc3759808f700" data-on:submit="el.checkValidity() && @post(el.getAttribute('action'), {contentType: 'form'})"><label class="field">
-  <span>name</span>
-  <input type="text" name="name" aria-describedby="name-note" required>
+    <div><form action="/stub/slow" method="post" data-indicator="_busy1fb960ff6465" data-on:submit="(el.noValidate || el.checkValidity()) && @post(el.getAttribute('action'), {contentType: 'form'})"><label class="field">
+  <span id="name-label">name</span>
+  <input type="text" name="name" aria-labelledby="name-label" aria-describedby="name-note" required>
   <small id="name-note">What the server calls itself.</small>
-</label><label class="toggle"><span>listed publicly</span><input type="checkbox" name="public"></label><button type="submit" class="primary" data-class:busy="$_busyc3759808f700" data-attr:disabled="$_busyc3759808f700">save</button></form></div>
+</label><label class="toggle"><span>listed publicly</span><input type="checkbox" name="public"></label><button type="submit" class="primary" data-class:busy="$_busy1fb960ff6465" data-attr:disabled="$_busy1fb960ff6465">save</button></form></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{% let form = kit::Form::post(&#34;/stub/slow&#34;) %}
 &#60;form {{ form.attrs() }}&#62;
   {{ kit::Field::text(&#34;name&#34;, &#34;name&#34;).required().hint(&#34;What the server calls itself.&#34;) }}
@@ -283,7 +283,7 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
 &#60;/form&#62;</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><form action="/stub/search" method="get" data-indicator="_busy339ac526f469" data-on:submit="el.checkValidity() && @get(el.getAttribute('action'), {contentType: 'form'})" data-on:input__debounce.300ms="el.checkValidity() && @get(el.getAttribute('action'), {contentType: 'form'})"><input type="search" placeholder="polar bear" name="q" aria-label="search"></form><ul id="story-results" class="rows"></ul></div>
+    <div><form action="/stub/search" method="get" data-indicator="_busy58b056101a44" data-on:submit="(el.noValidate || el.checkValidity()) && @get(el.getAttribute('action'), {contentType: 'form'})" data-on:input__debounce.300ms="(el.noValidate || el.checkValidity()) && @get(el.getAttribute('action'), {contentType: 'form'})"><input type="search" placeholder="polar bear" name="q" aria-label="search"></form><ul id="story-results" class="rows"></ul></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{% let search = kit::Form::get(&#34;/stub/search&#34;).live() %}
 &#60;form {{ search.attrs() }}&#62;
   {{ kit::Input::search(&#34;q&#34;).label(&#34;search&#34;).placeholder(&#34;polar bear&#34;) }}
@@ -351,7 +351,7 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::warn(&#34;The token expires in two days.&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><div class="notice bad" role="alert">The server refused the token: 401. <button type="button" data-url="/stub/slow" data-indicator="_busyc3759808f700" data-class:busy="$_busyc3759808f700" data-attr:disabled="$_busyc3759808f700" data-on:click="@post(el.dataset.url)">retry</button></div></div>
+    <div><div class="notice bad" role="alert">The server refused the token: 401. <button type="button" data-url="/stub/slow" data-indicator="_busy3c8c2a52f1c0" data-class:busy="$_busy3c8c2a52f1c0" data-attr:disabled="$_busy3c8c2a52f1c0" data-on:click="@post(el.dataset.url)">retry</button></div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::bad(&#34;The server refused the token: 401.&#34;).action(kit::Button::bordered(&#34;retry&#34;).post(&#34;/stub/slow&#34;))</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
@@ -390,7 +390,7 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Disclosure::new(&#34;connection details&#34;).body(&#34;What only some readers need.&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><details class="disclosure" data-url="/stub/files" data-on:toggle__once="el.open &amp;&amp; @get(el.dataset.url)" id="story-files">
+    <div><details class="disclosure" data-url="/stub/files" data-init="el.open &amp;&amp; @get(el.dataset.url)" data-on:toggle="el.open &amp;&amp; @get(el.dataset.url)" id="story-files">
   <summary>files</summary>
   <div>Reading…</div>
 </details></div>
@@ -550,16 +550,17 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
   <span class="skeleton block h-9 w-64">placeholder</span>
 </div>
 </main>
-<dialog class="sheet" closedby="any" aria-labelledby="kit-confirm-question" id="kit-confirm"
+<dialog class="sheet" closedby="any" data-attr:closedby="$_kitconfirmbusy ? 'none' : 'any'" aria-labelledby="kit-confirm-question" id="kit-confirm"
   data-signals__ifmissing="{_kitconfirm: {ask: '', detail: '', yes: '', url: '', preview: '', bad: false, ready: false, open: false, n: 0}}">
   <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; el.closest('dialog').close()">
     <h2 id="kit-confirm-question" data-text="$_kitconfirm.ask"></h2>
   </header>
+  <p id="kit-confirm-error" class="notice bad" role="alert" hidden></p>
   <p id="kit-confirm-detail" hidden data-text="$_kitconfirm.detail" data-attr:hidden="!$_kitconfirm.detail"></p>
   <section id="kit-confirm-preview" data-attr:aria-busy="$_kitconfirm.ready ? 'false' : 'true'"
-    data-effect="$_kitconfirm.n &amp;&amp; (el._kitpreview?.abort(), el.replaceChildren(), $_kitconfirm.preview &amp;&amp; @get($_kitconfirm.preview, {requestCancellation: el._kitpreview = new AbortController()}))"></section>
+    data-effect="$_kitconfirm.n &amp;&amp; (el._kitpreview?.abort(), el.replaceChildren(), document.getElementById('kit-confirm-error').hidden = true, $_kitconfirm.preview &amp;&amp; @get($_kitconfirm.preview, {requestCancellation: el._kitpreview = new AbortController()}))"></section>
   <footer class="actions">
-    <button type="button" class="quiet" commandfor="kit-confirm" command="close" autofocus>cancel</button>
+    <button type="button" class="quiet" commandfor="kit-confirm" command="close" data-attr:disabled="$_kitconfirmbusy" autofocus>cancel</button>
     <button type="button" data-class:primary="!$_kitconfirm.bad" data-class:bad="$_kitconfirm.bad" data-class:fill="$_kitconfirm.bad"
       data-indicator="_kitconfirmbusy" data-class:busy="$_kitconfirmbusy" data-attr:disabled="!$_kitconfirm.ready || $_kitconfirmbusy"
       data-text="$_kitconfirm.yes" data-on:click="@post($_kitconfirm.url)"></button>

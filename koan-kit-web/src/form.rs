@@ -31,7 +31,7 @@ pub struct Form<'a> {
     method: Method,
     datastar: bool,
     live: bool,
-    busy_key: Text<'a>,
+    busy: Busy,
     attrs: Attrs<'a>,
 }
 
@@ -42,7 +42,7 @@ impl<'a> Form<'a> {
             method,
             datastar,
             live: false,
-            busy_key: Text::default(),
+            busy: Busy::own(),
             attrs: Attrs::default(),
         }
     }
@@ -72,7 +72,7 @@ impl<'a> Form<'a> {
     /// Names its busy signal by `key` rather than by its action, so forms posting one action row by row (each search
     /// result's download) are busy apart; see [`Button::busy_key`](crate::Button::busy_key).
     pub fn busy_key(mut self, key: impl Into<Text<'a>>) -> Self {
-        self.busy_key = key.into();
+        self.busy = Busy::keyed(key.into().as_str());
         self
     }
 
@@ -124,9 +124,7 @@ impl<'a> Form<'a> {
     }
 
     fn busy(&self) -> Busy {
-        self.busy_key
-            .present()
-            .map_or_else(|| Busy::of(self.method, self.action.as_str()), Busy::keyed)
+        self.busy
     }
 }
 
@@ -139,8 +137,14 @@ impl fmt::Display for FormAttrs<'_, '_> {
         attribute(f, "action", form.action.as_str())?;
         write!(f, " method=\"{}\"", form.method.form())?;
         if form.datastar {
+            // A form left invalid would start a request Datastar abandons unsettled, keeping its submit busy for good;
+            // one marked novalidate is the server's to check, as Datastar's own form fetch has it.
+            let options = match form.busy.options() {
+                "" => String::new(),
+                more => format!(", {more}"),
+            };
             let request = format!(
-                "el.checkValidity() && {}(el.getAttribute('action'), {{contentType: 'form'}})",
+                "(el.noValidate || el.checkValidity()) && {}(el.getAttribute('action'), {{contentType: 'form'{options}}})",
                 form.method.action()
             );
             write!(
@@ -172,12 +176,12 @@ mod tests {
         );
         assert!(
             attrs.contains(
-                "data-on:submit=\"el.checkValidity() && @post(el.getAttribute('action'), {contentType: 'form'})\""
+                "data-on:submit=\"(el.noValidate || el.checkValidity()) && @post(el.getAttribute('action'), {contentType: 'form'})\""
             ),
             "{attrs}"
         );
         let submit = form.submit(Button::primary("save")).to_string();
-        let busy = Busy::of(Method::Post, "/settings");
+        let busy = form.busy();
         assert!(
             attrs.contains(&format!("data-indicator=\"{busy}\"")),
             "{attrs}"

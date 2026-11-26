@@ -1,18 +1,21 @@
 {#- The page's one sheet for asking before a change. A button that asks fills the `_kitconfirm` signals from its own
     data and opens it; the header closes it when a handler sets `open` false; the section aborts the last opening's
     preview request, empties itself, and fetches this opening's preview, if it has one; yes waits for `ready`, sends
-    the button's request, and is busy while it runs. Busy is written as a string, since Datastar writes a bare `true`
+    the button's request, and is busy while it runs, during which the sheet cannot be dismissed, so its answer cannot
+    land on a later question. A handler's error shows inside the sheet, where a flash under the dimmed page would not
+    be seen. Busy is written as a string, since Datastar writes a bare `true`
     as an empty attribute. -#}
-<dialog class="sheet{{ attrs.classes() }}" closedby="any" aria-labelledby="kit-confirm-question"{{ attrs }}
+<dialog class="sheet{{ attrs.classes() }}" closedby="any" data-attr:closedby="$_kitconfirmbusy ? 'none' : 'any'" aria-labelledby="kit-confirm-question"{{ attrs }}
   data-signals__ifmissing="{_kitconfirm: {ask: '', detail: '', yes: '', url: '', preview: '', bad: false, ready: false, open: false, n: 0}}">
   <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; el.closest('dialog').close()">
     <h2 id="kit-confirm-question" data-text="$_kitconfirm.ask"></h2>
   </header>
+  <p id="kit-confirm-error" class="notice bad" role="alert" hidden></p>
   <p id="kit-confirm-detail" hidden data-text="$_kitconfirm.detail" data-attr:hidden="!$_kitconfirm.detail"></p>
   <section id="kit-confirm-preview" data-attr:aria-busy="$_kitconfirm.ready ? 'false' : 'true'"
-    data-effect="$_kitconfirm.n &amp;&amp; (el._kitpreview?.abort(), el.replaceChildren(), $_kitconfirm.preview &amp;&amp; @get($_kitconfirm.preview, {requestCancellation: el._kitpreview = new AbortController()}))"></section>
+    data-effect="$_kitconfirm.n &amp;&amp; (el._kitpreview?.abort(), el.replaceChildren(), document.getElementById('kit-confirm-error').hidden = true, $_kitconfirm.preview &amp;&amp; @get($_kitconfirm.preview, {requestCancellation: el._kitpreview = new AbortController()}))"></section>
   <footer class="actions">
-    <button type="button" class="quiet" commandfor="kit-confirm" command="close" autofocus>{{ cancel }}</button>
+    <button type="button" class="quiet" commandfor="kit-confirm" command="close" data-attr:disabled="$_kitconfirmbusy" autofocus>{{ cancel }}</button>
     <button type="button" data-class:primary="!$_kitconfirm.bad" data-class:bad="$_kitconfirm.bad" data-class:fill="$_kitconfirm.bad"
       data-indicator="_kitconfirmbusy" data-class:busy="$_kitconfirmbusy" data-attr:disabled="!$_kitconfirm.ready || $_kitconfirmbusy"
       data-text="$_kitconfirm.yes" data-on:click="@post($_kitconfirm.url)"></button>

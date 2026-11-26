@@ -8,7 +8,7 @@
 //! thousand rows carries no thousand dialogs.
 
 use askama::Template;
-use askama_datastar::{ElementPatchMode, Html, PatchSignals};
+use askama_datastar::{ElementPatchMode, Html, PatchElements, PatchSignals};
 use axum::response::sse::Event;
 
 use crate::arg::{Content, Markup, Text};
@@ -128,6 +128,17 @@ impl Confirm<'_> {
         ]
     }
 
+    /// A handler's answer when the change, or its preview, failed: `message` inside the sheet, which stays open, since
+    /// a flash would sit under the dimmed page. The next opening clears it.
+    pub fn error<'m>(message: impl Into<Text<'m>>) -> PatchElements {
+        let message: Text<'m> = message.into();
+        let html = format!(
+            "<p id=\"kit-confirm-error\" class=\"notice bad\" role=\"alert\">{}</p>",
+            crate::attrs::Escaped(message.as_str())
+        );
+        Html::trusted(html).patch()
+    }
+
     /// An action handler's last word once its change is made: the sheet closes. Without it the sheet stays open, so a
     /// handler that fails says so in place.
     #[must_use]
@@ -179,6 +190,22 @@ mod tests {
         assert!(
             format!("{ready:?}").contains("ready"),
             "the preview's answer readies the sheet"
+        );
+    }
+
+    #[test]
+    fn an_error_shows_inside_the_sheet_escaped() {
+        let patch = format!("{:?}", Confirm::error("refused: <403>"));
+        assert!(patch.contains("kit-confirm-error"), "{patch}");
+        assert!(patch.contains("&#60;403&#62;"), "{patch}");
+    }
+
+    #[test]
+    fn a_running_answer_cannot_be_dismissed() {
+        let sheet = Confirm::new("cancel").to_string();
+        assert!(
+            sheet.contains("data-attr:closedby=\"$_kitconfirmbusy ? 'none' : 'any'\""),
+            "{sheet}"
         );
     }
 

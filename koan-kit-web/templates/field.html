@@ -1,9 +1,12 @@
-{#- A label leading, the control filling the width, and the note under it, which describes the control. -#}
+{#- A label leading, the control filling the width, and the note under it, which describes the control. The control is
+    named by the label's words alone, so the note is read once. A control of the app's own sits in a `div`, since it
+    may be a group a `<label>` cannot hold. -#}
 {%- let note = self.note() -%}
-<label class="field{% if let Some((Some(tone), _)) = note %} {{ tone }}{% endif %}{{ attrs.classes() }}"{{ attrs }}>
-  <span>{{ label }}</span>
+{%- let element = self.element() -%}
+<{{ element }} class="field{% if let Some((Some(tone), _)) = note %} {{ tone }}{% endif %}{{ attrs.classes() }}"{{ attrs }}>
+  <span{% if let Some(id) = self.label_id() %} id="{{ id }}"{% endif %}>{{ label }}</span>
   {{ self.control() }}
   {%- if let Some((_, text)) = note %}
   <small id="{{ self.note_id() }}">{{ text }}</small>
   {%- endif %}
-</label>
+</{{ element }}>
