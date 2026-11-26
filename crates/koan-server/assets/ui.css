@@ -2097,10 +2097,13 @@
     gap: calc(var(--spacing) * 2);
   }
   :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select, textarea).compact, .compact :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select, textarea) {
-    padding-inline: calc(var(--spacing) * 2);
     padding-block: var(--spacing);
+    padding-left: calc(var(--spacing) * 2);
     font-size: var(--text-meta);
     line-height: var(--tw-leading, var(--text-meta--line-height));
+  }
+  :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), textarea).compact, .compact :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), textarea) {
+    padding-right: calc(var(--spacing) * 2);
   }
   :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select).compact, .compact :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select), :is(button, .button):not(.link).compact, .compact :is(button, .button):not(.link) {
     height: calc(var(--text-meta) * 1.35 + 10px);
