@@ -114,6 +114,14 @@ pub struct Button<'a> {
     yes_bad: bool,
     /// The busy signal's key, when it is not the request.
     busy_key: Text<'a>,
+    /// The id of the form whose fields its request sends.
+    form: Text<'a>,
+    /// A link that loads its page in place.
+    in_place: bool,
+    /// Drawn at the size of a compact field.
+    compact: bool,
+    /// The glyph it shows while pressed, and whether it is.
+    toggle: Option<(Glyph, bool)>,
     attrs: Attrs<'a>,
 }
 
@@ -136,6 +144,10 @@ impl<'a> Button<'a> {
             detail: Text::default(),
             yes_bad: false,
             busy_key: Text::default(),
+            form: Text::default(),
+            in_place: false,
+            compact: false,
+            toggle: None,
             attrs: Attrs::default(),
         }
     }
@@ -276,10 +288,44 @@ impl<'a> Button<'a> {
         self
     }
 
-    /// Names the busy signal by `key` rather than by the request. Buttons sharing a key are busy together, as a card's
-    /// actions are while any of them runs; a key per row keeps rows posting one URL from spinning each other.
+    /// Joins the group `key` names: while any of its controls' requests runs, every one of them is disabled, and the
+    /// one pressed alone shows the spinner, as a card's actions do. A link in the group ignores a press while one runs.
+    /// A key per row keeps rows posting one URL apart.
     pub fn busy_key(mut self, key: impl Into<Text<'a>>) -> Self {
         self.busy_key = key.into();
+        self
+    }
+
+    /// Sends the fields of the form whose id is `form` with its request, as that form's submit: a form with several
+    /// actions gives each its own button, `kit::Button::bordered("enrich").post(enrich).sends("library")`, each posting
+    /// to its own URL and busy by itself. The button is a submit of that form, inside it or not, so Enter in a field
+    /// presses the form's first one, and the form's `required` and other constraints are checked before anything goes.
+    /// With [`confirm`](Self::confirm) the question is asked once the form is valid, and its yes sends the fields.
+    pub fn sends(mut self, form: impl Into<Text<'a>>) -> Self {
+        self.form = form.into();
+        self
+    }
+
+    /// For a link: a plain click reads the page in place with `@get`, its handler patching what changes, while a
+    /// modified click, a middle click or a page without script follows the real `href`. Busy while it loads, and a
+    /// second press meanwhile does nothing.
+    pub fn in_place(mut self) -> Self {
+        self.in_place = true;
+        self
+    }
+
+    /// The size of a compact field, so it lines up beside one in a row or a toolbar: `meta` type and tight padding. A
+    /// `compact` class on any container does the same for every control inside it.
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
+        self
+    }
+
+    /// Shows `glyph` in place of its own while pressed, and says whether it is pressed to a screen reader: play and
+    /// pause, mute. The page's script or a Datastar binding sets `aria-pressed` as the state changes; this sets it as
+    /// the page opens.
+    pub fn toggles(mut self, glyph: Glyph, pressed: impl Into<Flag>) -> Self {
+        self.toggle = Some((glyph, pressed.into().get()));
         self
     }
 
@@ -344,7 +390,8 @@ impl<'a> Button<'a> {
     ///
     /// # Panics
     ///
-    /// When a question was given: a submit would go without asking it. A form that asks first is #2361.
+    /// When a question was given: a submit would go without asking it. A form that asks first gives its button the
+    /// form's action and id, `.post(action).sends(id).confirm(question, yes)`, which keeps Enter and `required`.
     pub fn submit(mut self) -> Self {
         self.refuse_pending("submits its form");
         self.act = Act::Submit(None);
@@ -411,6 +458,9 @@ impl<'a> Button<'a> {
         if self.busy {
             classes.push("busy");
         }
+        if self.compact {
+            classes.push("compact");
+        }
         classes
     }
 }
@@ -420,17 +470,52 @@ impl Button<'_> {
     /// folded into the expressions, since Datastar's class and attr plugins own the attribute once they bind and would
     /// strip a static one as the signal starts false.
     fn busy_attributes(&self, f: &mut fmt::Formatter<'_>, signal: Busy) -> fmt::Result {
-        let busy = if self.busy { "true || " } else { "" };
-        let disabled = if self.disabled || self.busy {
+        self.busy_by(f, signal, signal)
+    }
+
+    /// Spinning while `busy` is set, disabled while `disabled` is.
+    fn busy_by(&self, f: &mut fmt::Formatter<'_>, busy: Busy, disabled: Busy) -> fmt::Result {
+        let spinning = if self.busy { "true || " } else { "" };
+        let off = if self.disabled || self.busy {
             "true || "
         } else {
             ""
         };
         write!(
             f,
-            " data-class:busy=\"{busy}${signal}\" data-attr:disabled=\"{disabled}${signal}\""
+            " data-class:busy=\"{spinning}${busy}\" data-attr:disabled=\"{off}${disabled}\""
         )
     }
+}
+
+/// A request's options beyond the URL: its form's fields, and cancellation off for a group.
+fn request_options(form: bool, group: Busy) -> String {
+    let mut options = Vec::with_capacity(3);
+    if form {
+        options.push("contentType: 'form', selector: '#' + CSS.escape(el.form.id)");
+    }
+    let more = group.options();
+    if !more.is_empty() {
+        options.push(more);
+    }
+    if options.is_empty() {
+        String::new()
+    } else {
+        format!(", {{{}}}", options.join(", "))
+    }
+}
+
+/// What a plain click on a link that loads in place does; a modified or middle click is the browser's.
+pub(crate) const FOLLOW_GUARD: &str = "evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), ";
+
+/// Writes the attributes that make a link load in place, busy by its own signal and ignored while its group's runs.
+pub(crate) fn in_place_attributes(f: &mut fmt::Formatter<'_>, key: &Text<'_>) -> fmt::Result {
+    let (own, group) = indicators(f, key)?;
+    write!(
+        f,
+        " data-class:busy=\"${own}\" data-on:click=\"{FOLLOW_GUARD}${group} || @get(el.getAttribute('href'){}))\"",
+        request_options(false, group)
+    )
 }
 
 impl fmt::Display for Button<'_> {
@@ -440,10 +525,11 @@ impl fmt::Display for Button<'_> {
     )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let link = matches!(self.act, Act::Link(_));
+        let sends = !self.form.is_empty() && matches!(self.act, Act::Request { .. });
         if link {
             f.write_str("<a")?;
         } else {
-            let kind = if matches!(self.act, Act::Submit(_)) {
+            let kind = if sends || matches!(self.act, Act::Submit(_)) {
                 "submit"
             } else {
                 "button"
@@ -459,9 +545,23 @@ impl fmt::Display for Button<'_> {
                 self.attrs.classes()
             )?;
         }
+        if sends && let Act::Request { method, url, .. } = &self.act {
+            // The form's own submit, should one be made before Datastar loads: refused by `require_datastar_on_post`,
+            // as a Form's is, or read as a page.
+            attribute(f, "form", self.form.as_str())?;
+            attribute(f, "formaction", url.as_str())?;
+            if *method == Method::Get {
+                f.write_str(" formmethod=\"get\"")?;
+            }
+        }
         match &self.act {
             // A disabled link has no href, so it neither navigates nor takes focus.
-            Act::Link(href) if !self.disabled => attribute(f, "href", href.as_str())?,
+            Act::Link(href) if !self.disabled => {
+                attribute(f, "href", href.as_str())?;
+                if self.in_place {
+                    in_place_attributes(f, &self.busy_key)?;
+                }
+            }
             Act::Nothing | Act::Link(_) => {}
             Act::Submit(signal) => {
                 if let Some(busy) = signal {
@@ -477,20 +577,16 @@ impl fmt::Display for Button<'_> {
                 url,
                 ask: None,
             } => {
-                let busy = self.busy_key.present().map_or_else(Busy::own, Busy::keyed);
                 attribute(f, "data-url", url.as_str())?;
-                write!(f, " data-indicator=\"{busy}\"")?;
-                self.busy_attributes(f, busy)?;
-                let options = busy.options();
-                if options.is_empty() {
-                    write!(f, " data-on:click=\"{}(el.dataset.url)\"", method.action())?;
-                } else {
-                    write!(
-                        f,
-                        " data-on:click=\"{}(el.dataset.url, {{{options}}})\"",
-                        method.action()
-                    )?;
-                }
+                let (own, group) = indicators(f, &self.busy_key)?;
+                self.busy_by(f, own, group)?;
+                let prevent = if sends { "evt.preventDefault(), " } else { "" };
+                write!(
+                    f,
+                    " data-on:click=\"{prevent}{}(el.dataset.url{})\"",
+                    method.action(),
+                    request_options(sends, group)
+                )?;
             }
             Act::Request {
                 url,
@@ -509,10 +605,20 @@ impl fmt::Display for Button<'_> {
                 if self.yes_bad {
                     f.write_str(" data-yes-bad")?;
                 }
-                write!(
-                    f,
-                    " commandfor=\"{CONFIRM_ID}\" command=\"show-modal\" data-on:click=\"{OPEN_CONFIRM}\""
-                )?;
+                if sends {
+                    // A submit cannot also be a command, so it opens the sheet itself, once the form is valid: the
+                    // browser's own messages say what is missing, and Enter in a field asks as a press does.
+                    write!(
+                        f,
+                        " data-on:click=\"evt.preventDefault(), el.form.reportValidity() &amp;&amp; ({OPEN_CONFIRM}, \
+                         document.getElementById('{CONFIRM_ID}').showModal())\""
+                    )?;
+                } else {
+                    write!(
+                        f,
+                        " commandfor=\"{CONFIRM_ID}\" command=\"show-modal\" data-on:click=\"{OPEN_CONFIRM}\""
+                    )?;
+                }
             }
         }
         if let Some((name, value)) = &self.named {
@@ -521,6 +627,9 @@ impl fmt::Display for Button<'_> {
         }
         if self.icon_only {
             attribute(f, "aria-label", self.label.as_str())?;
+        }
+        if let Some((_, pressed)) = self.toggle {
+            write!(f, " aria-pressed=\"{pressed}\"")?;
         }
         if self.disabled {
             f.write_str(if link {
@@ -533,12 +642,17 @@ impl fmt::Display for Button<'_> {
             f.write_str(" autofocus")?;
         }
         write!(f, "{}>", self.attrs)?;
+        let px = if self.compact {
+            15.6
+        } else if self.icon_only {
+            18.0
+        } else {
+            self.weight.glyph_px()
+        };
         if let Some(glyph) = self.icon {
-            let px = if self.icon_only {
-                18.0
-            } else {
-                self.weight.glyph_px()
-            };
+            write!(f, "{}", glyph.svg(px))?;
+        }
+        if let Some((glyph, _)) = self.toggle {
             write!(f, "{}", glyph.svg(px))?;
         }
         if !self.icon_only {
@@ -546,6 +660,22 @@ impl fmt::Display for Button<'_> {
         }
         f.write_str(if link { "</a>" } else { "</button>" })
     }
+}
+
+/// Declares the signals a request is busy by, as the indicators of the element that sends it: its own, which spins
+/// it, and its group's, which disables every control in the group, or its own again when it has none.
+fn indicators(f: &mut fmt::Formatter<'_>, key: &Text<'_>) -> Result<(Busy, Busy), fmt::Error> {
+    let own = Busy::own();
+    write!(f, " data-indicator=\"{own}\"")?;
+    let group = match key.present() {
+        Some(key) => {
+            let group = Busy::keyed(key);
+            write!(f, " data-indicator:{group}")?;
+            group
+        }
+        None => own,
+    };
+    Ok((own, group))
 }
 
 component!(Button);
@@ -601,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_key_is_busy_together_and_cancels_nothing() {
+    fn a_shared_key_disables_the_group_and_spins_the_one_pressed() {
         let first = Button::bordered("retry")
             .post("/jobs/1/retry")
             .busy_key("card-1")
@@ -610,11 +740,81 @@ mod tests {
             .post("/jobs/1/next")
             .busy_key("card-1")
             .to_string();
-        assert_eq!(signal(&first), signal(&second));
+        let group = Busy::keyed("card-1");
+        for button in [&first, &second] {
+            assert!(
+                button.contains(&format!("data-indicator:{group}")),
+                "{button}"
+            );
+            assert!(
+                button.contains(&format!("data-attr:disabled=\"${group}\"")),
+                "{button}"
+            );
+            let own = signal(button);
+            assert!(
+                button.contains(&format!("data-class:busy=\"${own}\"")),
+                "only the one pressed spins: {button}"
+            );
+        }
+        assert_ne!(signal(&first), signal(&second));
         assert!(
             first.contains("@post(el.dataset.url, {requestCancellation: 'disabled'})"),
             "{first}"
         );
+    }
+
+    #[test]
+    fn a_button_sends_its_forms_fields_to_its_own_url() {
+        let button = Button::bordered("enrich")
+            .post("/library/enrich")
+            .sends("library")
+            .to_string();
+        assert!(
+            button.starts_with("<button type=\"submit\""),
+            "Enter in a field presses it: {button}"
+        );
+        assert!(
+            button.contains("form=\"library\" formaction=\"/library/enrich\""),
+            "{button}"
+        );
+        assert!(
+            button.contains(
+                "data-on:click=\"evt.preventDefault(), @post(el.dataset.url, {contentType: 'form', selector: '#' + CSS.escape(el.form.id)})\""
+            ),
+            "{button}"
+        );
+    }
+
+    #[test]
+    fn a_form_that_asks_first_checks_itself_then_asks() {
+        let button = Button::primary("ban")
+            .post("/bans")
+            .sends("ban")
+            .confirm("ban this user?", "ban")
+            .to_string();
+        assert!(button.contains("type=\"submit\""), "{button}");
+        assert!(
+            !button.contains("commandfor"),
+            "a submit is not a command: {button}"
+        );
+        assert!(
+            button.contains("el.form.reportValidity() &amp;&amp; ("),
+            "required is kept: {button}"
+        );
+        assert!(button.contains("showModal()"), "{button}");
+    }
+
+    #[test]
+    fn a_link_loads_in_place_and_a_toggle_shows_its_state() {
+        let link = Button::link("up").href("/browse?up").in_place().to_string();
+        assert!(link.contains("href=\"/browse?up\""), "{link}");
+        assert!(link.contains("@get(el.getAttribute('href')"), "{link}");
+        let play = Button::quiet("play")
+            .icon_only(icon::PLAY)
+            .toggles(icon::PAUSE, false)
+            .to_string();
+        assert!(play.contains("aria-pressed=\"false\""), "{play}");
+        assert_eq!(play.matches("<svg").count(), 2, "{play}");
     }
 
     #[test]

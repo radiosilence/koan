@@ -1,8 +1,12 @@
-{#- The region every flash replaces, a live region whatever it holds. A brief one fades; an error waits to be dismissed. -#}
-<div{{ attrs }}{% if !attrs.classes().is_empty() %} class="{{ attrs.classes() }}"{% endif %} role="status">
+{#- The region every flash replaces, a live region whatever it holds. A brief one fades; an error, one that stays and
+    one with a link wait to be dismissed, by pressing them or their dismiss button. The page's own script raises one
+    with a `kit-flash` event on window, whose detail is set as text: nothing in it is read as markup. -#}
+<div{{ attrs }}{% if !attrs.classes().is_empty() %} class="{{ attrs.classes() }}"{% endif %} role="status"
+  data-on:kit-flash__window="(d => (el.replaceChildren(Object.assign(document.createElement('p'), {id: 'flash-' + Date.now(), className: d.bad ? 'toast bad' : d.stays || d.href ? 'toast' : 'toast brief', textContent: d.message})), d.bad &amp;&amp; el.firstChild.setAttribute('role', 'alert'), d.href &amp;&amp; el.firstChild.append(' ', Object.assign(document.createElement('a'), {href: d.href, textContent: d.link || d.href})), (d.bad || d.stays || d.href) &amp;&amp; el.firstChild.addEventListener('click', e => e.target.closest('a') || e.currentTarget.remove())))(evt.detail)">
 {%- if let Some(message) = message.present() -%}
-{%- if bad %}
-  <p class="toast bad" role="alert"{% if dismiss.is_empty() %} data-on:click="el.remove()"{% endif %}>{{ message }}
+{%- if self.lasting() %}
+  <p class="toast{% if bad %} bad{% endif %}"{% if bad %} role="alert"{% endif %}{% if dismiss.is_empty() %} data-on:click="evt.target.closest('a') || el.remove()"{% endif %}>{{ message }}
+  {%- if let Some((href, label)) = link %} <a href="{{ href }}">{{ label }}</a>{% endif -%}
   {%- if let Some(label) = dismiss.present() %} <button type="button" class="link" data-on:click="el.parentElement.remove()">{{ label }}</button>{% endif -%}
   </p>
 {%- else %}

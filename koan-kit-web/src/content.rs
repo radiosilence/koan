@@ -4,16 +4,20 @@ use askama::Template;
 
 use crate::arg::{Content, Flag, Markup, Text};
 use crate::attrs::{Attrs, component};
+use crate::icon;
 use crate::slot::Wrap;
 
 /// Labels and their values, the labels muted and aligned: `kit::Pairs::new().pair("size", "4.2 GB")`.
 ///
-/// Collects from an iterator of pairs, so a handler builds one from its rows: `rows.iter().map(…).collect()`.
+/// Collects from an iterator of pairs, so a handler builds one from its rows: `rows.iter().map(…).collect()`. A row
+/// that is there only sometimes is [`optional`](Self::optional); rows a template builds with loops are the markup of a
+/// `{% filter kit::wrap(pairs) %}` block, `<dt>` and `<dd>` elements, after those given as props.
 #[must_use = "pairs draw nothing until they are rendered"]
 #[derive(Clone, Debug, Default, Template)]
 #[template(path = "pairs.html")]
 pub struct Pairs<'a> {
     pairs: Vec<(Text<'a>, Content<'a>)>,
+    rows: Markup,
     attrs: Attrs<'a>,
 }
 
@@ -26,6 +30,23 @@ impl<'a> Pairs<'a> {
     /// `label` and its value, after those already given. The value is words, or markup such as a link.
     pub fn pair(mut self, label: impl Into<Text<'a>>, value: impl Into<Content<'a>>) -> Self {
         self.pairs.push((label.into(), value.into()));
+        self
+    }
+
+    /// `label` and its value, only when there is a value: an `Option` or an empty list passes as it is.
+    pub fn optional(self, label: impl Into<Text<'a>>, value: impl Into<Content<'a>>) -> Self {
+        let value = value.into();
+        if value.is_empty() {
+            self
+        } else {
+            self.pair(label, value)
+        }
+    }
+}
+
+impl Wrap for Pairs<'_> {
+    fn wrap(mut self, content: Markup) -> Self {
+        self.rows = content;
         self
     }
 }
@@ -42,7 +63,18 @@ component!(Pairs);
 
 /// A summary that opens onto more: `kit::Disclosure::new("files")`.
 ///
-/// Its body is [`body`](Self::body), or the markup of a `{% filter kit::wrap(disclosure) %}` block. One that
+/// Its body is [`body`](Self::body), or the markup of a `{% filter kit::wrap(disclosure) %}` block. A block that opens
+/// with a `<summary>` element gives the summary too, as markup with the template's own layout, in place of the words
+/// given to [`new`](Self::new), which may then be empty:
+///
+/// ```html
+/// {% filter kit::wrap(kit::Disclosure::new("")) %}
+///   <summary class="flex gap-2"><span>{{ title }}</span><span class="text-muted">{{ length }}</span></summary>
+///   <table class="dense">…</table>
+/// {% endfilter %}
+/// ```
+///
+/// One that
 /// [`loads`](Self::loads) fetches its body when it opens: the handler answers with the same disclosure, under the
 /// same [`id`](Self::id), open and holding what it read and without `loads`, so one component draws both and it stops
 /// fetching. For a body that changes while the page is open, answer with [`Disclosure::fill`] instead, which replaces
@@ -53,6 +85,8 @@ component!(Pairs);
 #[template(path = "disclosure.html")]
 pub struct Disclosure<'a> {
     summary: Content<'a>,
+    /// A `<summary>` element of the template's own, which leads a wrapped block.
+    own_summary: Markup,
     body: Content<'a>,
     open: bool,
     loads: Text<'a>,
@@ -64,6 +98,7 @@ impl<'a> Disclosure<'a> {
     pub fn new(summary: impl Into<Content<'a>>) -> Self {
         Self {
             summary: summary.into(),
+            own_summary: Markup::default(),
             body: Content::default(),
             open: false,
             loads: Text::default(),
@@ -106,9 +141,26 @@ impl Disclosure<'_> {
     }
 }
 
+impl Disclosure<'_> {
+    /// Whether its body is a placeholder for what it will load.
+    fn loading(&self) -> bool {
+        !self.loads.is_empty()
+    }
+}
+
 impl Wrap for Disclosure<'_> {
     fn wrap(mut self, content: Markup) -> Self {
-        self.body = content.into();
+        let markup = content.as_str().trim_start();
+        let end = "</summary>";
+        if markup.starts_with("<summary")
+            && let Some(at) = markup.find(end)
+        {
+            let (summary, body) = markup.split_at(at + end.len());
+            self.own_summary = Markup::kit(summary.to_owned());
+            self.body = Markup::kit(body.trim_start().to_owned()).into();
+        } else {
+            self.body = content.into();
+        }
         self
     }
 }
@@ -124,6 +176,9 @@ pub struct CopyField<'a> {
     value: Text<'a>,
     button: Text<'a>,
     copied: Text<'a>,
+    name: Text<'a>,
+    icon: bool,
+    compact: bool,
     attrs: Attrs<'a>,
 }
 
@@ -139,14 +194,42 @@ impl<'a> CopyField<'a> {
             value: value.into(),
             button: button.into(),
             copied: Text::default(),
+            name: Text::default(),
+            icon: false,
+            compact: false,
             attrs: Attrs::default(),
         }
     }
 
-    /// What the button says for two seconds once the value is on the clipboard.
+    /// What the button says for two seconds once the value is on the clipboard; in the glyph form, what it is named
+    /// meanwhile, as a tick stands in for the glyph.
     pub fn copied(mut self, label: impl Into<Text<'a>>) -> Self {
         self.copied = label.into();
         self
+    }
+
+    /// The field's name, which it submits with a form it sits in. Its id is the component's [`id`](Self::id) and
+    /// `-value`, so a browser's checks find a name or an id on every field.
+    pub fn name(mut self, name: impl Into<Text<'a>>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    /// The button as the copy glyph alone, named by its label, for a row with no room for the word.
+    pub fn icon_only(mut self) -> Self {
+        self.icon = true;
+        self
+    }
+
+    /// The size of a compact field.
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
+        self
+    }
+
+    /// The input's id, when the component has one.
+    fn input_id(&self) -> Option<String> {
+        (!self.attrs.id().is_empty()).then(|| format!("{}-value", self.attrs.id()))
     }
 }
 
@@ -197,6 +280,63 @@ mod tests {
             !patch.contains("details"),
             "the element and its loads stay: {patch}"
         );
+    }
+
+    #[test]
+    fn a_disclosure_takes_its_summary_from_the_block() {
+        let html = Disclosure::new("")
+            .wrap(Markup::kit(
+                "\n  <summary class=\"flex\"><b>title</b></summary>\n  <p>tags</p>".into(),
+            ))
+            .to_string();
+        assert!(
+            html.contains("<summary class=\"flex\"><b>title</b></summary>"),
+            "{html}"
+        );
+        assert_eq!(html.matches("<summary").count(), 1, "{html}");
+        assert!(html.contains("<div><p>tags</p></div>"), "{html}");
+        let plain = Disclosure::new("files")
+            .wrap(Markup::kit("<p>x</p>".into()))
+            .to_string();
+        assert!(plain.contains("<summary>files</summary>"), "{plain}");
+    }
+
+    #[test]
+    fn a_loading_disclosure_shows_the_enso_until_answered() {
+        let html = Disclosure::new("files")
+            .loads("/f", "Reading…")
+            .id("f")
+            .to_string();
+        assert!(
+            html.contains("<div aria-busy=\"true\">Reading…</div>"),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn optional_pairs_and_rows_from_a_template() {
+        let none: Option<String> = None;
+        let html = Pairs::new()
+            .pair("size", "4 GB")
+            .optional("shared on", &none)
+            .wrap(Markup::kit("<dt>linked from</dt><dd>a 1 · b 2</dd>".into()))
+            .to_string();
+        assert!(!html.contains("shared on"), "{html}");
+        assert!(
+            html.contains("<dd>4 GB</dd><dt>linked from</dt><dd>a 1 · b 2</dd>"),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn a_copy_field_names_its_input() {
+        let html = CopyField::new("mcp url", "https://x", "copy")
+            .id("mcp")
+            .name("url")
+            .icon_only()
+            .to_string();
+        assert!(html.contains("id=\"mcp-value\" name=\"url\""), "{html}");
+        assert!(html.contains("aria-label=\"copy\""), "{html}");
     }
 
     #[test]

@@ -216,6 +216,20 @@
     @apply inline-grid size-10 place-items-center border-0 bg-transparent p-0 text-ink hover:bg-hover/30;
   }
 
+  /* A button holding two glyphs shows the second only while it is pressed (play and pause, mute) or has just copied
+   * its value. */
+  :is(button, .button) > .icon + .icon {
+    @apply hidden;
+  }
+
+  :is(button, .button):is([aria-pressed="true"], .copied) > .icon:first-child {
+    @apply hidden;
+  }
+
+  :is(button, .button):is([aria-pressed="true"], .copied) > .icon + .icon {
+    @apply inline-block;
+  }
+
   /* A labelled control: the label leads, the control fills the width, and a hint or the control's status follows. The
    * hint keeps its case, since it may quote the outside world. */
   .field {
@@ -311,7 +325,7 @@
   }
 
   /* A status: a square mark and the word, both in its tone. The word always says what the colour does, so the colour is
-   * never the only way to read it. `.busy` breathes, for a status still being found out. */
+   * never the only way to read it. */
   .status {
     --tone: var(--muted);
     @apply inline-flex items-center gap-2 text-meta lowercase;
@@ -324,14 +338,9 @@
     background: var(--tone);
   }
 
-  /* Still being found out: the mark breathes, or with reduced motion is hollow, so it reads as unsettled either way. */
+  /* Still being found out: the mark is the ensō turning in the tone, drawn below with the other waits. */
   .status.busy::before {
-    @apply animate-pulse motion-reduce:animate-none;
-
-    @media (prefers-reduced-motion: reduce) {
-      background: transparent;
-      box-shadow: inset 0 0 0 1px var(--tone);
-    }
+    @apply size-[.9em];
   }
 
   :is(.status, .meter).ok {
@@ -399,6 +408,9 @@
 
   .busy:is(button, .button, a)::after,
   .spinner,
+  .status.busy::before,
+  details.disclosure > div[aria-busy="true"]::before,
+  .skeleton::after,
   dialog.sheet > section[aria-busy="true"]:empty::before {
     @apply inline-block size-[.9em] flex-none align-[-.12em];
     background: currentColor;
@@ -418,9 +430,40 @@
     @apply cursor-progress;
   }
 
-  /* Stands in for content on its way: a flat fill that breathes. */
+  /* The spinner standing alone: at the size of the text beside it, two lines tall for a wait that fills a region, or
+   * centred over the nearest positioned ancestor, such as a video that is buffering. Its label is for a screen reader
+   * alone. */
+  .spinner {
+    @apply relative;
+  }
+
+  .spinner.large {
+    @apply size-8;
+  }
+
+  .spinner.over {
+    @apply pointer-events-none absolute inset-0 m-auto;
+  }
+
+  .spinner > .label {
+    @apply absolute size-px overflow-hidden whitespace-nowrap;
+    clip-path: inset(50%);
+  }
+
+  /* A disclosure's body on its way: the ensō before the placeholder's words. */
+  details.disclosure > div[aria-busy="true"]::before {
+    content: "";
+    @apply me-[.5em] text-muted;
+  }
+
+  /* Stands in for content on its way: a flat fill holding the ensō, centred. */
   .skeleton {
-    @apply animate-pulse bg-hover/30 text-transparent motion-reduce:animate-none;
+    @apply relative bg-hover/30 text-transparent;
+  }
+
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0 m-auto size-4 bg-muted;
   }
 
   /* A value to read or copy: a token, a URL, a command. */
@@ -543,6 +586,28 @@
     @apply inline-flex cursor-pointer items-center gap-2 text-control;
   }
 
+  /* A row of a list to choose from: the box, a square picture (a cover, or a glyph for something new) and two lines,
+   * the second muted. */
+  .check.choice {
+    @apply flex gap-3 py-2;
+  }
+
+  .check.choice > .picture {
+    @apply grid size-12 flex-none place-items-center overflow-hidden bg-surface text-muted;
+  }
+
+  .check.choice > .picture > img {
+    @apply size-full object-cover;
+  }
+
+  .check.choice > .words {
+    @apply grid min-w-0 flex-1 gap-0.5;
+  }
+
+  .check.choice > .words > small {
+    @apply text-fine text-muted;
+  }
+
   /* A row of actions: a sheet's foot, a form's end. Trailing, as a dialog's buttons are, and wrapping when narrow. */
   .actions {
     @apply flex flex-wrap items-center justify-end gap-2;
@@ -636,5 +701,39 @@
 
   dialog.sheet > footer {
     @apply px-5 pb-5;
+  }
+
+  /* A row of controls, fields and buttons alike, each as tall as the tallest, so a bordered button beside a field
+   * matches its height; wrapping when narrow. */
+  .controls {
+    @apply flex flex-wrap items-stretch gap-2;
+  }
+
+  /* The compact size, for a control in a row or a toolbar rather than a form: `meta` type and tight padding. A field,
+   * a select and a button at this size are the same height, a line of `meta` and the same padding and border, so a
+   * compact field, combo and button in one row line up. On the control itself, or on any container of controls. */
+  :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select, textarea).compact,
+  .compact :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select, textarea) {
+    @apply px-2 py-1 text-meta;
+  }
+
+  :is(select.compact, .compact select) {
+    @apply pr-6;
+    background-position: right 7px center;
+  }
+
+  :is(button, .button):not(.link, .icon-button).compact,
+  .compact :is(button, .button):not(.link, .icon-button) {
+    @apply px-2 py-1 text-meta;
+  }
+
+  /* A glyph alone at the compact size: square, and as tall as a compact field. */
+  .icon-button.compact,
+  .compact .icon-button {
+    @apply size-[calc(var(--text-meta)*1.35+10px)];
+  }
+
+  .field.compact {
+    @apply gap-1 text-meta;
   }
 }

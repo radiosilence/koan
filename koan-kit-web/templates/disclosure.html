@@ -1,8 +1,9 @@
 {#- A summary with a chevron that turns, and what it opens onto. One that loads fetches its body whenever it opens,
     and as Datastar binds if it is open already, until an answer without `loads` replaces it, so a failed answer is
-    asked again rather than leaving the placeholder for good. -#}
+    asked again rather than leaving the placeholder for good; until then the ensō turns before the placeholder. A block
+    that opens with its own `<summary>` gives the summary as markup. -#}
 <details class="disclosure{{ attrs.classes() }}"{% if open %} open{% endif %}
 {%- if let Some(url) = loads.present() %} data-url="{{ url }}" data-init="el.open &amp;&amp; @get(el.dataset.url)" data-on:toggle="el.open &amp;&amp; @get(el.dataset.url)"{% endif %}{{ attrs }}>
-  <summary>{{ summary }}</summary>
-  <div>{{ body }}</div>
+  {% if own_summary.is_empty() %}<summary>{{ summary }}</summary>{% else %}{{ own_summary }}{% endif %}
+  <div{% if self.loading() %} aria-busy="true"{% endif %}>{{ body }}</div>
 </details>

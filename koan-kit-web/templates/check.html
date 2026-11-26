@@ -1,2 +1,13 @@
-{#- The box leading its words, inline. -#}
+{#- The box leading its words, inline; or a row of a list, the box, a picture and two lines; or the box alone, named
+    by its label and carrying the common props. -#}
+{%- if bare -%}
+{% include "tick.html" %}
+{%- else if self.is_row() -%}
+<label class="check choice{{ attrs.classes() }}"{{ attrs }}>{% include "tick.html" %}
+{%- if let Some(picture) = picture %}<span class="picture">
+  {%- match picture %}{% when Picture::Image(src) %}{% if let Some(src) = src.present() %}<img src="{{ src }}" alt="" loading="lazy">{% endif %}{% when Picture::Glyph(glyph) %}{{ glyph.svg(18) }}{% endmatch -%}
+</span>{% endif -%}
+<span class="words"><span>{{ tick.label }}</span>{% if let Some(detail) = detail.present() %}<small>{{ detail }}</small>{% endif %}</span></label>
+{%- else -%}
 <label class="check{{ attrs.classes() }}"{{ attrs }}>{% include "tick.html" %} {{ tick.label }}</label>
+{%- endif -%}

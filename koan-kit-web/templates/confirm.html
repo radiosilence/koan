@@ -3,11 +3,12 @@
     preview request, empties itself, and fetches this opening's preview, if it has one; yes waits for `ready`, sends
     the button's request, and is busy while it runs, during which the sheet cannot be dismissed, so its answer cannot
     land on a later question. A handler's error shows inside the sheet, where a flash under the dimmed page would not
-    be seen. Busy is written as a string, since Datastar writes a bare `true`
-    as an empty attribute. -#}
+    be seen. A question asked by a button that sends a form posts that form's fields. Once a handler closes the sheet
+    with `done`, the button that asked hears `kit-confirmed`. Busy is written as a string, since Datastar writes a bare
+    `true` as an empty attribute. -#}
 <dialog class="sheet{{ attrs.classes() }}" closedby="any" data-attr:closedby="$_kitconfirmbusy ? 'none' : 'any'" aria-labelledby="kit-confirm-question"{{ attrs }}
-  data-signals__ifmissing="{_kitconfirm: {ask: '', detail: '', yes: '', url: '', preview: '', bad: false, ready: false, open: false, n: 0}}">
-  <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; el.closest('dialog').close()">
+  data-signals__ifmissing="{_kitconfirm: {ask: '', detail: '', yes: '', url: '', preview: '', form: '', bad: false, ready: false, open: false, done: false, n: 0}}">
+  <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; (el.closest('dialog').close(), $_kitconfirm.done &amp;&amp; (el.closest('dialog')._kitopener?.isConnected ? el.closest('dialog')._kitopener : document).dispatchEvent(new CustomEvent('kit-confirmed', {bubbles: true, detail: {url: $_kitconfirm.url}})))">
     <h2 id="kit-confirm-question" data-text="$_kitconfirm.ask"></h2>
   </header>
   <p id="kit-confirm-error" class="notice bad" role="alert" hidden></p>
@@ -18,6 +19,6 @@
     <button type="button" class="quiet" commandfor="kit-confirm" command="close" data-attr:disabled="$_kitconfirmbusy" autofocus>{{ cancel }}</button>
     <button type="button" data-class:primary="!$_kitconfirm.bad" data-class:bad="$_kitconfirm.bad" data-class:fill="$_kitconfirm.bad"
       data-indicator="_kitconfirmbusy" data-class:busy="$_kitconfirmbusy" data-attr:disabled="!$_kitconfirm.ready || $_kitconfirmbusy"
-      data-text="$_kitconfirm.yes" data-on:click="@post($_kitconfirm.url)"></button>
+      data-text="$_kitconfirm.yes" data-on:click="$_kitconfirm.form ? @post($_kitconfirm.url, {contentType: 'form', selector: '#' + CSS.escape($_kitconfirm.form)}) : @post($_kitconfirm.url)"></button>
   </footer>
 </dialog>

@@ -88,6 +88,7 @@ struct Common<'a> {
     required: bool,
     disabled: bool,
     autofocus: bool,
+    compact: bool,
     bind: Option<&'static str>,
     attrs: Attrs<'a>,
 }
@@ -134,12 +135,10 @@ impl Common<'_> {
     }
 
     fn class(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !self.attrs.classes().is_empty() {
-            write!(
-                f,
-                " class=\"{}\"",
-                self.attrs.classes().to_string().trim_start()
-            )?;
+        let compact = if self.compact { " compact" } else { "" };
+        let classes = format!("{compact}{}", self.attrs.classes());
+        if !classes.is_empty() {
+            write!(f, " class=\"{}\"", classes.trim_start())?;
         }
         Ok(())
     }
@@ -170,6 +169,13 @@ macro_rules! control {
             /// Focused when its page or dialog opens.
             pub fn autofocus(mut self) -> Self {
                 self.common.autofocus = true;
+                self
+            }
+
+            /// The compact size, `meta` type and tight padding, for a field in a row or a toolbar: as tall as a
+            /// compact button beside it. A `compact` class on any container does the same for every control inside.
+            pub fn compact(mut self) -> Self {
+                self.common.compact = true;
                 self
             }
 
@@ -249,6 +255,12 @@ macro_rules! control {
         impl From<$control<'_>> for Markup {
             fn from(control: $control<'_>) -> Self {
                 Markup::kit(control.to_string())
+            }
+        }
+
+        impl From<$control<'_>> for askama_datastar::Html {
+            fn from(control: $control<'_>) -> Self {
+                control.html()
             }
         }
     };
@@ -655,9 +667,18 @@ impl<'a> Field<'a> {
         }
     }
 
-    /// A field whose control is the markup of a `{% filter kit::wrap(field) %}` block: one the kit lacks.
+    /// A field whose control is the markup of a `{% filter kit::wrap(field) %}` block: one the kit lacks, or a group
+    /// of controls, such as a select with chips beside it and a box to clear it. It is drawn as a group named by its
+    /// label and described by its note, since a `<label>` cannot hold more than one control; give each control inside
+    /// its own `label` too.
     pub fn custom(label: impl Into<Text<'a>>) -> Self {
-        Self::new(label, Markup::default())
+        let mut field = Self::new(label, Markup::default());
+        // An id until the app gives one, so the group's label and note can be named.
+        field.attrs.set_id(Text::from(format!(
+            "field-{:012x}",
+            crate::action::serial() & 0xffff_ffff_ffff
+        )));
+        field
     }
 
     /// A line of text named `name`.
@@ -785,6 +806,13 @@ impl<'a> Field<'a> {
         )
     }
 
+    /// The compact size: the label, the control and the note in smaller type, the control as tall as a compact
+    /// button. A custom control takes it from the field's `compact` class.
+    pub fn compact(mut self) -> Self {
+        self.attrs.add_class("compact");
+        self
+    }
+
     /// Two-way bound to the Datastar signal `signal`.
     ///
     /// # Panics
@@ -885,14 +913,14 @@ impl<'a> Field<'a> {
         format!("{base}-note")
     }
 
-    /// The label's id, when the field has a name to build it from.
+    /// The label's id: the field's, or its control's name, and `-label`.
     fn label_id(&self) -> Option<String> {
         let base = if self.attrs.id().is_empty() {
             self.control.name()
         } else {
             self.attrs.id()
         };
-        (!base.is_empty() && !self.is_custom()).then(|| format!("{base}-label"))
+        (!base.is_empty()).then(|| format!("{base}-label"))
     }
 
     /// The element it is drawn as: a `<label>`, or a `div` round a control of the app's own.
@@ -952,7 +980,7 @@ impl Wrap for Field<'_> {
 component!(Field);
 
 /// A control joined to the button it feeds, reading as one: `kit::Combo::new(kit::Input::search("q").label("search"),
-/// kit::Button::primary("grab"))`.
+/// kit::Button::primary("grab"))`. [`compact`](Self::compact) draws both at the compact size.
 #[must_use = "a combo draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "combo.html")]
@@ -970,6 +998,12 @@ impl<'a> Combo<'a> {
             button,
             attrs: Attrs::default(),
         }
+    }
+
+    /// The control and the button at the compact size, level with a compact field or button beside them.
+    pub fn compact(mut self) -> Self {
+        self.attrs.add_class("compact");
+        self
     }
 
     fn control(&self) -> ComboControl<'_, 'a> {
@@ -1032,6 +1066,33 @@ mod tests {
         assert!(
             first.contains("aria-describedby=\"rename-name-note\""),
             "{first}"
+        );
+    }
+
+    #[test]
+    fn a_custom_field_is_a_group_named_by_its_label() {
+        let field = Field::custom("release type")
+            .hint("Replaces each album's type.")
+            .id("types")
+            .wrap(Markup::kit("<select name=\"t\"></select>".into()))
+            .to_string();
+        assert!(field.starts_with("<div class=\"field\""), "{field}");
+        assert!(field.contains("role=\"group\""), "{field}");
+        assert!(field.contains("aria-labelledby=\"types-label\""), "{field}");
+        assert!(field.contains("aria-describedby=\"types-note\""), "{field}");
+        assert!(field.contains("<span id=\"types-label\">"), "{field}");
+    }
+
+    #[test]
+    fn compact_reaches_the_control() {
+        let input = Input::text("split").compact().class("w-24").to_string();
+        assert!(input.contains("class=\"compact w-24\""), "{input}");
+        let combo = Combo::new(Input::text("q"), Button::bordered("go"))
+            .compact()
+            .to_string();
+        assert!(
+            combo.starts_with("<span class=\"combo compact\""),
+            "{combo}"
         );
     }
 

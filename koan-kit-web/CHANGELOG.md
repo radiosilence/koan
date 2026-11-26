@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.0
+
+- **The loader is the ensō everywhere.** `Spinner` draws it alone, at the text's size, `large`, or `over` the middle of a region such as a buffering video, and with a `label` it is a status a screen reader announces. A busy status's mark is the ensō turning in its tone, a disclosure loading its body shows it before the placeholder, a link loading in place carries it, and a skeleton holds it rather than breathing. Under reduced motion it stands whole and still.
+- **A compact size.** `.compact()` on `Input`, `Select`, `Textarea`, `Field`, `Combo`, `Button` and `CopyField`, or a `compact` class on any container, draws controls in `meta` type with tight padding, so a compact field, combo and button in one row are the same height. `controls` is a row of controls stretched to the tallest, so a bordered button beside a full-size field matches it.
+- **A form with several actions.** `Button::post(url).sends(form_id)` makes a button that submits a form's fields to its own URL, busy by itself. It is that form's submit, so Enter presses the first one and the form's constraints are checked first.
+- **A form that asks first.** `.sends(form_id).confirm(question, yes)` checks the form, then asks in the page's `Confirm`, whose yes posts the form's fields, so Enter and `required` keep working.
+- **A busy group disables, and only the pressed button spins.** Buttons sharing a `busy_key` are all disabled while any of them runs, and only the one pressed shows the spinner. `Status::busy_with(key)` turns while the group runs.
+- **Links that load in place.** `Link` draws a link in the page's look, and `.in_place()`, on it or on a `Button` with `href`, reads the page with `@get` on a plain click while a modified click, a middle click or a page without script follows the real `href`. It is busy while it loads and ignores a second press, and a `busy_key` makes a set of links load one page at a time. `Link::current` marks the page shown.
+- **Confirm.** `Confirm::go(path)` sends the browser elsewhere once an action has removed the page it was asked on. The button that asked hears `kit-confirmed` (`kit::CONFIRMED`) once its handler closes the sheet with `Confirm::close`. `Confirm::error` takes markup as well as words.
+- **Flash.** `Flash::link(href, label)` puts a link after the words and `Flash::stays()` keeps an ok flash until it is dismissed. The page's own script raises one with a `kit-flash` event on `window` (`Flash::EVENT`), whose detail is set as text.
+- **Choices.** `Check::bare()` draws the box alone, named by its label, with the common props on the `<input>`, so `form=` and Datastar attributes reach it. `Check::picture(src)`, `picture_icon(glyph)` and `detail(text)` make a row of a list to choose from. A `Check` or `Toggle` takes its words from a `wrap` block, which may hold a field.
+- **Content.** A `Disclosure` wrapping a block that opens with its own `<summary>` takes that as its summary. `Pairs::optional` drops a row with no value, and `Pairs` takes rows a template builds with loops from a `wrap` block. `CopyField` takes a `name`, gives its input an id from its own, and has a glyph form, `icon_only`.
+- **Fields.** `Field::custom` is a group named by its label and described by its note, for several controls a `<label>` cannot hold.
+- **Buttons.** `Button::toggles(glyph, pressed)` shows a second glyph while pressed, such as play and pause, and says whether it is pressed to a screen reader. A compact `icon_only` button is as tall as a compact field.
+- **Glyphs:** `pin`, `pin-filled`, `muted`, `full-screen`, `leave-full-screen` and `picture-in-picture`.
+
 ## 0.5.0
 
 - **The kit's components, as a crate.** `koan-kit-web` on crates.io holds the kit's controls as askama components wired for Datastar, and carries the stylesheet, so one version in an app's `Cargo.lock` names both the markup and the rules that draw it. Fields link their notes to their controls, buttons are busy for exactly as long as their own request runs, sheets open through `commandfor` with no script, and a page's one `Confirm` asks before a change, or shows the server's preview of it. Every expression is the kit's own; text reaches only escaped attributes. A test fails on a class the components write that the stylesheet has no rule for. See the README.

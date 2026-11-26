@@ -19,6 +19,7 @@
 <nav class="flex flex-wrap gap-x-4 gap-y-1 text-meta">
   <a href="#type">type</a>
   <a href="#buttons">buttons</a>
+  <a href="#compact">compact</a>
   <a href="#requests">requests</a>
   <a href="#asking-first">asking first</a>
   <a href="#sheets">sheets</a>
@@ -102,48 +103,132 @@
     <div><button type="button" class="icon-button" aria-label="more"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M5.25 12L5.75 12M11.75 12L12.25 12M18.25 12L18.75 12"/></svg></button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;more&#34;).icon_only(kit::icon::MORE)</pre></figcaption>
   </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="icon-button" aria-label="play" aria-pressed="false"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M7 5L19 12L7 19Z"/></svg><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M8.5 5L8.5 19M15.5 5L15.5 19"/></svg></button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;play&#34;).icon_only(kit::icon::PLAY).toggles(kit::icon::PAUSE,
+false)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="icon-button" aria-label="mute" aria-pressed="true"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M3.5 9L7 9L12 4.5L12 19.5L7 15L3.5 15ZM13.89 8.11C14.922 9.142 15.502 10.541 15.502 12C15.502 13.459 14.922 14.858 13.89 15.89M16.36 5.64C19.869 9.154 19.869 14.846 16.36 18.36"/></svg><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M3.5 9L7 9L12 4.5L12 19.5L7 15L3.5 15ZM15 9.5L20 14.5M20 9.5L15 14.5"/></svg></button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;mute&#34;).icon_only(kit::icon::VOLUME).toggles(kit::icon::MUTED,
+true)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="icon-button compact" aria-label="pin"><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M8 3.5L16 3.5M9.5 3.5L9.5 9L6.5 13.5L17.5 13.5L14.5 9L14.5 3.5M12 13.5L12 20.5"/></svg></button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;pin&#34;).icon_only(kit::icon::PIN).compact()</pre></figcaption>
+  </figure>
+</div>
+<h2 id="compact">compact</h2>
+<p class="text-meta text-muted">The compact size, for controls in a row or a toolbar: a field, a combo and a button at this size line up exactly. A compact class on a container compacts everything inside it.</p>
+<div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
+  <figure class="m-0 grid gap-2">
+    <div><input type="text" class="compact" placeholder="split on" name="split" aria-label="separator"></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Input::text(&#34;split&#34;).placeholder(&#34;split on&#34;).label(&#34;separator&#34;).compact()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="combo compact"><input type="search" placeholder="filter" name="q" aria-label="filter"><button type="button">go</button></span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Combo::new(kit::Input::search(&#34;q&#34;).placeholder(&#34;filter&#34;).label(&#34;filter&#34;),
+kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="compact">re-tag</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;re-tag&#34;).compact()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="primary compact">apply</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;apply&#34;).compact()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="field compact">
+  <span id="slots-label">upload slots</span>
+  <input type="number" value="4" name="slots" aria-labelledby="slots-label">
+</label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::number(&#34;slots&#34;, &#34;upload slots&#34;).value(&#34;4&#34;).compact()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><div class="compact controls"><input type="text" placeholder="split on" name="split" aria-label="separator"><span class="combo"><select name="sort" aria-label="sort"><option value="newest">newest</option><option value="oldest">oldest</option></select><button type="button">sort</button></span><button type="button">credit artists</button><button type="button" class="icon-button" aria-label="pin"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M8 3.5L16 3.5M9.5 3.5L9.5 9L6.5 13.5L17.5 13.5L14.5 9L14.5 3.5M12 13.5L12 20.5"/></svg></button></div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">&#60;div class=&#34;compact controls&#34;&#62;
+  {{ kit::Input::text(&#34;split&#34;).label(&#34;separator&#34;).placeholder(&#34;split on&#34;) }}
+  {{ kit::Combo::new(kit::Select::new(&#34;sort&#34;).options([&#34;newest&#34;, &#34;oldest&#34;]).label(&#34;sort&#34;), kit::Button::bordered(&#34;sort&#34;)) }}
+  {{ kit::Button::bordered(&#34;credit artists&#34;) }}
+  {{ kit::Button::quiet(&#34;pin&#34;).icon_only(kit::icon::PIN) }}
+&#60;/div&#62;</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><div class="controls"><input type="text" placeholder="room name" name="room" aria-label="room"><button type="button">join</button></div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">&#60;div class=&#34;controls&#34;&#62;
+  {{ kit::Input::text(&#34;room&#34;).label(&#34;room&#34;).placeholder(&#34;room name&#34;) }}
+  {{ kit::Button::bordered(&#34;join&#34;) }}
+&#60;/div&#62;</pre></figcaption>
+  </figure>
 </div>
 <h2 id="requests">requests</h2>
 <p class="text-meta text-muted">A request carries its URL as data, and the button is busy for exactly as long as its own request runs.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
   <figure class="m-0 grid gap-2">
-    <div><button type="button" class="primary" data-url="/stub/slow" data-indicator="_busyadcb76ddf8a7" data-class:busy="$_busyadcb76ddf8a7" data-attr:disabled="$_busyadcb76ddf8a7" data-on:click="@post(el.dataset.url)">rescan</button></div>
+    <div><button type="button" class="primary" data-url="/stub/slow" data-indicator="_busy91a74b20d023" data-class:busy="$_busy91a74b20d023" data-attr:disabled="$_busy91a74b20d023" data-on:click="@post(el.dataset.url)">rescan</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;rescan&#34;).post(&#34;/stub/slow&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" data-url="/stub/slow" data-indicator="_busyfb539b5f8e0c" data-class:busy="$_busyfb539b5f8e0c" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url, {requestCancellation: 'disabled'})">retry</button></div>
+    <div><button type="button" data-url="/stub/slow" data-indicator="_busyca9e40318602" data-indicator:_busyfb539b5f8e0c data-class:busy="$_busyca9e40318602" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url, {requestCancellation: 'disabled'})">retry</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;retry&#34;).post(&#34;/stub/slow&#34;).busy_key(&#34;card-1&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" data-url="/stub/slow?next" data-indicator="_busyfb539b5f8e0c" data-class:busy="$_busyfb539b5f8e0c" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url, {requestCancellation: 'disabled'})">next copy</button></div>
+    <div><button type="button" data-url="/stub/slow?next" data-indicator="_busy5801b879b56d" data-indicator:_busyfb539b5f8e0c data-class:busy="$_busy5801b879b56d" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url, {requestCancellation: 'disabled'})">next copy</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;next copy&#34;).post(&#34;/stub/slow?next&#34;).busy_key(&#34;card-1&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" data-url="/stub/flash" data-indicator="_busye6c26beeae86" data-class:busy="$_busye6c26beeae86" data-attr:disabled="$_busye6c26beeae86" data-on:click="@get(el.dataset.url)">say saved</button></div>
+    <div><button type="button" data-url="/stub/flash" data-indicator="_busy90f8ad8a6b4c" data-class:busy="$_busy90f8ad8a6b4c" data-attr:disabled="$_busy90f8ad8a6b4c" data-on:click="@get(el.dataset.url)">say saved</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;say saved&#34;).get(&#34;/stub/flash&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" data-url="/stub/failed" data-indicator="_busy039535423be1" data-class:busy="$_busy039535423be1" data-attr:disabled="$_busy039535423be1" data-on:click="@get(el.dataset.url)">say it failed</button></div>
+    <div><button type="button" data-url="/stub/failed" data-indicator="_busye613ce5849af" data-class:busy="$_busye613ce5849af" data-attr:disabled="$_busye613ce5849af" data-on:click="@get(el.dataset.url)">say it failed</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;say it failed&#34;).get(&#34;/stub/failed&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" data-url="/stub/moved" data-indicator="_busy1f0ac368ff8e" data-class:busy="$_busy1f0ac368ff8e" data-attr:disabled="$_busy1f0ac368ff8e" data-on:click="@get(el.dataset.url)">move with a link</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;move with a link&#34;).get(&#34;/stub/moved&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" data-on:click="dispatchEvent(new CustomEvent(&#39;kit-flash&#39;, {detail: {message: &#39;Raised by the page.&#39;, stays: true}}))">raise from script</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;raise from script&#34;).datastar(&#34;on:click&#34;,
+&#34;dispatchEvent(new CustomEvent(&#39;kit-flash&#39;, {detail: {message: &#39;Raised by the page.&#39;, stays: true}}))&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><a href="/stub/place" data-indicator="_busy3bdd8cbc8ce9" data-indicator:_busyc0ae98eb474f data-class:busy="$_busy3bdd8cbc8ce9" data-on:click="evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc0ae98eb474f || @get(el.getAttribute('href'), {requestCancellation: 'disabled'}))">load in place</a></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Link::new(&#34;load in place&#34;,
+&#34;/stub/place&#34;).in_place().busy_key(&#34;story-place&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="status wait" data-class:busy="$_busyfb539b5f8e0c" data-attr:aria-busy="$_busyfb539b5f8e0c ? 'true' : 'false'">queued</span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::wait(&#34;queued&#34;).busy_with(&#34;card-1&#34;)</pre></figcaption>
   </figure>
 </div>
 <h2 id="asking-first">asking first</h2>
 <p class="text-meta text-muted">A question, or the server&#39;s preview of a change, in the page&#39;s one Confirm. Yes waits for its own preview.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
   <figure class="m-0 grid gap-2">
-    <div><button type="button" class="bad" data-url="/stub/slow" data-ask="remove Held on the Tips of Fingers from the library?" data-yes="remove" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.detail = el.dataset.detail || ''; $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">remove album</button></div>
+    <div><button type="button" class="bad" data-url="/stub/slow" data-ask="remove Held on the Tips of Fingers from the library?" data-yes="remove" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask, $_kitconfirm.yes = el.dataset.yes, $_kitconfirm.url = el.dataset.url, $_kitconfirm.preview = el.dataset.preview || '', $_kitconfirm.detail = el.dataset.detail || '', $_kitconfirm.form = el.getAttribute('form') || '', $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset, $_kitconfirm.ready = !el.dataset.preview, $_kitconfirm.done = false, document.getElementById('kit-confirm')._kitopener = el, $_kitconfirm.open = true, $_kitconfirm.n++">remove album</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;remove album&#34;).bad().post(&#34;/stub/slow&#34;).confirm(&#34;remove Held on the Tips of Fingers from the library?&#34;,
 &#34;remove&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" class="quiet" data-url="/stub/slow" data-ask="close every unpinned search?" data-yes="close them" data-detail="Pinned searches stay open; the rest lose their results." data-yes-bad commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.detail = el.dataset.detail || ''; $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">close unpinned</button></div>
+    <div><button type="button" class="quiet" data-url="/stub/slow" data-ask="close every unpinned search?" data-yes="close them" data-detail="Pinned searches stay open; the rest lose their results." data-yes-bad commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask, $_kitconfirm.yes = el.dataset.yes, $_kitconfirm.url = el.dataset.url, $_kitconfirm.preview = el.dataset.preview || '', $_kitconfirm.detail = el.dataset.detail || '', $_kitconfirm.form = el.getAttribute('form') || '', $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset, $_kitconfirm.ready = !el.dataset.preview, $_kitconfirm.done = false, document.getElementById('kit-confirm')._kitopener = el, $_kitconfirm.open = true, $_kitconfirm.n++">close unpinned</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;close unpinned&#34;).post(&#34;/stub/slow&#34;).confirm(&#34;close every unpinned search?&#34;,
 &#34;close them&#34;).detail(&#34;Pinned searches stay open; the rest lose their results.&#34;).yes_bad()</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" class="primary" data-url="/stub/slow" data-ask="rename three files?" data-yes="rename" data-preview="/stub/preview" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.detail = el.dataset.detail || ''; $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">rename files</button></div>
+    <div><button type="button" class="primary" data-url="/stub/slow" data-ask="rename three files?" data-yes="rename" data-preview="/stub/preview" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask, $_kitconfirm.yes = el.dataset.yes, $_kitconfirm.url = el.dataset.url, $_kitconfirm.preview = el.dataset.preview || '', $_kitconfirm.detail = el.dataset.detail || '', $_kitconfirm.form = el.getAttribute('form') || '', $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset, $_kitconfirm.ready = !el.dataset.preview, $_kitconfirm.done = false, document.getElementById('kit-confirm')._kitopener = el, $_kitconfirm.open = true, $_kitconfirm.n++">rename files</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;rename files&#34;).post(&#34;/stub/slow&#34;).preview(&#34;/stub/preview&#34;,
 &#34;rename three files?&#34;, &#34;rename&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><form action="/stub/slow" method="post" data-indicator="_busy3c8c2a52f1c0" data-on:submit="(el.noValidate || el.checkValidity()) && @post(el.getAttribute('action'), {contentType: 'form'})" id="story-ban" class="controls"><input type="text" placeholder="username" name="username" aria-label="username to ban" required><button type="submit" class="primary bad" form="story-ban" formaction="/stub/slow" data-url="/stub/slow" data-ask="ban this user?" data-yes="ban" data-on:click="evt.preventDefault(), el.form.reportValidity() &amp;&amp; ($_kitconfirm.ask = el.dataset.ask, $_kitconfirm.yes = el.dataset.yes, $_kitconfirm.url = el.dataset.url, $_kitconfirm.preview = el.dataset.preview || '', $_kitconfirm.detail = el.dataset.detail || '', $_kitconfirm.form = el.getAttribute('form') || '', $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset, $_kitconfirm.ready = !el.dataset.preview, $_kitconfirm.done = false, document.getElementById('kit-confirm')._kitopener = el, $_kitconfirm.open = true, $_kitconfirm.n++, document.getElementById('kit-confirm').showModal())">ban</button></form></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{% let form = kit::Form::post(&#34;/stub/slow&#34;).id(&#34;story-ban&#34;) %}
+&#60;form {{ form.attrs() }} class=&#34;controls&#34;&#62;
+  {{ kit::Input::text(&#34;username&#34;).label(&#34;username to ban&#34;).placeholder(&#34;username&#34;).required() }}
+  {{ kit::Button::primary(&#34;ban&#34;).bad().post(&#34;/stub/slow&#34;).sends(&#34;story-ban&#34;).confirm(&#34;ban this user?&#34;, &#34;ban&#34;) }}
+&#60;/form&#62;</pre></figcaption>
   </figure>
 </div>
 <h2 id="sheets">sheets</h2>
@@ -265,6 +350,20 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
     <div><label class="toggle"><span>include lossy copies</span><input type="checkbox" name="lossy"></label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Toggle::new(&#34;lossy&#34;, &#34;include lossy copies&#34;)</pre></figcaption>
   </figure>
+  <figure class="m-0 grid gap-2">
+    <div><input type="checkbox" name="path" value="/music/untrue" aria-label="select Untrue"></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::new(&#34;path&#34;, &#34;select Untrue&#34;).bare().value(&#34;/music/untrue&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="check choice"><input type="radio" name="to" value="" checked><span class="picture"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 4.5L12 19.5M4.5 12L19.5 12"/></svg></span><span class="words"><span>a new album</span></span></label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::radio(&#34;to&#34;, &#34;&#34;,
+&#34;a new album&#34;).picture_icon(kit::icon::PLUS).checked(true)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><label class="check choice"><input type="radio" name="to" value="a1"><span class="picture"></span><span class="words"><span>Holiday, 2024</span><small>12 images · 48 MB</small></span></label></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::radio(&#34;to&#34;, &#34;a1&#34;,
+&#34;Holiday, 2024&#34;).picture(&#34;&#34;).detail(&#34;12 images · 48 MB&#34;)</pre></figcaption>
+  </figure>
 </div>
 <h2 id="forms">forms</h2>
 <p class="text-meta text-muted">A form keeps its method and action, and its submit is busy while the form&#39;s request runs.</p>
@@ -289,6 +388,25 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
   {{ kit::Input::search(&#34;q&#34;).label(&#34;search&#34;).placeholder(&#34;polar bear&#34;) }}
 &#60;/form&#62;
 &#60;ul id=&#34;story-results&#34; class=&#34;rows&#34;&#62;&#60;/ul&#62;</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><form action="/stub/slow" method="post" data-indicator="_busyadcb76ddf8a7" data-on:submit="(el.noValidate || el.checkValidity()) && @post(el.getAttribute('action'), {contentType: 'form'})" id="story-actions" class="controls"><input type="text" placeholder="tag" name="tag" aria-label="tag" required><button type="submit" form="story-actions" formaction="/stub/slow" data-url="/stub/slow" data-indicator="_busye6c26beeae86" data-indicator:_busyf13e9bb9f8bf data-class:busy="$_busye6c26beeae86" data-attr:disabled="$_busyf13e9bb9f8bf" data-on:click="evt.preventDefault(), @post(el.dataset.url, {contentType: 'form', selector: '#' + CSS.escape(el.form.id), requestCancellation: 'disabled'})">add</button><button type="submit" form="story-actions" formaction="/stub/slow?remove" data-url="/stub/slow?remove" data-indicator="_busy039535423be1" data-indicator:_busyf13e9bb9f8bf data-class:busy="$_busy039535423be1" data-attr:disabled="$_busyf13e9bb9f8bf" data-on:click="evt.preventDefault(), @post(el.dataset.url, {contentType: 'form', selector: '#' + CSS.escape(el.form.id), requestCancellation: 'disabled'})">remove</button></form></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{% let form = kit::Form::post(&#34;/stub/slow&#34;).id(&#34;story-actions&#34;) %}
+&#60;form {{ form.attrs() }} class=&#34;controls&#34;&#62;
+  {{ kit::Input::text(&#34;tag&#34;).label(&#34;tag&#34;).placeholder(&#34;tag&#34;).required() }}
+  {{ kit::Button::bordered(&#34;add&#34;).post(&#34;/stub/slow&#34;).sends(&#34;story-actions&#34;).busy_key(&#34;story-actions&#34;) }}
+  {{ kit::Button::bordered(&#34;remove&#34;).post(&#34;/stub/slow?remove&#34;).sends(&#34;story-actions&#34;).busy_key(&#34;story-actions&#34;) }}
+&#60;/form&#62;</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><div class="field" role="group" aria-labelledby="field-74d481cd42c8-label" aria-describedby="field-74d481cd42c8-note" id="field-74d481cd42c8">
+  <span id="field-74d481cd42c8-label">release type</span>
+  <span class="controls"><select name="primary" aria-label="primary type"><option>album</option><option>single</option></select><label class="check"><input type="checkbox" name="clear"> clear</label></span>
+  <small id="field-74d481cd42c8-note">A group of controls a label cannot hold, named by the field&#39;s label.</small>
+</div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::custom(&#34;release type&#34;).hint(&#34;A group of controls a label cannot hold, named by the field&#39;s label.&#34;).wrap(kit::Markup::from(Html::trusted(concat!(r#&#34;&#60;span class=&#34;controls&#34;&#62;&#34;#,
+r#&#34;&#60;select name=&#34;primary&#34; aria-label=&#34;primary type&#34;&#62;&#60;option&#62;album&#60;/option&#62;&#60;option&#62;single&#60;/option&#62;&#60;/select&#62;&#34;#,
+r#&#34;&#60;label class=&#34;check&#34;&#62;&#60;input type=&#34;checkbox&#34; name=&#34;clear&#34;&#62; clear&#60;/label&#62;&#60;/span&#62;&#34;#))))</pre></figcaption>
   </figure>
 </div>
 <h2 id="state">state</h2>
@@ -317,6 +435,18 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
   <figure class="m-0 grid gap-2">
     <div><span class="status wait busy" data-url="/stub/status" data-init="@get(el.dataset.url)" aria-busy="true" id="story-status">checking</span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::wait(&#34;checking&#34;).loads(&#34;/stub/status&#34;).id(&#34;story-status&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="spinner" aria-hidden="true"></span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Spinner::new()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="spinner" role="status"><span class="label">loading the album</span></span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Spinner::new().label(&#34;loading the album&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="spinner large" role="status"><span class="label">buffering</span></span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Spinner::new().large().label(&#34;buffering&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
     <div><progress class="meter" value="40" max="100" aria-label="download"></progress></div>
@@ -351,7 +481,7 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::warn(&#34;The token expires in two days.&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><div class="notice bad" role="alert">The server refused the token: 401. <button type="button" data-url="/stub/slow" data-indicator="_busy3c8c2a52f1c0" data-class:busy="$_busy3c8c2a52f1c0" data-attr:disabled="$_busy3c8c2a52f1c0" data-on:click="@post(el.dataset.url)">retry</button></div></div>
+    <div><div class="notice bad" role="alert">The server refused the token: 401. <button type="button" data-url="/stub/slow" data-indicator="_busyc9efa29b212b" data-class:busy="$_busyc9efa29b212b" data-attr:disabled="$_busyc9efa29b212b" data-on:click="@post(el.dataset.url)">retry</button></div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::bad(&#34;The server refused the token: 401.&#34;).action(kit::Button::bordered(&#34;retry&#34;).post(&#34;/stub/slow&#34;))</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
@@ -377,10 +507,20 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
 <p class="text-meta text-muted">Labelled pairs, a disclosure that opens or loads, and a value to copy.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
   <figure class="m-0 grid gap-2">
-    <div><dl class="pairs"><dt>format</dt><dd>FLAC 24/96</dd><dt>size</dt><dd>1.2 GB</dd><dt>source</dt><dd><a class="button link" href="#content">soulseek</a></dd></dl></div>
+    <div><dl class="pairs"><dt>format</dt><dd>FLAC 24/96</dd><dt>size</dt><dd>1.2 GB</dd><dt>source</dt><dd><a class="button link" href="#content">soulseek</a></dd>
+</dl></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Pairs::new().pair(&#34;format&#34;,
 &#34;FLAC 24/96&#34;).pair(&#34;size&#34;,
-&#34;1.2 GB&#34;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek&#34;).href(&#34;#content&#34;))</pre></figcaption>
+&#34;1.2 GB&#34;).optional(&#34;label&#34;,
+None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek&#34;).href(&#34;#content&#34;))</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><dl class="pairs"><dt>last 30 days</dt><dd>42 views</dd><dt>linked from</dt><dd>example.com 30 · other sites 12</dd>
+</dl></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{% filter kit::wrap(kit::Pairs::new().pair(&#34;last 30 days&#34;, &#34;42 views&#34;)) %}
+  &#60;dt&#62;linked from&#60;/dt&#62;
+  &#60;dd&#62;{% for (host, n) in referrers %}{% if !loop.first %} · {% endif %}{{ host }} {{ n }}{% endfor %}&#60;/dd&#62;
+{% endfilter %}</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
     <div><details class="disclosure">
@@ -392,10 +532,20 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
   <figure class="m-0 grid gap-2">
     <div><details class="disclosure" data-url="/stub/files" data-init="el.open &amp;&amp; @get(el.dataset.url)" data-on:toggle="el.open &amp;&amp; @get(el.dataset.url)" id="story-files">
   <summary>files</summary>
-  <div>Reading…</div>
+  <div aria-busy="true">Reading…</div>
 </details></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Disclosure::new(&#34;files&#34;).loads(&#34;/stub/files&#34;,
 &#34;Reading…&#34;).id(&#34;story-files&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><details class="disclosure">
+  <summary><span>3. Held on the Tips of Fingers</span> <small>4:12</small></summary>
+  <div><p>Polar Bear · FLAC 16/44.1</p></div>
+</details></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{% filter kit::wrap(kit::Disclosure::new(&#34;&#34;)) %}
+  &#60;summary&#62;&#60;span&#62;3. Held on the Tips of Fingers&#60;/span&#62; &#60;small&#62;4:12&#60;/small&#62;&#60;/summary&#62;
+  &#60;p&#62;Polar Bear · FLAC 16/44.1&#60;/p&#62;
+{% endfilter %}</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
     <div><span class="combo">
@@ -405,6 +555,15 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
 </span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::CopyField::new(&#34;mcp url&#34;, &#34;https://mcp.example.com/mcp/github&#34;,
 &#34;copy&#34;).copied(&#34;copied&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><span class="combo" id="story-share">
+  <input readonly value="https://dither.example/a/x1" id="story-share-value" name="link" aria-label="share link" data-on:focus="el.select()">
+  <button type="button" class="icon-button" data-copied="copied" data-label="copy" aria-label="copy"
+    data-on:click="(navigator.clipboard?.writeText(el.previousElementSibling.value) ?? Promise.reject()).then(() => (el.classList.add('copied'), el.ariaLabel = el.dataset.copied || el.dataset.label, setTimeout(() => (el.classList.remove('copied'), el.ariaLabel = el.dataset.label), 2000))).catch(() => el.previousElementSibling.select())"><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M4.5 16.5L4.5 3.5L15.5 3.5M8.5 7.5L19.5 7.5L19.5 20.5L8.5 20.5Z"/></svg><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M5 12.5L10 17.5L19 7"/></svg></button>
+</span></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::CopyField::new(&#34;share link&#34;, &#34;https://dither.example/a/x1&#34;,
+&#34;copy&#34;).copied(&#34;copied&#34;).icon_only().name(&#34;link&#34;).id(&#34;story-share&#34;)</pre></figcaption>
   </figure>
 </div>
 <h2 id="icons">icons</h2>
@@ -448,6 +607,7 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="filter"><path d="M3 6.5L21 6.5M15 4L15 9M3 12L21 12M8 9.5L8 14.5M3 17.5L21 17.5M13 15L13 20"/></svg><figcaption class="text-fine text-muted">filter</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="folder"><path d="M3 5.5L9.5 5.5L11.5 7.5L21 7.5L21 19L3 19Z"/></svg><figcaption class="text-fine text-muted">folder</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="folder-unknown"><path d="M3 5.5L9.5 5.5L11.5 7.5L21 7.5L21 19L3 19ZM9.75 11C9.75 9.757 10.757 8.75 12 8.75C13.243 8.75 14.25 9.757 14.25 11C14.25 12.243 13.243 13.25 12 13.25L12 14.25M11.75 16.5L12.25 16.5"/></svg><figcaption class="text-fine text-muted">folder-unknown</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="full-screen"><path d="M4 9L4 4L9 4M15 4L20 4L20 9M20 15L20 20L15 20M9 20L4 20L4 15"/></svg><figcaption class="text-fine text-muted">full-screen</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="headphones"><path d="M4 17L4 12C4 7.582 7.582 4 12 4C16.418 4 20 7.582 20 12L20 17M3 14L7 14L7 20L3 20ZM17 14L21 14L21 20L17 20Z"/></svg><figcaption class="text-fine text-muted">headphones</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="heart"><path d="M12 19L6 13C4.38 11.337 4.397 8.681 6.039 7.039C7.681 5.397 10.337 5.38 12 7C13.663 5.38 16.319 5.397 17.961 7.039C19.603 8.681 19.62 11.337 18 13Z"/></svg><figcaption class="text-fine text-muted">heart</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="heart-filled"><path d="M12 19L6 13C4.38 11.337 4.397 8.681 6.039 7.039C7.681 5.397 10.337 5.38 12 7C13.663 5.38 16.319 5.397 17.961 7.039C19.603 8.681 19.62 11.337 18 13Z" fill="currentColor" stroke="none"/></svg><figcaption class="text-fine text-muted">heart-filled</figcaption></figure>
@@ -455,12 +615,14 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="info"><path d="M4 4L20 4L20 20L4 20ZM12 11L12 16.5M11.75 7.75L12.25 7.75"/></svg><figcaption class="text-fine text-muted">info</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="keyboard"><path d="M2.5 6L21.5 6L21.5 18L2.5 18ZM5.75 9.5L6.25 9.5M9.25 9.5L9.75 9.5M12.75 9.5L13.25 9.5M16.25 9.5L16.75 9.5M7.5 12L8 12M11 12L11.5 12M14.5 12L15 12M8 14.5L16 14.5"/></svg><figcaption class="text-fine text-muted">keyboard</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="laptop"><path d="M4 5L20 5L20 16L4 16ZM2.5 19L21.5 19"/></svg><figcaption class="text-fine text-muted">laptop</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="leave-full-screen"><path d="M9 4L9 9L4 9M15 4L15 9L20 9M20 15L15 15L15 20M9 20L9 15L4 15"/></svg><figcaption class="text-fine text-muted">leave-full-screen</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="library"><path d="M3.5 11L12 3.5L20.5 11M5.5 9.5L5.5 20L18.5 20L18.5 9.5M9 16.5C9 15.672 9.672 15 10.5 15C11.328 15 12 15.672 12 16.5C12 17.328 11.328 18 10.5 18C9.672 18 9 17.328 9 16.5ZM12 16.5L12 11L14.5 12"/></svg><figcaption class="text-fine text-muted">library</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="link"><path d="M13.13 15.12L8.88 10.87L2.87 16.88L7.12 21.13ZM21.13 7.12L16.88 2.87L10.87 8.88L15.12 13.13ZM9.5 14.5L14.5 9.5"/></svg><figcaption class="text-fine text-muted">link</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="list"><path d="M4.5 7L5 7M4.5 12L5 12M4.5 17L5 17M8.5 7L20 7M8.5 12L20 12M8.5 17L20 17"/></svg><figcaption class="text-fine text-muted">list</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="lyrics"><path d="M3 4L21 4L21 16L11 16L6 20.5L6 16L3 16ZM9.5 8L8.5 11.5M13 8L12 11.5"/></svg><figcaption class="text-fine text-muted">lyrics</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="minus"><path d="M4.5 12L19.5 12"/></svg><figcaption class="text-fine text-muted">minus</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="more"><path d="M5.25 12L5.75 12M11.75 12L12.25 12M18.25 12L18.75 12"/></svg><figcaption class="text-fine text-muted">more</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="muted"><path d="M3.5 9L7 9L12 4.5L12 19.5L7 15L3.5 15ZM15 9.5L20 14.5M20 9.5L15 14.5"/></svg><figcaption class="text-fine text-muted">muted</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="next"><path d="M5 6L15 12L5 18ZM19 6L19 18"/></svg><figcaption class="text-fine text-muted">next</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="open-external"><path d="M11 4.5L4.5 4.5L4.5 19.5L19.5 19.5L19.5 13M14 4.5L19.5 4.5L19.5 10M19.5 4.5L11 13"/></svg><figcaption class="text-fine text-muted">open-external</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="organize"><path d="M3 5.5L9.5 5.5L11.5 7.5L21 7.5L21 19L3 19ZM7.5 13.5L16 13.5M13.5 11L16 13.5L13.5 16"/></svg><figcaption class="text-fine text-muted">organize</figcaption></figure>
@@ -469,6 +631,9 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="pending"><path d="M5.88 5L7.63 5M5.88 19L7.63 19M5 5.88L5 7.63M19 5.88L19 7.63M9.38 5L11.13 5M9.38 19L11.13 19M5 9.38L5 11.13M19 9.38L19 11.13M12.88 5L14.63 5M12.88 19L14.63 19M5 12.88L5 14.63M19 12.88L19 14.63M16.38 5L18.13 5M16.38 19L18.13 19M5 16.38L5 18.13M19 16.38L19 18.13"/></svg><figcaption class="text-fine text-muted">pending</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="people"><path d="M5.5 8.5C5.5 6.567 7.067 5 9 5C10.933 5 12.5 6.567 12.5 8.5C12.5 10.433 10.933 12 9 12C7.067 12 5.5 10.433 5.5 8.5ZM3 20.5C3 17.186 5.686 14.5 9 14.5C12.314 14.5 15 17.186 15 20.5M15 4.6C16.249 4.3 17.556 4.764 18.338 5.783C19.119 6.802 19.227 8.185 18.613 9.313C18 10.441 16.78 11.102 15.5 11M17 14C19.701 14.385 21.657 16.776 21.5 19.5"/></svg><figcaption class="text-fine text-muted">people</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="phone"><path d="M7 2.5L17 2.5L17 21.5L7 21.5ZM10.5 5.5L13.5 5.5"/></svg><figcaption class="text-fine text-muted">phone</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="picture-in-picture"><path d="M3.5 5.5L20.5 5.5L20.5 18.5L3.5 18.5ZM12.5 12L17.5 12L17.5 15.5L12.5 15.5Z"/></svg><figcaption class="text-fine text-muted">picture-in-picture</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="pin"><path d="M8 3.5L16 3.5M9.5 3.5L9.5 9L6.5 13.5L17.5 13.5L14.5 9L14.5 3.5M12 13.5L12 20.5"/></svg><figcaption class="text-fine text-muted">pin</figcaption></figure>
+  <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="pin-filled"><path d="M8 3.5L16 3.5M9.5 3.5L9.5 9L6.5 13.5L17.5 13.5L14.5 9L14.5 3.5M12 13.5L12 20.5"/><path d="M9.5 3.5L9.5 9L6.5 13.5L17.5 13.5L14.5 9L14.5 3.5Z" fill="currentColor" stroke="none"/></svg><figcaption class="text-fine text-muted">pin-filled</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="play"><path d="M7 5L19 12L7 19Z"/></svg><figcaption class="text-fine text-muted">play</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="play-mark"><path d="M3.5 3.5L20.5 3.5L20.5 20.5L3.5 20.5ZM10 8L16 12L10 16Z"/></svg><figcaption class="text-fine text-muted">play-mark</figcaption></figure>
   <figure class="m-0 grid justify-items-center gap-1 py-2 text-ink"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.40" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="play-next"><path d="M4 4.5L9 7.5L4 10.5ZM12.5 7.5L20 7.5M4 13.5L20 13.5M4 18.5L20 18.5"/></svg><figcaption class="text-fine text-muted">play-next</figcaption></figure>
@@ -551,8 +716,8 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
 </div>
 </main>
 <dialog class="sheet" closedby="any" data-attr:closedby="$_kitconfirmbusy ? 'none' : 'any'" aria-labelledby="kit-confirm-question" id="kit-confirm"
-  data-signals__ifmissing="{_kitconfirm: {ask: '', detail: '', yes: '', url: '', preview: '', bad: false, ready: false, open: false, n: 0}}">
-  <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; el.closest('dialog').close()">
+  data-signals__ifmissing="{_kitconfirm: {ask: '', detail: '', yes: '', url: '', preview: '', form: '', bad: false, ready: false, open: false, done: false, n: 0}}">
+  <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; (el.closest('dialog').close(), $_kitconfirm.done &amp;&amp; (el.closest('dialog')._kitopener?.isConnected ? el.closest('dialog')._kitopener : document).dispatchEvent(new CustomEvent('kit-confirmed', {bubbles: true, detail: {url: $_kitconfirm.url}})))">
     <h2 id="kit-confirm-question" data-text="$_kitconfirm.ask"></h2>
   </header>
   <p id="kit-confirm-error" class="notice bad" role="alert" hidden></p>
@@ -563,9 +728,10 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
     <button type="button" class="quiet" commandfor="kit-confirm" command="close" data-attr:disabled="$_kitconfirmbusy" autofocus>cancel</button>
     <button type="button" data-class:primary="!$_kitconfirm.bad" data-class:bad="$_kitconfirm.bad" data-class:fill="$_kitconfirm.bad"
       data-indicator="_kitconfirmbusy" data-class:busy="$_kitconfirmbusy" data-attr:disabled="!$_kitconfirm.ready || $_kitconfirmbusy"
-      data-text="$_kitconfirm.yes" data-on:click="@post($_kitconfirm.url)"></button>
+      data-text="$_kitconfirm.yes" data-on:click="$_kitconfirm.form ? @post($_kitconfirm.url, {contentType: 'form', selector: '#' + CSS.escape($_kitconfirm.form)}) : @post($_kitconfirm.url)"></button>
   </footer>
 </dialog>
-<div id="flash" role="status"></div>
+<div id="flash" role="status"
+  data-on:kit-flash__window="(d => (el.replaceChildren(Object.assign(document.createElement('p'), {id: 'flash-' + Date.now(), className: d.bad ? 'toast bad' : d.stays || d.href ? 'toast' : 'toast brief', textContent: d.message})), d.bad &amp;&amp; el.firstChild.setAttribute('role', 'alert'), d.href &amp;&amp; el.firstChild.append(' ', Object.assign(document.createElement('a'), {href: d.href, textContent: d.link || d.href})), (d.bad || d.stays || d.href) &amp;&amp; el.firstChild.addEventListener('click', e => e.target.closest('a') || e.currentTarget.remove())))(evt.detail)"></div>
 </body>
 </html>

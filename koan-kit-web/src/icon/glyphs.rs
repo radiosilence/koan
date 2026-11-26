@@ -230,6 +230,12 @@ pub const FOLDER_UNKNOWN: Glyph = Glyph {
     strokes: "M3 5.5L9.5 5.5L11.5 7.5L21 7.5L21 19L3 19ZM9.75 11C9.75 9.757 10.757 8.75 12 8.75C13.243 8.75 14.25 9.757 14.25 11C14.25 12.243 13.243 13.25 12 13.25L12 14.25M11.75 16.5L12.25 16.5",
     fills: "",
 };
+/// `full-screen`.
+pub const FULL_SCREEN: Glyph = Glyph {
+    name: "full-screen",
+    strokes: "M4 9L4 4L9 4M15 4L20 4L20 9M20 15L20 20L15 20M9 20L4 20L4 15",
+    fills: "",
+};
 /// `headphones`.
 pub const HEADPHONES: Glyph = Glyph {
     name: "headphones",
@@ -272,6 +278,12 @@ pub const LAPTOP: Glyph = Glyph {
     strokes: "M4 5L20 5L20 16L4 16ZM2.5 19L21.5 19",
     fills: "",
 };
+/// `leave-full-screen`.
+pub const LEAVE_FULL_SCREEN: Glyph = Glyph {
+    name: "leave-full-screen",
+    strokes: "M9 4L9 9L4 9M15 4L15 9L20 9M20 15L15 15L15 20M9 20L9 15L4 15",
+    fills: "",
+};
 /// `library`.
 pub const LIBRARY: Glyph = Glyph {
     name: "library",
@@ -306,6 +318,12 @@ pub const MINUS: Glyph = Glyph {
 pub const MORE: Glyph = Glyph {
     name: "more",
     strokes: "M5.25 12L5.75 12M11.75 12L12.25 12M18.25 12L18.75 12",
+    fills: "",
+};
+/// `muted`.
+pub const MUTED: Glyph = Glyph {
+    name: "muted",
+    strokes: "M3.5 9L7 9L12 4.5L12 19.5L7 15L3.5 15ZM15 9.5L20 14.5M20 9.5L15 14.5",
     fills: "",
 };
 /// `next`.
@@ -355,6 +373,24 @@ pub const PHONE: Glyph = Glyph {
     name: "phone",
     strokes: "M7 2.5L17 2.5L17 21.5L7 21.5ZM10.5 5.5L13.5 5.5",
     fills: "",
+};
+/// `picture-in-picture`.
+pub const PICTURE_IN_PICTURE: Glyph = Glyph {
+    name: "picture-in-picture",
+    strokes: "M3.5 5.5L20.5 5.5L20.5 18.5L3.5 18.5ZM12.5 12L17.5 12L17.5 15.5L12.5 15.5Z",
+    fills: "",
+};
+/// `pin`.
+pub const PIN: Glyph = Glyph {
+    name: "pin",
+    strokes: "M8 3.5L16 3.5M9.5 3.5L9.5 9L6.5 13.5L17.5 13.5L14.5 9L14.5 3.5M12 13.5L12 20.5",
+    fills: "",
+};
+/// `pin-filled`.
+pub const PIN_FILLED: Glyph = Glyph {
+    name: "pin-filled",
+    strokes: "M8 3.5L16 3.5M9.5 3.5L9.5 9L6.5 13.5L17.5 13.5L14.5 9L14.5 3.5M12 13.5L12 20.5",
+    fills: "M9.5 3.5L9.5 9L6.5 13.5L17.5 13.5L14.5 9L14.5 3.5Z",
 };
 /// `play`.
 pub const PLAY: Glyph = Glyph {
@@ -661,6 +697,7 @@ pub const ALL: &[Glyph] = &[
     FILTER,
     FOLDER,
     FOLDER_UNKNOWN,
+    FULL_SCREEN,
     HEADPHONES,
     HEART,
     HEART_FILLED,
@@ -668,12 +705,14 @@ pub const ALL: &[Glyph] = &[
     INFO,
     KEYBOARD,
     LAPTOP,
+    LEAVE_FULL_SCREEN,
     LIBRARY,
     LINK,
     LIST,
     LYRICS,
     MINUS,
     MORE,
+    MUTED,
     NEXT,
     OPEN_EXTERNAL,
     ORGANIZE,
@@ -682,6 +721,9 @@ pub const ALL: &[Glyph] = &[
     PENDING,
     PEOPLE,
     PHONE,
+    PICTURE_IN_PICTURE,
+    PIN,
+    PIN_FILLED,
     PLAY,
     PLAY_MARK,
     PLAY_NEXT,
