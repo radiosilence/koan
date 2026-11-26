@@ -194,7 +194,7 @@ impl Toggle<'_> {
         clippy::unused_self,
         reason = "the box's template names a bare box by its label, and a toggle is never bare"
     )]
-    fn label_text(&self) -> &str {
+    fn label_text(&self) -> &'static str {
         ""
     }
 }
