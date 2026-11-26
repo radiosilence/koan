@@ -37,7 +37,7 @@ storybook = []
 askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
 # The kit's markup is askama_datastar's `Html`, and the attributes it writes are the syntax of the Datastar that crate
 # serves, so the two move together. Re-exported, so an app that takes the kit has the one that matches it.
-askama_datastar = "0.1.2"
+askama_datastar = "0.2.0"
 # `font::serve` answers as a handler, and `Confirm::preview` as SSE events.
 axum = { version = "0.8.9", default-features = false }
 # An import map's CSP source is the SHA-256 of its text, in base64.

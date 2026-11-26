@@ -8,6 +8,7 @@
 - **The font's URL carries its hash,** `geist-mono.woff2?v=…`, so it can be cached for good and a new one is fetched again. An app serves it with the crate's `font::serve` beside its stylesheet rather than copying it out of the package.
 - **The icon set is the kit's,** `koan_kit_web::icon`, compiled from the kōan apps' own SVGs.
 - **The licence names the font:** `MIT AND OFL-1.1`.
+- **Built on askama_datastar 0.2,** whose `SecurityHeaders`, `Csp`, `Asset` and `reopen` an app gets through the kit's re-export. An app's askama_datastar must be the kit's.
 
 ## 0.4.0
 
