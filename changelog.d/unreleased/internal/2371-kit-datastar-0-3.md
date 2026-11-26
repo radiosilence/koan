@@ -1,0 +1,1 @@
+- **koan-kit-web 0.7.0 on askama_datastar 0.3.** The web kit and the web UI take askama_datastar 0.3, so apps on 0.3 share one `Html` type with the kit.
