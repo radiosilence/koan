@@ -111,6 +111,14 @@
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;rescan&#34;).post(&#34;/stub/slow&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
+    <div><button type="button" data-url="/stub/slow" data-indicator="_busyfb539b5f8e0c" data-class:busy="$_busyfb539b5f8e0c" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url)">retry</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;retry&#34;).post(&#34;/stub/slow&#34;).busy_key(&#34;card-1&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" data-url="/stub/slow?next" data-indicator="_busyfb539b5f8e0c" data-class:busy="$_busyfb539b5f8e0c" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url)">next copy</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;next copy&#34;).post(&#34;/stub/slow?next&#34;).busy_key(&#34;card-1&#34;)</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
     <div><button type="button" data-url="/stub/flash" data-indicator="_busy30c75f7230c9" data-class:busy="$_busy30c75f7230c9" data-attr:disabled="$_busy30c75f7230c9" data-on:click="@get(el.dataset.url)">say saved</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;say saved&#34;).get(&#34;/stub/flash&#34;)</pre></figcaption>
   </figure>
@@ -123,12 +131,17 @@
 <p class="text-meta text-muted">A question, or the server&#39;s preview of a change, in the page&#39;s one Confirm. Yes waits for its own preview.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
   <figure class="m-0 grid gap-2">
-    <div><button type="button" class="bad" data-url="/stub/slow" data-ask="remove Held on the Tips of Fingers from the library?" data-yes="remove" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.bad = el.classList.contains('bad'); $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">remove album</button></div>
+    <div><button type="button" class="bad" data-url="/stub/slow" data-ask="remove Held on the Tips of Fingers from the library?" data-yes="remove" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.detail = el.dataset.detail || ''; $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">remove album</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;remove album&#34;).bad().post(&#34;/stub/slow&#34;).confirm(&#34;remove Held on the Tips of Fingers from the library?&#34;,
 &#34;remove&#34;)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><button type="button" class="primary" data-url="/stub/slow" data-ask="rename three files?" data-yes="rename" data-preview="/stub/preview" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.bad = el.classList.contains('bad'); $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">rename files</button></div>
+    <div><button type="button" class="quiet" data-url="/stub/slow" data-ask="close every unpinned search?" data-yes="close them" data-detail="Pinned searches stay open; the rest lose their results." data-yes-bad commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.detail = el.dataset.detail || ''; $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">close unpinned</button></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;close unpinned&#34;).post(&#34;/stub/slow&#34;).confirm(&#34;close every unpinned search?&#34;,
+&#34;close them&#34;).detail(&#34;Pinned searches stay open; the rest lose their results.&#34;).yes_bad()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
+    <div><button type="button" class="primary" data-url="/stub/slow" data-ask="rename three files?" data-yes="rename" data-preview="/stub/preview" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; $_kitconfirm.detail = el.dataset.detail || ''; $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; $_kitconfirm.open = true; $_kitconfirm.n++">rename files</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;rename files&#34;).post(&#34;/stub/slow&#34;).preview(&#34;/stub/preview&#34;,
 &#34;rename three files?&#34;, &#34;rename&#34;)</pre></figcaption>
   </figure>
@@ -346,6 +359,12 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::warn(&#34;Unreachable since 14:02.&#34;).icon(kit::icon::WARNING)</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
+    <div><div class="empty compact">
+  <strong>no rooms joined</strong>
+</div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Empty::new(&#34;no rooms joined&#34;).compact()</pre></figcaption>
+  </figure>
+  <figure class="m-0 grid gap-2">
     <div><div class="empty">
   <svg class="icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.22" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 4L12 15M7.5 10.5L12 15L16.5 10.5M5 19.5L19 19.5"/></svg>
   <strong>nothing downloading</strong>
@@ -532,10 +551,11 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
 </div>
 </main>
 <dialog class="sheet" closedby="any" aria-labelledby="kit-confirm-question" id="kit-confirm"
-  data-signals__ifmissing="{_kitconfirm: {ask: '', yes: '', url: '', preview: '', bad: false, ready: false, open: false, n: 0}}">
+  data-signals__ifmissing="{_kitconfirm: {ask: '', detail: '', yes: '', url: '', preview: '', bad: false, ready: false, open: false, n: 0}}">
   <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; el.closest('dialog').close()">
     <h2 id="kit-confirm-question" data-text="$_kitconfirm.ask"></h2>
   </header>
+  <p id="kit-confirm-detail" hidden data-text="$_kitconfirm.detail" data-attr:hidden="!$_kitconfirm.detail"></p>
   <section id="kit-confirm-preview" data-attr:aria-busy="$_kitconfirm.ready ? 'false' : 'true'"
     data-effect="$_kitconfirm.n &amp;&amp; (el._kitpreview?.abort(), el.replaceChildren(), $_kitconfirm.preview &amp;&amp; @get($_kitconfirm.preview, {requestCancellation: el._kitpreview = new AbortController()}))"></section>
   <footer class="actions">

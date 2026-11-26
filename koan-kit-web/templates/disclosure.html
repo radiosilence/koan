@@ -1,7 +1,7 @@
 {#- A summary with a chevron that turns, and what it opens onto. One that loads fetches its body the first time it
     opens; the answer is the same disclosure, open and full. -#}
 <details class="disclosure{{ attrs.classes() }}"{% if open %} open{% endif %}
-{%- if let Some(url) = loads.present() %} data-url="{{ url }}" data-on:toggle__once="el.open &amp;&amp; @get(el.dataset.url)"{% endif %}{{ attrs }}>
+{%- if let Some(url) = loads.present() %} data-url="{{ url }}" data-on:toggle{% if !reloads %}__once{% endif %}="el.open &amp;&amp; @get(el.dataset.url)"{% endif %}{{ attrs }}>
   <summary>{{ summary }}</summary>
   <div>{{ body }}</div>
 </details>

@@ -53,6 +53,7 @@ pub struct Disclosure<'a> {
     body: Content<'a>,
     open: bool,
     loads: Text<'a>,
+    reloads: bool,
     attrs: Attrs<'a>,
 }
 
@@ -64,6 +65,7 @@ impl<'a> Disclosure<'a> {
             body: Content::default(),
             open: false,
             loads: Text::default(),
+            reloads: false,
             attrs: Attrs::default(),
         }
     }
@@ -85,6 +87,14 @@ impl<'a> Disclosure<'a> {
     pub fn loads(mut self, url: impl Into<Text<'a>>, placeholder: impl Into<Content<'a>>) -> Self {
         self.loads = url.into();
         self.body = placeholder.into();
+        self
+    }
+}
+
+impl Disclosure<'_> {
+    /// Fetches its body again every time it opens, not only the first: for what changes while the page is open.
+    pub fn reloads(mut self) -> Self {
+        self.reloads = true;
         self
     }
 }

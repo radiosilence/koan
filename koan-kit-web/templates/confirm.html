@@ -4,10 +4,11 @@
     the button's request, and is busy while it runs. Busy is written as a string, since Datastar writes a bare `true`
     as an empty attribute. -#}
 <dialog class="sheet{{ attrs.classes() }}" closedby="any" aria-labelledby="kit-confirm-question"{{ attrs }}
-  data-signals__ifmissing="{_kitconfirm: {ask: '', yes: '', url: '', preview: '', bad: false, ready: false, open: false, n: 0}}">
+  data-signals__ifmissing="{_kitconfirm: {ask: '', detail: '', yes: '', url: '', preview: '', bad: false, ready: false, open: false, n: 0}}">
   <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; el.closest('dialog').close()">
     <h2 id="kit-confirm-question" data-text="$_kitconfirm.ask"></h2>
   </header>
+  <p id="kit-confirm-detail" hidden data-text="$_kitconfirm.detail" data-attr:hidden="!$_kitconfirm.detail"></p>
   <section id="kit-confirm-preview" data-attr:aria-busy="$_kitconfirm.ready ? 'false' : 'true'"
     data-effect="$_kitconfirm.n &amp;&amp; (el._kitpreview?.abort(), el.replaceChildren(), $_kitconfirm.preview &amp;&amp; @get($_kitconfirm.preview, {requestCancellation: el._kitpreview = new AbortController()}))"></section>
   <footer class="actions">

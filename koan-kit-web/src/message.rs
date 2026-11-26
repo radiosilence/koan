@@ -157,6 +157,7 @@ pub struct Empty<'a> {
     detail: Content<'a>,
     icon: Option<Glyph>,
     action: Option<Button<'a>>,
+    compact: bool,
     attrs: Attrs<'a>,
 }
 
@@ -168,6 +169,7 @@ impl<'a> Empty<'a> {
             detail: Content::default(),
             icon: None,
             action: None,
+            compact: false,
             attrs: Attrs::default(),
         }
     }
@@ -181,6 +183,12 @@ impl<'a> Empty<'a> {
     /// A glyph above the title.
     pub fn icon(mut self, glyph: Glyph) -> Self {
         self.icon = Some(glyph);
+        self
+    }
+
+    /// Small, for a list in a sidebar or a panel rather than a page.
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
         self
     }
 

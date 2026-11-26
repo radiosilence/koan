@@ -266,6 +266,21 @@ macro_rules! component {
                 self
             }
 
+            /// Kept as it is when a patch morphs the region around it: something the page's own script or the
+            /// person changed, such as an open disclosure in a streamed list.
+            pub fn ignore_morph(mut self) -> Self {
+                self.attrs.add_datastar("ignore-morph", "");
+                self
+            }
+
+            /// The component as a patch that replaces its element whole rather than morphing it: for an answer whose
+            /// target carries `data-ignore-morph`, or an ancestor does, which a morph would leave alone.
+            pub fn patch_replace(&self) -> askama_datastar::PatchElements {
+                self.html()
+                    .patch()
+                    .mode(askama_datastar::ElementPatchMode::Replace)
+            }
+
             /// The component's markup.
             pub fn html(&self) -> askama_datastar::Html {
                 askama_datastar::Html::trusted(self.to_string())

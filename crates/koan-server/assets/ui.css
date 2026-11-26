@@ -1547,6 +1547,7 @@
   .combo > :focus-visible {
     position: relative;
     z-index: 10;
+    outline-offset: calc(2px * -1);
   }
   .toggle {
     display: flex;
@@ -1903,6 +1904,10 @@
     line-height: var(--tw-leading, var(--text-control--line-height));
     color: var(--muted);
   }
+  .empty.compact {
+    gap: var(--spacing);
+    padding-block: calc(var(--spacing) * 3);
+  }
   .empty > strong {
     --tw-font-weight: var(--font-weight-normal);
     font-weight: var(--font-weight-normal);
@@ -1988,6 +1993,14 @@
   }
   dialog.sheet > header > h2 {
     margin: 0px;
+  }
+  #kit-confirm-detail {
+    margin: 0px;
+    padding-inline: calc(var(--spacing) * 5);
+    padding-bottom: calc(var(--spacing) * 3);
+    font-size: var(--text-control);
+    line-height: var(--tw-leading, var(--text-control--line-height));
+    color: var(--muted);
   }
   #kit-confirm-question {
     text-transform: none;

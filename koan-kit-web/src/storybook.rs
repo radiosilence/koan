@@ -126,6 +126,8 @@ pub fn sections() -> Vec<Section> {
             intro: "A request carries its URL as data, and the button is busy for exactly as long as its own request runs.",
             entries: vec![
                 entry!(kit::Button::primary("rescan").post("/stub/slow")),
+                entry!(kit::Button::bordered("retry").post("/stub/slow").busy_key("card-1")),
+                entry!(kit::Button::bordered("next copy").post("/stub/slow?next").busy_key("card-1")),
                 entry!(kit::Button::bordered("say saved").get("/stub/flash")),
                 entry!(kit::Button::bordered("say it failed").get("/stub/failed")),
             ],
@@ -138,6 +140,11 @@ pub fn sections() -> Vec<Section> {
                     .bad()
                     .post("/stub/slow")
                     .confirm("remove Held on the Tips of Fingers from the library?", "remove")),
+                entry!(kit::Button::quiet("close unpinned")
+                    .post("/stub/slow")
+                    .confirm("close every unpinned search?", "close them")
+                    .detail("Pinned searches stay open; the rest lose their results.")
+                    .yes_bad()),
                 entry!(kit::Button::primary("rename files")
                     .post("/stub/slow")
                     .preview("/stub/preview", "rename three files?", "rename")),
@@ -236,6 +243,7 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Notice::bad("The server refused the token: 401.")
                     .action(kit::Button::bordered("retry").post("/stub/slow"))),
                 entry!(kit::Notice::warn("Unreachable since 14:02.").icon(kit::icon::WARNING)),
+                entry!(kit::Empty::new("no rooms joined").compact()),
                 entry!(kit::Empty::new("nothing downloading")
                     .detail("Albums you grab appear here.")
                     .icon(kit::icon::DOWNLOAD)),

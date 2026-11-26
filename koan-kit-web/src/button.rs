@@ -109,6 +109,11 @@ pub struct Button<'a> {
     act: Act<'a>,
     /// A question given before the request it guards.
     pending: Option<Ask<'a>>,
+    /// A line under the question, and whether yes is destructive whatever this button's tone.
+    detail: Text<'a>,
+    yes_bad: bool,
+    /// The busy signal's key, when it is not the request.
+    busy_key: Text<'a>,
     attrs: Attrs<'a>,
 }
 
@@ -128,6 +133,9 @@ impl<'a> Button<'a> {
             named: None,
             act: Act::Nothing,
             pending: None,
+            detail: Text::default(),
+            yes_bad: false,
+            busy_key: Text::default(),
             attrs: Attrs::default(),
         }
     }
@@ -247,6 +255,26 @@ impl<'a> Button<'a> {
             yes: yes.into(),
             preview: Text::default(),
         });
+        self
+    }
+
+    /// A line under the question in the page's [`Confirm`](crate::Confirm): what the change does, in more words.
+    pub fn detail(mut self, detail: impl Into<Text<'a>>) -> Self {
+        self.detail = detail.into();
+        self
+    }
+
+    /// The question's yes is destructive, though this button is not: a quiet "close unpinned" whose yes still reads
+    /// as the loss it is.
+    pub fn yes_bad(mut self) -> Self {
+        self.yes_bad = true;
+        self
+    }
+
+    /// Names the busy signal by `key` rather than by the request. Buttons sharing a key are busy together, as a card's
+    /// actions are while any of them runs; a key per row keeps rows posting one URL from spinning each other.
+    pub fn busy_key(mut self, key: impl Into<Text<'a>>) -> Self {
+        self.busy_key = key.into();
         self
     }
 
@@ -413,7 +441,10 @@ impl fmt::Display for Button<'_> {
                 url,
                 ask: None,
             } => {
-                let busy = Busy::of(*method, url.as_str());
+                let busy = self
+                    .busy_key
+                    .present()
+                    .map_or_else(|| Busy::of(*method, url.as_str()), Busy::keyed);
                 attribute(f, "data-url", url.as_str())?;
                 write!(f, " data-indicator=\"{busy}\"")?;
                 self.busy_attributes(f, busy)?;
@@ -429,6 +460,12 @@ impl fmt::Display for Button<'_> {
                 attribute(f, "data-yes", ask.yes.as_str())?;
                 if let Some(preview) = ask.preview.present() {
                     attribute(f, "data-preview", preview)?;
+                }
+                if let Some(detail) = self.detail.present() {
+                    attribute(f, "data-detail", detail)?;
+                }
+                if self.yes_bad {
+                    f.write_str(" data-yes-bad")?;
                 }
                 write!(
                     f,

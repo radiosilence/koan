@@ -134,6 +134,31 @@ impl<'a> From<Cow<'a, str>> for Text<'a> {
     }
 }
 
+macro_rules! numbers_as_text {
+    ($($number:ty),*) => {$(
+        impl From<$number> for Text<'_> {
+            fn from(number: $number) -> Self {
+                Self(Cow::Owned(number.to_string()))
+            }
+        }
+
+        impl From<&$number> for Text<'_> {
+            fn from(number: &$number) -> Self {
+                Self(Cow::Owned(number.to_string()))
+            }
+        }
+
+        impl From<&&$number> for Text<'_> {
+            fn from(number: &&$number) -> Self {
+                Self(Cow::Owned(number.to_string()))
+            }
+        }
+    )*};
+}
+
+// A count, an id or a page number, as a field's value or a data attribute: `.data("page", page)`.
+numbers_as_text!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
+
 /// `None` is no text.
 impl<'a, T: Into<Text<'a>>> From<Option<T>> for Text<'a> {
     fn from(text: Option<T>) -> Self {

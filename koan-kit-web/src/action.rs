@@ -54,6 +54,14 @@ impl Busy {
     }
 }
 
+impl Busy {
+    /// The signal named by `key` alone: every control given the same key is busy together, and a key per row keeps
+    /// one row's spinner off another posting the same URL.
+    pub(crate) fn keyed(key: &str) -> Self {
+        Self(fnv1a(b"key ".iter().chain(key.as_bytes())) & 0xffff_ffff_ffff)
+    }
+}
+
 /// `_busy` and the hash, lowercase.
 impl fmt::Display for Busy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

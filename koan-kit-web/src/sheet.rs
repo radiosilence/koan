@@ -25,7 +25,8 @@ pub(crate) const CONFIRM_ID: &str = "kit-confirm";
 /// preview and fetches this one.
 pub(crate) const OPEN_CONFIRM: &str = "$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; \
 $_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; \
-$_kitconfirm.bad = el.classList.contains('bad'); $_kitconfirm.ready = !el.dataset.preview; \
+$_kitconfirm.detail = el.dataset.detail || ''; \
+$_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; \
 $_kitconfirm.open = true; $_kitconfirm.n++";
 
 /// A sheet: `kit::Sheet::new("add", "add a download")`, opened by `kit::Button::primary("add").opens("add")`.

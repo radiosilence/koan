@@ -1,5 +1,5 @@
 {#- Where a list would be: a glyph, what is missing, why, and what would fill it. -#}
-<div class="empty{{ attrs.classes() }}"{{ attrs }}>
+<div class="empty{% if compact %} compact{% endif %}{{ attrs.classes() }}"{{ attrs }}>
 {%- if let Some(glyph) = icon %}
   {{ glyph.svg(34) }}
 {%- endif %}

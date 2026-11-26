@@ -31,6 +31,7 @@ pub struct Form<'a> {
     method: Method,
     datastar: bool,
     live: bool,
+    busy_key: Text<'a>,
     attrs: Attrs<'a>,
 }
 
@@ -41,6 +42,7 @@ impl<'a> Form<'a> {
             method,
             datastar,
             live: false,
+            busy_key: Text::default(),
             attrs: Attrs::default(),
         }
     }
@@ -59,6 +61,19 @@ impl<'a> Form<'a> {
     /// Datastar loads. Its route sits outside `require_datastar_on_post` and checks the request's origin itself.
     pub fn plain(action: impl Into<Text<'a>>) -> Self {
         Self::of(Method::Post, action.into(), false)
+    }
+
+    /// Reads `action` as a browser does, with its fields as the query and no script: a search that is a page of its
+    /// own.
+    pub fn plain_get(action: impl Into<Text<'a>>) -> Self {
+        Self::of(Method::Get, action.into(), false)
+    }
+
+    /// Names its busy signal by `key` rather than by its action, so forms posting one action row by row (each search
+    /// result's download) are busy apart; see [`Button::busy_key`](crate::Button::busy_key).
+    pub fn busy_key(mut self, key: impl Into<Text<'a>>) -> Self {
+        self.busy_key = key.into();
+        self
     }
 
     /// Sends itself as the person types, a third of a second after they pause: a search that answers as it goes.
@@ -109,7 +124,9 @@ impl<'a> Form<'a> {
     }
 
     fn busy(&self) -> Busy {
-        Busy::of(self.method, self.action.as_str())
+        self.busy_key
+            .present()
+            .map_or_else(|| Busy::of(self.method, self.action.as_str()), Busy::keyed)
     }
 }
 
