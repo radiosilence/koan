@@ -2,7 +2,7 @@
 name = "koan-kit-web"
 # The kit's own version, shared with package.json and released on its own rather than with koan: a push to main that
 # changes it publishes both (.github/workflows/koan-kit-web.yml). A test fails when the two disagree.
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 license = "MIT AND OFL-1.1"
 repository = "https://github.com/radiosilence/koan"
@@ -37,7 +37,7 @@ storybook = []
 askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
 # The kit's markup is askama_datastar's `Html`, and the attributes it writes are the syntax of the Datastar that crate
 # serves, so the two move together. Re-exported, so an app that takes the kit has the one that matches it.
-askama_datastar = "0.2.0"
+askama_datastar = "0.3.0"
 # `font::serve` answers as a handler, and `Confirm::preview` as SSE events.
 axum = { version = "0.8.9", default-features = false }
 # An import map's CSP source is the SHA-256 of its text, in base64.

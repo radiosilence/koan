@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0
+
+- **askama_datastar 0.3.** The kit's markup is askama_datastar 0.3's `Html`, so an app on 0.3 hands its own rendered markup to the kit's slots with one `Html` type. 0.3 refuses a `reopen` address holding control or space characters, which a browser would strip into another host.
+
 ## 0.6.0
 
 - **The loader is the ensō everywhere.** `Spinner` draws it alone, at the text's size, `large`, or `over` the middle of a region such as a buffering video, and with a `label` it is a status a screen reader announces. A busy status's mark is the ensō turning in its tone, a disclosure loading its body shows it before the placeholder, a link loading in place carries it, and a skeleton holds it rather than breathing. Under reduced motion it stands whole and still.

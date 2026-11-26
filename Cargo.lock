@@ -363,9 +363,9 @@ dependencies = [
 
 [[package]]
 name = "askama_datastar"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7bf8f99375019e687cd5c5412d27be025034875cac66955cf46b86aee6f4bdc"
+checksum = "c282fc016124e9fcb29e5972d00ae41b5beb91252e788e9639ba4ce495bd5e6e"
 dependencies = [
  "askama",
  "axum",
@@ -374,8 +374,10 @@ dependencies = [
  "futures-util",
  "pin-project-lite",
  "serde",
+ "serde_html_form",
  "serde_json",
  "sha2 0.11.2",
+ "tokio",
  "tower-layer",
  "tower-service",
 ]
@@ -4606,7 +4608,7 @@ dependencies = [
 
 [[package]]
 name = "koan-kit-web"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "askama",
  "askama_datastar",
@@ -8475,6 +8477,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
+]
+
+[[package]]
+name = "serde_html_form"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2f2d7ff8a2140333718bb329f5c40fc5f0865b84c426183ce14c97d2ab8154f"
+dependencies = [
+ "form_urlencoded",
+ "indexmap",
+ "itoa",
+ "serde_core",
 ]
 
 [[package]]
