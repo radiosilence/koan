@@ -193,9 +193,9 @@ For deployment packages, scripts in a TypeScript repository, and browser scripts
     font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
-  Referrer-Policy: no-referrer
+  Referrer-Policy: same-origin
   ```
-  A page that loads Datastar adds `'unsafe-eval'` to `script-src` (its expressions compile with `Function`); an import map is allowed by its `'sha256-…'`. Never `'unsafe-inline'`. A test asserts the headers.
+  `same-origin` rather than `no-referrer`, since under `no-referrer` a browser sends `Origin: null` on a same-origin form post, which fails the `Origin` check a plain form relies on; other sites still get no referrer. askama_datastar's `SecurityHeaders` sends these, with its `Csp`. A page that loads Datastar adds `'unsafe-eval'` to `script-src` (its expressions compile with `Function`); an import map is allowed by its `'sha256-…'`. Never `'unsafe-inline'`. A test asserts the headers.
 - **Cookies:** `__Host-` prefix, `Path=/; HttpOnly; Secure; SameSite=Lax`, holding an opaque random id stored hashed (§11). `Lax`, since `Strict` drops the cookie on the redirect back from sign-in. An app for plain HTTP on a LAN makes `Secure` a setting and then drops `__Host-`, which browsers refuse without `Secure`.
 - **Accessibility:** a skip link (`kit::SkipLink`), labelled controls, ARIA patterns where native elements fall short (a combobox with `aria-activedescendant`), a live region for results, `prefers-reduced-motion` honoured, text contrast of at least 4.5:1.
 - **Language:** `lang="en-GB"`. Translations are gettext `.po`, with the English in the template as the msgid and CLDR plural rules (blit's `askama_gettext`).
