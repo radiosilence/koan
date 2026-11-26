@@ -82,6 +82,10 @@ pub(crate) fn signal_name(name: &'static str) -> &'static str {
 
 /// The props every control shares.
 #[derive(Clone, Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is a prop of its own, as HTML's boolean attributes are"
+)]
 struct Common<'a> {
     name: Text<'a>,
     label: Text<'a>,

@@ -16,7 +16,7 @@ use crate::slot::Wrap;
 #[derive(Clone, Debug, Default, Template)]
 #[template(path = "pairs.html")]
 pub struct Pairs<'a> {
-    pairs: Vec<(Text<'a>, Content<'a>)>,
+    given: Vec<(Text<'a>, Content<'a>)>,
     rows: Markup,
     attrs: Attrs<'a>,
 }
@@ -29,7 +29,7 @@ impl<'a> Pairs<'a> {
 
     /// `label` and its value, after those already given. The value is words, or markup such as a link.
     pub fn pair(mut self, label: impl Into<Text<'a>>, value: impl Into<Content<'a>>) -> Self {
-        self.pairs.push((label.into(), value.into()));
+        self.given.push((label.into(), value.into()));
         self
     }
 

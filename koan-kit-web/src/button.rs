@@ -580,7 +580,13 @@ impl fmt::Display for Button<'_> {
                 attribute(f, "data-url", url.as_str())?;
                 let (own, group) = indicators(f, &self.busy_key)?;
                 self.busy_by(f, own, group)?;
-                let prevent = if sends { "evt.preventDefault(), " } else { "" };
+                // A form left invalid would start a request Datastar abandons unsettled, keeping the button busy for
+                // good, so the form is checked here first, its messages shown, as a Form's submit does.
+                let prevent = if sends {
+                    "evt.preventDefault(), (el.form.noValidate || el.form.reportValidity()) &amp;&amp; "
+                } else {
+                    ""
+                };
                 write!(
                     f,
                     " data-on:click=\"{prevent}{}(el.dataset.url{})\"",
@@ -779,7 +785,7 @@ mod tests {
         );
         assert!(
             button.contains(
-                "data-on:click=\"evt.preventDefault(), @post(el.dataset.url, {contentType: 'form', selector: '#' + CSS.escape(el.form.id)})\""
+                "data-on:click=\"evt.preventDefault(), (el.form.noValidate || el.form.reportValidity()) &amp;&amp; @post(el.dataset.url, {contentType: 'form', selector: '#' + CSS.escape(el.form.id)})\""
             ),
             "{button}"
         );
