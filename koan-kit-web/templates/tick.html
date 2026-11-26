@@ -1,7 +1,11 @@
-{#- The box itself, shared by Check and Toggle. -#}
-<input type="{% if tick.radio %}radio{% else %}checkbox{% endif %}" name="{{ tick.name }}"
+{#- The box itself, shared by Check and Toggle. A bare check is the box alone, carrying the common props and named by
+    its label. -#}
+{%- let bare = self.is_bare() -%}
+<input type="{% if tick.radio %}radio{% else %}checkbox{% endif %}"
+{%- if bare && !attrs.classes().is_empty() %} class="{{ attrs.classes().to_string().trim_start() }}"{% endif %} name="{{ tick.name }}"
 {%- if let Some(value) = tick.value %} value="{{ value }}"{% endif %}
 {%- if tick.checked %} checked{% endif %}
 {%- if tick.disabled %} disabled{% endif %}
 {%- if tick.required %} required{% endif %}
-{%- if let Some(signal) = tick.bind %} data-bind="{{ signal }}"{% endif %}>
+{%- if let Some(signal) = tick.bind %} data-bind="{{ signal }}"{% endif %}
+{%- if bare %} aria-label="{{ self.label_text() }}"{{ attrs }}{% endif %}>

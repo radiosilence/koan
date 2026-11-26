@@ -7,6 +7,7 @@ use std::fmt;
 
 use askama::Template;
 
+use crate::action::Busy;
 use crate::arg::{Amount, Flag, Text};
 use crate::attrs::{Attrs, component};
 
@@ -52,6 +53,7 @@ pub struct Status<'a> {
     tone: Tone,
     tone_class: Option<&'static str>,
     busy: bool,
+    busy_key: Text<'a>,
     loads: Text<'a>,
     attrs: Attrs<'a>,
 }
@@ -64,6 +66,7 @@ impl<'a> Status<'a> {
             tone,
             tone_class: None,
             busy: false,
+            busy_key: Text::default(),
             loads: Text::default(),
             attrs: Attrs::default(),
         }
@@ -89,10 +92,22 @@ impl<'a> Status<'a> {
         Self::new(Tone::Wait, word)
     }
 
-    /// Still being found out: the mark breathes, or under reduced motion is hollow.
+    /// Still being found out: the mark is the ensō, turning, or under reduced motion standing still.
     pub fn busy(mut self, on: impl Into<Flag>) -> Self {
         self.busy = on.into().get();
         self
+    }
+
+    /// Busy while any request of the group `key` names runs, the group its card's buttons join with
+    /// [`Button::busy_key`](crate::Button::busy_key): a job's state turns while one of its actions is under way.
+    pub fn busy_with(mut self, key: impl Into<Text<'a>>) -> Self {
+        self.busy_key = key.into();
+        self
+    }
+
+    /// The group's signal, when it follows one.
+    fn busy_signal(&self) -> Option<Busy> {
+        self.busy_key.present().map(Busy::keyed)
     }
 
     /// Fetches its own replacement from `url` as the page starts, for a state the server takes a moment to learn: the
@@ -177,6 +192,37 @@ mod tests {
         );
         let busy = Status::wait("checking").busy(true).to_string();
         assert_eq!(busy, "<span class=\"status wait busy\">checking</span>");
+    }
+
+    #[test]
+    fn a_status_follows_its_cards_busy_group() {
+        let status = Status::wait("queued").busy_with("job-1").to_string();
+        let signal = Busy::keyed("job-1");
+        assert!(
+            status.contains(&format!("data-class:busy=\"${signal}\"")),
+            "{status}"
+        );
+        assert!(
+            crate::Button::bordered("retry")
+                .post("/jobs/1/retry")
+                .busy_key("job-1")
+                .to_string()
+                .contains(&format!("data-indicator:{signal}")),
+            "the buttons raise the signal the status reads"
+        );
+    }
+
+    #[test]
+    fn a_status_busy_by_itself_stays_busy_in_its_group() {
+        let status = Status::wait("checking")
+            .loads("/s")
+            .busy_with("job-1")
+            .to_string();
+        let signal = Busy::keyed("job-1");
+        assert!(
+            status.contains(&format!("data-attr:aria-busy=\"true || ${signal} ? ")),
+            "{status}"
+        );
     }
 
     #[test]

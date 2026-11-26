@@ -71,9 +71,11 @@ pub mod font;
 mod form;
 mod head;
 pub mod icon;
+mod link;
 mod message;
 mod sheet;
 mod slot;
+mod spinner;
 mod status;
 #[cfg(any(test, feature = "storybook"))]
 pub mod storybook;
@@ -87,9 +89,11 @@ pub use content::{CopyField, Disclosure, Pairs};
 pub use field::{Choice, Combo, Control, Field, Input, InputKind, Select, Textarea};
 pub use form::{Form, FormAttrs};
 pub use head::{Head, ImportMap, Release, SkipLink};
+pub use link::Link;
 pub use message::{Empty, Flash, Notice};
-pub use sheet::{Confirm, Sheet};
+pub use sheet::{CONFIRMED, Confirm, Sheet};
 pub use slot::{Wrap, wrap};
+pub use spinner::Spinner;
 pub use status::{Meter, Status, Tone};
 
 #[cfg(test)]

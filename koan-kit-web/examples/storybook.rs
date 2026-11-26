@@ -46,6 +46,8 @@ async fn main() -> std::io::Result<()> {
         .route("/datastar.js", get(script::serve))
         .route("/stub/flash", get(flash))
         .route("/stub/failed", get(failed))
+        .route("/stub/moved", get(moved))
+        .route("/stub/place", get(place))
         .route("/stub/preview", get(preview))
         .route("/stub/status", get(status))
         .route("/stub/files", get(files))
@@ -77,6 +79,19 @@ async fn slow() -> Response {
 
 async fn flash() -> Response {
     events([kit::Flash::ok("Saved.").patch().into()])
+}
+
+async fn moved() -> Response {
+    events([kit::Flash::ok("Moved 3 images.")
+        .link("#content", "open that album")
+        .patch()
+        .into()])
+}
+
+/// A page read in place: its answer, a moment later, says so.
+async fn place() -> Response {
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    events([kit::Flash::ok("Loaded in place.").patch().into()])
 }
 
 async fn failed() -> Response {

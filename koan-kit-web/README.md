@@ -11,7 +11,7 @@ It ships as two packages at one version:
 
 ```toml
 [dependencies]
-koan-kit-web = "0.5"
+koan-kit-web = "0.6"
 ```
 
 The crate builds on `askama_datastar` and re-exports it, so an app's askama and askama_datastar are the kit's: `HtmlSafe` belongs to one askama release, and the components write the attribute syntax of the Datastar that crate serves.
@@ -72,7 +72,7 @@ askama resolves `{% extends %}` against the app's own templates, so an app keeps
 </html>
 ```
 
-Its view's module has `use koan_kit_web as kit;`. `Head` writes the charset, the viewport, both colour schemes with the browser's chrome in the kit's ground, the font's preload, the stylesheet, an import map and Datastar's script. The app routes the font beside its stylesheet, where the stylesheet asks for it:
+Its view's module has `use koan_kit_web as kit;`. A title that comes from a block, so each page names itself, is the base template's own `<title>{% block title %}…{% endblock %}</title>` after `Head`, which writes none when it is given none. `Head` writes the charset, the viewport, both colour schemes with the browser's chrome in the kit's ground, the font's preload, the stylesheet, an import map and Datastar's script. The app routes the font beside its stylesheet, where the stylesheet asks for it:
 
 ```rust
 .route("/assets/app.css", get(stylesheet))
@@ -99,22 +99,27 @@ Text is escaped wherever it lands. Markup is a separate type, built from an `ask
 
 | Component | What it draws |
 |---|---|
-| `Button` | Every action. Its weight is its constructor (`primary`, `bordered`, `standard`, `quiet`, `link`); `bad`, `fill`, `icon`, `icon_only`, `busy`, `disabled` qualify it; one action says what it does: `post`, `get`, `href`, `opens`, `closes`, `submit` |
+| `Button` | Every action. Its weight is its constructor (`primary`, `bordered`, `standard`, `quiet`, `link`); `bad`, `fill`, `icon`, `icon_only`, `toggles`, `compact`, `busy`, `disabled` qualify it; one action says what it does: `post`, `get`, `href`, `opens`, `closes`, `submit`; `sends` makes a request submit a form's fields, and `in_place` makes a link load its page in place |
+| `Link` | A link in the page's look, which can load its page in place and mark the page shown |
 | `Form` | A form's attributes for the app's own `<form>` (`post`, `get`, `plain`, `live`), and its submit |
 | `Field` | A label, a control and a note under it, linked by `aria-describedby`: `text`, `password`, `email`, `url`, `number`, `select`, `textarea`, `custom`; `hint`, `error`, `warning` |
 | `Input`, `Select`, `Textarea` | The controls, alone or in a field |
 | `Combo` | A control joined to the button it feeds |
-| `Check`, `Toggle` | A box leading its words inline; a settings row with the box trailing. Each a checkbox or a radio |
-| `Status`, `Meter` | A state in a tone, in words; progress as a hairline, named for a screen reader |
+| `Check`, `Toggle` | A box leading its words inline, alone (`bare`), or as a row of a list with a picture and a detail; a settings row with the box trailing. Each a checkbox or a radio |
+| `Status`, `Meter`, `Spinner` | A state in a tone, in words; progress as a hairline, named for a screen reader; the ensō, for anything on its way |
 | `Notice`, `Flash`, `Empty` | A message in place; one over the page; what stands where a list would be |
 | `Sheet`, `Confirm` | A dialog opened through `commandfor`; the page's one sheet for asking before a change |
-| `Pairs`, `Disclosure`, `CopyField` | Labels and values; a summary that opens or loads; a value to copy |
+| `Pairs`, `Disclosure`, `CopyField` | Labels and values, optional or from a template's loops; a summary, words or markup, that opens or loads; a value to copy, with a word or a glyph |
 | `Head`, `ImportMap`, `SkipLink`, `Release` | The page around the content |
 | `icon::*` | The kōan icon set, `kit::icon::HEART.svg(15)` |
 
 The common props, on every component: `id`, `class` for the app's own layout utilities, `data`, `attr`, and `datastar` for a Datastar attribute the kit does not write. Every component also has `html` and `patch`, so a handler answers with one: `events([kit::Flash::ok("Saved.").patch().into()])`.
 
-Containers whose markup is one element and a class stay classes: `panel`, `rows`, `dense`, `code`, `codes` (one-time codes to keep, selected whole), `qr` (a QR code's `<svg>`, dark on white in either scheme), `skeleton`.
+Containers whose markup is one element and a class stay classes: `panel`, `rows`, `dense`, `code`, `codes` (one-time codes to keep, selected whole), `qr` (a QR code's `<svg>`, dark on white in either scheme), `skeleton`, `controls` (a row of controls as tall as the tallest) and `compact` (every control inside at the compact size).
+
+### The compact size
+
+A form's fields are drawn large enough to type in on a phone. A control in a row or a toolbar, such as a filter above a list or a value beside the action that uses it, takes the compact size: `meta` type and tight padding. `.compact()` sets it on one control, and a `compact` class on any element sets it for every control inside, so an app never restyles a field by hand. A compact field, select, combo and button in one row are the same height. At the full size, a `controls` row stretches a bordered button to the height of the field beside it.
 
 ### Children
 
@@ -130,15 +135,19 @@ A component with a slot takes its content as a prop, or from the template that p
 {% endfilter %}
 ```
 
-`Sheet`, `Disclosure`, `Notice`, `Empty` and `Field::custom` have a slot.
+`Sheet`, `Disclosure`, `Notice`, `Empty`, `Pairs`, `Check`, `Toggle`, `Link` and `Field::custom` have a slot. A disclosure's block that opens with its own `<summary>` gives the summary too, and a pairs block holds `<dt>` and `<dd>` rows built with loops.
 
 ### Datastar
 
 Every expression a component writes is the kit's own constant. A URL, a question or an id goes in a `data-*` attribute, escaped, and the expression reads it with `el.dataset`, so nothing a person typed reaches script (§8). Names an app gives, a signal to bind or an expression through `.datastar()`, are `&'static str`: by convention the program's own text.
 
-- **Busy while its request runs.** A control that sends a request is busy, disabled and spinning for exactly as long as its own request runs. Its signal is named for the request, a lowercase hash of the method and URL, so two controls posting the same thing share it and any other two never do.
+- **Busy while its request runs.** A control that sends a request is busy, disabled and spinning for exactly as long as its own request runs, by a signal no other control has. Controls given one `busy_key` are a group: while any of their requests runs, all of them are disabled and only the one pressed spins, and a `Status::busy_with` the same key turns.
+- **Several actions on one form.** `Button::post(url).sends(form_id)` submits that form's fields to its own URL, busy by itself. It is the form's submit, so Enter presses the first, and the form is checked before anything goes.
+- **Links that load in place.** `.in_place()` on a `Link`, or on a `Button` with `href`, reads the page with `@get` on a plain click, busy while it loads, with the address and history following it; a modified or middle click, or a page without script, follows the real `href`.
 - **Forms.** A `Form` keeps its real `method` and `action`, so a submit made before Datastar loads stays off the query string; `require_datastar_on_post` refuses that submit, which is how it should fail. A form that must work without script, such as sign-in or consent, is `Form::plain`, posting to a route outside that layer which checks the request's origin itself.
-- **Asking first.** `Button::confirm(question, yes)` and `Button::preview(url, question, yes)` ask in the page's one `Confirm`, so a list of a thousand rows carries no thousand dialogs. Opening it empties what it last held and disables yes until this button's question, or this button's preview, is in place; each opening cancels the last one's preview request, so a late answer cannot land under another question. A preview's handler answers `events(kit::Confirm::preview(plan))`. The sheet stays open while yes's request runs, busy, and the action's handler closes it with `kit::Confirm::close()`, so a failure is seen where it happened.
+- **Asking first.** `Button::confirm(question, yes)` and `Button::preview(url, question, yes)` ask in the page's one `Confirm`, so a list of a thousand rows carries no thousand dialogs. Opening it empties what it last held and disables yes until this button's question, or this button's preview, is in place; each opening cancels the last one's preview request, so a late answer cannot land under another question. A preview's handler answers `events(kit::Confirm::preview(plan))`. The sheet stays open while yes's request runs, busy, and the action's handler closes it with `kit::Confirm::close()`, so a failure is seen where it happened, through `kit::Confirm::error`, in words or markup. Once closed that way, the button that asked hears `kit-confirmed`, for the page's own script. A handler whose change removed the page answers `kit::Confirm::go("/")`. A button that `sends` a form asks once the form is valid, and yes posts its fields, so a form that asks first keeps Enter and `required`.
+- **Flashes from the page's script.** A `kit-flash` event on `window` raises one in the page's region, its detail the props a handler would give (`message`, `bad`, `href`, `link`, `stays`), set as text.
+- **Signals named by the app** stay the program's own text: `.datastar()` and `.bind()` take `&'static str`, so a name built at run time, such as one per row, is written in the template by hand. A value that differs per row goes in a `data-*` attribute instead, read with `el.dataset`.
 
 ## Use, without Rust
 
@@ -147,7 +156,7 @@ Every expression a component writes is the kit's own constant. A URL, a question
 @import "@radiosilence/koan-kit-web";
 ```
 
-Plain elements come out in the theme, and the classes the components use give the rest: the button weights, `field`, `combo`, `check`, `toggle`, `panel`, `notice`, `status`, `meter`, `pairs`, `empty`, `qr`, `codes`, `sheet` and its parts, `actions`, `skip`. A static site with markup of its own imports `@radiosilence/koan-kit-web/tokens.css` for the tokens alone. The package is published to GitHub Packages, so installing it needs a token with `read:packages`.
+Plain elements come out in the theme, and the classes the components use give the rest: the button weights, `field`, `combo`, `check`, `toggle`, `panel`, `notice`, `status`, `meter`, `spinner`, `pairs`, `empty`, `qr`, `codes`, `sheet` and its parts, `actions`, `controls`, `compact`, `skip`. A static site with markup of its own imports `@radiosilence/koan-kit-web/tokens.css` for the tokens alone. The package is published to GitHub Packages, so installing it needs a token with `read:packages`.
 
 Tailwind's palette, radii, shadows, blurs and type sizes are removed: `rounded-lg`, `shadow-xl`, `text-sm` and `bg-red-500` compile to nothing. What that cannot reach, such as `rounded-full` and arbitrary values, kit-check reports.
 

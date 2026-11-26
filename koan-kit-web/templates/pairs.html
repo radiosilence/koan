@@ -1,6 +1,7 @@
-{#- Labels and values on two columns, the labels muted. -#}
+{#- Labels and values on two columns, the labels muted; rows a template wrote follow those given as props. -#}
 <dl class="pairs{{ attrs.classes() }}"{{ attrs }}>
-{%- for (label, value) in pairs -%}
+{%- for (label, value) in given -%}
 <dt>{{ label }}</dt><dd>{{ value }}</dd>
 {%- endfor -%}
+{{ rows }}
 </dl>

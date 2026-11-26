@@ -1,0 +1,2 @@
+{#- A link with a real href; one that loads in place reads it with `@get` on a plain click. -#}
+<a href="{{ href }}"{% if !attrs.classes().is_empty() %} class="{{ attrs.classes().to_string().trim_start() }}"{% endif %}{% if current %} aria-current="page"{% endif %}{{ self.loads() }}{{ attrs }}>{{ label }}</a>

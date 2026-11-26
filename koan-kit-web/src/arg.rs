@@ -403,6 +403,13 @@ impl<'a> From<Text<'a>> for Content<'a> {
     }
 }
 
+/// `None` is nothing to show.
+impl<'a, T: Into<Text<'a>>> From<Option<T>> for Content<'a> {
+    fn from(text: Option<T>) -> Self {
+        Self::Text(text.into())
+    }
+}
+
 impl From<Markup> for Content<'_> {
     fn from(markup: Markup) -> Self {
         Self::Markup(markup)

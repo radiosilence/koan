@@ -19,15 +19,21 @@ use crate::slot::Wrap;
 /// The id of the page's [`Confirm`].
 pub(crate) const CONFIRM_ID: &str = "kit-confirm";
 
-/// What a button that asks does when pressed, alongside its `commandfor` opening the sheet: it hands the sheet its
-/// question, yes, URL, preview and tone, from its own data attributes and class, so no text reaches the expression;
-/// marks the sheet ready at once when there is no preview to wait for; and counts the opening, which empties the last
-/// preview and fetches this one.
-pub(crate) const OPEN_CONFIRM: &str = "$_kitconfirm.ask = el.dataset.ask; $_kitconfirm.yes = el.dataset.yes; \
-$_kitconfirm.url = el.dataset.url; $_kitconfirm.preview = el.dataset.preview || ''; \
-$_kitconfirm.detail = el.dataset.detail || ''; \
-$_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset; $_kitconfirm.ready = !el.dataset.preview; \
-$_kitconfirm.open = true; $_kitconfirm.n++";
+/// What a button that asks does when pressed, alongside opening the sheet: it hands the sheet its question, yes, URL,
+/// preview, tone and form from its own attributes and class, so no text reaches the expression; marks the sheet ready
+/// at once when there is no preview to wait for; keeps the button, to tell it when the answer succeeds; and counts the
+/// opening, which empties the last preview and fetches this one. One expression, its parts joined by commas, so a
+/// button that sends a form can run it inside its own.
+pub(crate) const OPEN_CONFIRM: &str = "$_kitconfirm.ask = el.dataset.ask, $_kitconfirm.yes = el.dataset.yes, \
+$_kitconfirm.url = el.dataset.url, $_kitconfirm.preview = el.dataset.preview || '', \
+$_kitconfirm.detail = el.dataset.detail || '', $_kitconfirm.form = el.getAttribute('form') || '', \
+$_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset, $_kitconfirm.ready = !el.dataset.preview, \
+$_kitconfirm.done = false, document.getElementById('kit-confirm')._kitopener = el, \
+$_kitconfirm.open = true, $_kitconfirm.n++";
+
+/// The event the button that asked hears once its answer succeeded, that is once the action's handler closed the
+/// sheet with [`Confirm::close`]. It bubbles, and `detail.url` is the URL that was posted.
+pub const CONFIRMED: &str = "kit-confirmed";
 
 /// A sheet: `kit::Sheet::new("add", "add a download")`, opened by `kit::Button::primary("add").opens("add")`.
 ///
@@ -129,21 +135,52 @@ impl Confirm<'_> {
     }
 
     /// A handler's answer when the change, or its preview, failed: `message` inside the sheet, which stays open, since
-    /// a flash would sit under the dimmed page. The next opening clears it.
-    pub fn error<'m>(message: impl Into<Text<'m>>) -> PatchElements {
-        let message: Text<'m> = message.into();
-        let html = format!(
-            "<p id=\"kit-confirm-error\" class=\"notice bad\" role=\"alert\">{}</p>",
-            crate::attrs::Escaped(message.as_str())
-        );
-        Html::trusted(html).patch()
+    /// a flash would sit under the dimmed page. Words are escaped; markup a template rendered, such as a reason with a
+    /// link, is kept. The next opening clears it.
+    pub fn error<'m>(message: impl Into<Content<'m>>) -> PatchElements {
+        let message: Content<'m> = message.into();
+        let element = if message.is_markup() { "div" } else { "p" };
+        Html::trusted(format!(
+            "<{element} id=\"kit-confirm-error\" class=\"notice bad\" role=\"alert\">{message}</{element}>"
+        ))
+        .patch()
+        .mode(ElementPatchMode::Replace)
     }
 
-    /// An action handler's last word once its change is made: the sheet closes. Without it the sheet stays open, so a
-    /// handler that fails says so in place.
+    /// An action handler's last word once its change is made: the sheet closes, and the button that asked hears
+    /// [`CONFIRMED`], so the page's own script can follow the change. Without it the sheet stays open, so a handler that
+    /// fails says so in place.
     #[must_use]
     pub fn close() -> PatchSignals {
-        PatchSignals::new(r#"{"_kitconfirm":{"open":false}}"#)
+        PatchSignals::new(r#"{"_kitconfirm":{"open":false,"done":true}}"#)
+    }
+
+    /// An action handler's last word when the page it was asked on is gone, such as the album just deleted: the
+    /// browser goes to `href`, a path on this site. No [`close`](Self::close) is needed, since the page goes with the
+    /// sheet. Any handler can answer with it.
+    ///
+    /// # Panics
+    ///
+    /// When `href` is not a path on this origin: it must start with `/`, and not with `//` or `/\\`, which a browser
+    /// reads as another host, and hold no whitespace or control character, which a browser strips before reading it,
+    /// so `/\t/host` would be `//host`.
+    pub fn go<'h>(href: impl Into<Text<'h>>) -> PatchElements {
+        let href: Text<'h> = href.into();
+        let path = href.as_str();
+        assert!(
+            path.starts_with('/')
+                && !path.starts_with("//")
+                && !path.starts_with("/\\")
+                && !path.chars().any(|c| c.is_control() || c.is_whitespace()),
+            "{path:?} is not a path on this site"
+        );
+        Html::trusted(format!(
+            "<div hidden data-href=\"{}\" data-init=\"location.assign(el.dataset.href)\"></div>",
+            crate::attrs::Escaped(path)
+        ))
+        .patch()
+        .selector("body")
+        .mode(ElementPatchMode::Append)
     }
 }
 
@@ -198,6 +235,12 @@ mod tests {
         let patch = format!("{:?}", Confirm::error("refused: <403>"));
         assert!(patch.contains("kit-confirm-error"), "{patch}");
         assert!(patch.contains("&#60;403&#62;"), "{patch}");
+    }
+
+    #[test]
+    #[should_panic(expected = "is not a path on this site")]
+    fn go_refuses_a_path_a_browser_would_read_as_another_host() {
+        let _ = Confirm::go("/\t/evil.example");
     }
 
     #[test]

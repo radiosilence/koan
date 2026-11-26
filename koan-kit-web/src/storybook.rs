@@ -13,6 +13,7 @@ use askama::Template;
 use askama_datastar::Html;
 
 use crate as kit;
+use crate::Wrap as _;
 
 /// One thing drawn, and the call that drew it.
 pub struct Entry {
@@ -69,6 +70,47 @@ const WRAP_CODE: &str = r#"{% filter kit::wrap(kit::Sheet::new("story-wrapped", 
   <p>The sheet holds whatever the block renders.</p>
 {% endfilter %}"#;
 
+/// A form with several actions, as an app writes it in a template.
+const ACTIONS_CODE: &str = r#"{% let form = kit::Form::post("/stub/slow").id("story-actions") %}
+<form {{ form.attrs() }} class="controls">
+  {{ kit::Input::text("tag").label("tag").placeholder("tag").required() }}
+  {{ kit::Button::bordered("add").post("/stub/slow").sends("story-actions").busy_key("story-actions") }}
+  {{ kit::Button::bordered("remove").post("/stub/slow?remove").sends("story-actions").busy_key("story-actions") }}
+</form>"#;
+
+/// A form that asks first, as an app writes it in a template.
+const ASKING_FORM_CODE: &str = r#"{% let form = kit::Form::post("/stub/slow").id("story-ban") %}
+<form {{ form.attrs() }} class="controls">
+  {{ kit::Input::text("username").label("username to ban").placeholder("username").required() }}
+  {{ kit::Button::primary("ban").bad().post("/stub/slow").sends("story-ban").confirm("ban this user?", "ban") }}
+</form>"#;
+
+/// A compact row, as an app writes it.
+const COMPACT_ROW_CODE: &str = r#"<div class="compact controls">
+  {{ kit::Input::text("split").label("separator").placeholder("split on") }}
+  {{ kit::Combo::new(kit::Select::new("sort").options(["newest", "oldest"]).label("sort"), kit::Button::bordered("sort")) }}
+  {{ kit::Button::bordered("credit artists") }}
+  {{ kit::Button::quiet("pin").icon_only(kit::icon::PIN) }}
+</div>"#;
+
+/// A field beside a bordered button at the default size.
+const CONTROLS_CODE: &str = r#"<div class="controls">
+  {{ kit::Input::text("room").label("room").placeholder("room name") }}
+  {{ kit::Button::bordered("join") }}
+</div>"#;
+
+/// Rows a template builds with a loop.
+const PAIRS_CODE: &str = r#"{% filter kit::wrap(kit::Pairs::new().pair("last 30 days", "42 views")) %}
+  <dt>linked from</dt>
+  <dd>{% for (host, n) in referrers %}{% if !loop.first %} · {% endif %}{{ host }} {{ n }}{% endfor %}</dd>
+{% endfilter %}"#;
+
+/// A summary written as markup.
+const SUMMARY_CODE: &str = r#"{% filter kit::wrap(kit::Disclosure::new("")) %}
+  <summary><span>3. Held on the Tips of Fingers</span> <small>4:12</small></summary>
+  <p>Polar Bear · FLAC 16/44.1</p>
+{% endfilter %}"#;
+
 /// Every section, in the order the page shows them.
 #[must_use]
 #[expect(
@@ -94,6 +136,69 @@ pub fn sections() -> Vec<Section> {
             .label("search")
             .placeholder("polar bear"),
     ));
+    let actions = kit::Form::post("/stub/slow").id("story-actions");
+    let actions_html = Html::trusted(format!(
+        "<form{} class=\"controls\">{}{}{}</form>",
+        actions.attrs(),
+        kit::Input::text("tag")
+            .label("tag")
+            .placeholder("tag")
+            .required(),
+        kit::Button::bordered("add")
+            .post("/stub/slow")
+            .sends("story-actions")
+            .busy_key("story-actions"),
+        kit::Button::bordered("remove")
+            .post("/stub/slow?remove")
+            .sends("story-actions")
+            .busy_key("story-actions"),
+    ));
+    let ban = kit::Form::post("/stub/slow").id("story-ban");
+    let asking_form = Html::trusted(format!(
+        "<form{} class=\"controls\">{}{}</form>",
+        ban.attrs(),
+        kit::Input::text("username")
+            .label("username to ban")
+            .placeholder("username")
+            .required(),
+        kit::Button::primary("ban")
+            .bad()
+            .post("/stub/slow")
+            .sends("story-ban")
+            .confirm("ban this user?", "ban"),
+    ));
+    let compact_row = Html::trusted(format!(
+        "<div class=\"compact controls\">{}{}{}{}</div>",
+        kit::Input::text("split")
+            .label("separator")
+            .placeholder("split on"),
+        kit::Combo::new(
+            kit::Select::new("sort")
+                .options(["newest", "oldest"])
+                .label("sort"),
+            kit::Button::bordered("sort")
+        ),
+        kit::Button::bordered("credit artists"),
+        kit::Button::quiet("pin").icon_only(kit::icon::PIN),
+    ));
+    let controls = Html::trusted(format!(
+        "<div class=\"controls\">{}{}</div>",
+        kit::Input::text("room")
+            .label("room")
+            .placeholder("room name"),
+        kit::Button::bordered("join"),
+    ));
+    let pairs_html = kit::Pairs::new()
+        .pair("last 30 days", "42 views")
+        .wrap(kit::Markup::from(Html::trusted(
+            "<dt>linked from</dt><dd>example.com 30 · other sites 12</dd>",
+        )))
+        .html();
+    let summary_html = kit::Disclosure::new("")
+        .wrap(kit::Markup::from(Html::trusted(
+            "<summary><span>3. Held on the Tips of Fingers</span> <small>4:12</small></summary><p>Polar Bear · FLAC 16/44.1</p>",
+        )))
+        .html();
     let wrapped = kit::Sheet::new("story-wrapped", "rename")
         .close("close")
         .body(Html::trusted(
@@ -119,6 +224,31 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Button::bordered("disabled").disabled(true)),
                 entry!(kit::Button::bordered("export").icon(kit::icon::EXPORT)),
                 entry!(kit::Button::quiet("more").icon_only(kit::icon::MORE)),
+                entry!(kit::Button::quiet("play").icon_only(kit::icon::PLAY).toggles(kit::icon::PAUSE, false)),
+                entry!(kit::Button::quiet("mute").icon_only(kit::icon::VOLUME).toggles(kit::icon::MUTED, true)),
+                entry!(kit::Button::quiet("pin").icon_only(kit::icon::PIN).compact()),
+            ],
+        },
+        Section {
+            title: "compact",
+            intro: "The compact size, for controls in a row or a toolbar: a field, a combo and a button at this size line up exactly. A compact class on a container compacts everything inside it.",
+            entries: vec![
+                entry!(kit::Input::text("split").placeholder("split on").label("separator").compact()),
+                entry!(kit::Combo::new(
+                    kit::Input::search("q").placeholder("filter").label("filter"),
+                    kit::Button::bordered("go")
+                ).compact()),
+                entry!(kit::Button::bordered("re-tag").compact()),
+                entry!(kit::Button::primary("apply").compact()),
+                entry!(kit::Field::number("slots", "upload slots").value("4").compact()),
+                Entry {
+                    code: COMPACT_ROW_CODE,
+                    html: compact_row,
+                },
+                Entry {
+                    code: CONTROLS_CODE,
+                    html: controls,
+                },
             ],
         },
         Section {
@@ -130,6 +260,13 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Button::bordered("next copy").post("/stub/slow?next").busy_key("card-1")),
                 entry!(kit::Button::bordered("say saved").get("/stub/flash")),
                 entry!(kit::Button::bordered("say it failed").get("/stub/failed")),
+                entry!(kit::Button::bordered("move with a link").get("/stub/moved")),
+                entry!(kit::Button::bordered("raise from script").datastar(
+                    "on:click",
+                    "dispatchEvent(new CustomEvent('kit-flash', {detail: {message: 'Raised by the page.', stays: true}}))"
+                )),
+                entry!(kit::Link::new("load in place", "/stub/place").in_place().busy_key("story-place")),
+                entry!(kit::Status::wait("queued").busy_with("card-1")),
             ],
         },
         Section {
@@ -148,6 +285,10 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Button::primary("rename files")
                     .post("/stub/slow")
                     .preview("/stub/preview", "rename three files?", "rename")),
+                Entry {
+                    code: ASKING_FORM_CODE,
+                    html: asking_form,
+                },
             ],
         },
         Section {
@@ -201,6 +342,9 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Check::radio("quality", "any", "any")),
                 entry!(kit::Toggle::new("notify", "notify when done").checked(true)),
                 entry!(kit::Toggle::new("lossy", "include lossy copies")),
+                entry!(kit::Check::new("path", "select Untrue").bare().value("/music/untrue")),
+                entry!(kit::Check::radio("to", "", "a new album").picture_icon(kit::icon::PLUS).checked(true)),
+                entry!(kit::Check::radio("to", "a1", "Holiday, 2024").picture("").detail("12 images · 48 MB")),
             ],
         },
         Section {
@@ -215,6 +359,17 @@ pub fn sections() -> Vec<Section> {
                     code: SEARCH_CODE,
                     html: search_html,
                 },
+                Entry {
+                    code: ACTIONS_CODE,
+                    html: actions_html,
+                },
+                entry!(kit::Field::custom("release type")
+                    .hint("A group of controls a label cannot hold, named by the field's label.")
+                    .wrap(kit::Markup::from(Html::trusted(concat!(
+                        r#"<span class="controls">"#,
+                        r#"<select name="primary" aria-label="primary type"><option>album</option><option>single</option></select>"#,
+                        r#"<label class="check"><input type="checkbox" name="clear"> clear</label></span>"#
+                    ))))),
             ],
         },
         Section {
@@ -227,6 +382,9 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Status::wait("queued")),
                 entry!(kit::Status::wait("checking").busy(true)),
                 entry!(kit::Status::wait("checking").loads("/stub/status").id("story-status")),
+                entry!(kit::Spinner::new()),
+                entry!(kit::Spinner::new().label("loading the album")),
+                entry!(kit::Spinner::new().large().label("buffering")),
                 entry!(kit::Meter::new(40, 100).label("download")),
                 entry!(kit::Meter::new(80, 100).tone(kit::Tone::Ok).label("scan")),
                 entry!(kit::Meter::new(30, 100).tone(kit::Tone::Warn).label("disk")),
@@ -256,10 +414,20 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Pairs::new()
                     .pair("format", "FLAC 24/96")
                     .pair("size", "1.2 GB")
+                    .optional("label", None::<&str>)
                     .pair("source", kit::Button::link("soulseek").href("#content"))),
+                Entry {
+                    code: PAIRS_CODE,
+                    html: pairs_html,
+                },
                 entry!(kit::Disclosure::new("connection details").body("What only some readers need.")),
                 entry!(kit::Disclosure::new("files").loads("/stub/files", "Reading…").id("story-files")),
+                Entry {
+                    code: SUMMARY_CODE,
+                    html: summary_html,
+                },
                 entry!(kit::CopyField::new("mcp url", "https://mcp.example.com/mcp/github", "copy").copied("copied")),
+                entry!(kit::CopyField::new("share link", "https://dither.example/a/x1", "copy").copied("copied").icon_only().name("link").id("story-share")),
             ],
         },
         Section {

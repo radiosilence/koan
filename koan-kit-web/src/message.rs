@@ -89,12 +89,23 @@ component!(Notice);
 /// Place `kit::Flash::region()` once in the page's shell; a handler answers `kit::Flash::ok("Saved.").patch()`, which
 /// shows over the page wherever the tap was and fades by itself, or `kit::Flash::bad(error).patch()`, which stays until
 /// it is dismissed or replaced. The region is a live region, so each is read out as it arrives.
+///
+/// The page's own script raises one by dispatching [`Flash::EVENT`] on `window`, its detail the same props:
+///
+/// ```js
+/// dispatchEvent(new CustomEvent("kit-flash", {detail: {message: "Moved 3 images.", href: "/albums/2", link: "open it"}}))
+/// ```
+///
+/// `message` is the words, `bad` an error, `href` and `link` a link after the words, and `stays` an ok flash that waits
+/// to be dismissed. The words are set as text, never as markup.
 #[must_use = "a flash draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "flash.html")]
 pub struct Flash<'a> {
     message: Text<'a>,
     bad: bool,
+    stays: bool,
+    link: Option<(Text<'a>, Text<'a>)>,
     dismiss: Text<'a>,
     attrs: Attrs<'a>,
 }
@@ -103,12 +114,17 @@ impl<'a> Flash<'a> {
     /// The id of the region, which every flash replaces.
     pub const ID: &'static str = "flash";
 
+    /// The event on `window` that raises a flash from the page's own script.
+    pub const EVENT: &'static str = "kit-flash";
+
     fn of(message: Text<'a>, bad: bool) -> Self {
         let mut attrs = Attrs::default();
         attrs.set_id(Self::ID.into());
         Self {
             message,
             bad,
+            stays: false,
+            link: None,
             dismiss: Text::default(),
             attrs,
         }
@@ -129,7 +145,26 @@ impl<'a> Flash<'a> {
         Self::of(message.into(), true)
     }
 
-    /// A button dismissing it, saying `label`. Without one an error is dismissed by pressing it.
+    /// Stays until it is dismissed or replaced, as an error does: a confirmation the reader may still be reading when a
+    /// brief one would have gone.
+    pub fn stays(mut self) -> Self {
+        self.stays = true;
+        self
+    }
+
+    /// A link after the words, to `href`, saying `label`: "open that album". A flash with a link stays, since it would
+    /// otherwise fade from under the pointer.
+    pub fn link(mut self, href: impl Into<Text<'a>>, label: impl Into<Text<'a>>) -> Self {
+        self.link = Some((href.into(), label.into()));
+        self
+    }
+
+    /// Whether it waits to be dismissed rather than fading.
+    fn lasting(&self) -> bool {
+        self.bad || self.stays || self.link.is_some()
+    }
+
+    /// A button dismissing it, saying `label`. Without one a lasting flash is dismissed by pressing it.
     pub fn dismiss(mut self, label: impl Into<Text<'a>>) -> Self {
         self.dismiss = label.into();
         self
@@ -228,5 +263,32 @@ mod tests {
         assert!(flash.contains("id=\"flash\""), "{flash}");
         assert!(flash.contains("&#60;script&#62;"), "{flash}");
         assert!(flash.contains("role=\"alert\""), "{flash}");
+        assert!(
+            region.contains(&format!("data-on:{}__window", Flash::EVENT)),
+            "page script can raise one: {region}"
+        );
+    }
+
+    #[test]
+    fn a_flash_with_a_link_stays() {
+        let flash = Flash::ok("Moved 3 images.")
+            .link("/albums/2", "open that album")
+            .to_string();
+        assert!(flash.contains("<p class=\"toast\""), "{flash}");
+        assert!(
+            flash.contains("<a href=\"/albums/2\">open that album</a>"),
+            "{flash}"
+        );
+        assert!(
+            Flash::ok("Saved.")
+                .stays()
+                .to_string()
+                .contains("<p class=\"toast\"")
+        );
+        assert!(
+            Flash::ok("Saved.")
+                .to_string()
+                .contains("class=\"toast brief\">Saved.")
+        );
     }
 }
