@@ -543,7 +543,8 @@ impl<'a> Textarea<'a> {
             f.write_str(" readonly")?;
         }
         self.common.write(f, note, invalid)?;
-        f.write_str(">")?;
+        // The parser drops one newline after the start tag, so this one goes and the value's own stays.
+        f.write_str(">\n")?;
         escape(f, self.value.as_str())?;
         f.write_str("</textarea>")
     }

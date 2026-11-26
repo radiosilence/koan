@@ -355,6 +355,24 @@ impl<'a> Button<'a> {
     }
 }
 
+impl Button<'_> {
+    /// Busy and disabled while `signal`'s request runs. What the server set (`.busy(true)`, `.disabled(true)`) is
+    /// folded into the expressions, since Datastar's class and attr plugins own the attribute once they bind and would
+    /// strip a static one as the signal starts false.
+    fn busy_attributes(&self, f: &mut fmt::Formatter<'_>, signal: Busy) -> fmt::Result {
+        let busy = if self.busy { "true || " } else { "" };
+        let disabled = if self.disabled || self.busy {
+            "true || "
+        } else {
+            ""
+        };
+        write!(
+            f,
+            " data-class:busy=\"{busy}${signal}\" data-attr:disabled=\"{disabled}${signal}\""
+        )
+    }
+}
+
 impl fmt::Display for Button<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let link = matches!(self.act, Act::Link(_));
@@ -378,14 +396,12 @@ impl fmt::Display for Button<'_> {
             )?;
         }
         match &self.act {
-            Act::Nothing => {}
-            Act::Link(href) => attribute(f, "href", href.as_str())?,
+            // A disabled link has no href, so it neither navigates nor takes focus.
+            Act::Link(href) if !self.disabled => attribute(f, "href", href.as_str())?,
+            Act::Nothing | Act::Link(_) => {}
             Act::Submit(signal) => {
                 if let Some(busy) = signal {
-                    write!(
-                        f,
-                        " data-class:busy=\"${busy}\" data-attr:disabled=\"${busy}\""
-                    )?;
+                    self.busy_attributes(f, *busy)?;
                 }
             }
             Act::Command { command, target } => {
@@ -399,12 +415,9 @@ impl fmt::Display for Button<'_> {
             } => {
                 let busy = Busy::of(*method, url.as_str());
                 attribute(f, "data-url", url.as_str())?;
-                write!(
-                    f,
-                    " data-indicator=\"{busy}\" data-class:busy=\"${busy}\" data-attr:disabled=\"${busy}\" \
-                     data-on:click=\"{}(el.dataset.url)\"",
-                    method.action()
-                )?;
+                write!(f, " data-indicator=\"{busy}\"")?;
+                self.busy_attributes(f, busy)?;
+                write!(f, " data-on:click=\"{}(el.dataset.url)\"", method.action())?;
             }
             Act::Request {
                 url,
@@ -541,6 +554,34 @@ mod tests {
             !button.contains(">more<"),
             "the label is not drawn beside the glyph: {button}"
         );
+    }
+
+    #[test]
+    fn what_the_server_set_survives_datastar_binding() {
+        let busy = Busy::of(Method::Post, "/scan");
+        let button = Button::primary("rescan")
+            .post("/scan")
+            .busy(true)
+            .to_string();
+        assert!(
+            button.contains(&format!("data-class:busy=\"true || ${busy}\"")),
+            "{button}"
+        );
+        let off = Button::bordered("delete")
+            .post("/x")
+            .disabled(true)
+            .to_string();
+        assert!(off.contains("data-attr:disabled=\"true || $"), "{off}");
+    }
+
+    #[test]
+    fn a_disabled_link_goes_nowhere() {
+        let link = Button::primary("download")
+            .href("/d")
+            .disabled(true)
+            .to_string();
+        assert!(!link.contains("href"), "{link}");
+        assert!(link.contains("aria-disabled=\"true\""), "{link}");
     }
 
     #[test]

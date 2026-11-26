@@ -1470,6 +1470,15 @@
     border-color: var(--bad);
     color: var(--bad);
   }
+  a.button:not([href]) {
+    cursor: default;
+    opacity: 40%;
+    &:hover {
+      @media (hover: hover) {
+        background-color: transparent;
+      }
+    }
+  }
   :is(.quiet, .standard, .link).bad {
     border-color: transparent;
     &:hover {

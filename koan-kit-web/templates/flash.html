@@ -6,7 +6,7 @@
   {%- if let Some(label) = dismiss.present() %} <button type="button" class="link" data-on:click="el.parentElement.remove()">{{ label }}</button>{% endif -%}
   </p>
 {%- else %}
-  <p class="toast brief">{{ message }}</p>
+  <p id="{{ self::serial() }}" class="toast brief">{{ message }}</p>
 {%- endif %}
 {% endif -%}
 </div>

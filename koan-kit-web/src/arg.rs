@@ -155,6 +155,13 @@ impl Amount {
     }
 }
 
+/// An f32 through its own shortest decimal, so `0.1_f32` is 0.1 rather than its binary expansion widened.
+impl From<f32> for Amount {
+    fn from(number: f32) -> Self {
+        Self(number.to_string().parse().unwrap_or(0.0))
+    }
+}
+
 /// The shortest form that reads back as the same figure: `40`, `4.5`. A figure that is not one (NaN, infinity) is 0,
 /// since no attribute that takes a number accepts either.
 impl fmt::Display for Amount {
@@ -184,7 +191,7 @@ macro_rules! amounts {
                 }
             }
         )*
-        amounts!(@refs $($number),*, $($large),*);
+        amounts!(@refs $($number),*, $($large),*, f32);
     };
     (@refs $($number:ty),*) => {$(
         impl From<&$number> for Amount {
@@ -201,7 +208,7 @@ macro_rules! amounts {
     )*};
 }
 
-amounts!(exact: u8, u16, u32, i8, i16, i32, f32, f64; rounded: u64, u128, usize, i64, i128, isize);
+amounts!(exact: u8, u16, u32, i8, i16, i32, f64; rounded: u64, u128, usize, i64, i128, isize);
 
 /// A switch: checked, disabled, open, busy.
 ///

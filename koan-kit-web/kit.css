@@ -201,6 +201,12 @@
     @apply border-bad text-bad;
   }
 
+  /* A link drawn as a button that is unavailable: the kit writes it with no href, so it neither navigates nor takes
+   * focus, and it is drawn as a disabled button is. */
+  a.button:not([href]) {
+    @apply cursor-default opacity-40 hover:bg-transparent;
+  }
+
   :is(.quiet, .standard, .link).bad {
     @apply border-transparent hover:text-bad;
   }

@@ -204,7 +204,8 @@
   <figure class="m-0 grid gap-2">
     <div><label class="field warn">
   <span>notes</span>
-  <textarea name="notes" aria-describedby="notes-note">Text a person wrote keeps its Case.</textarea>
+  <textarea name="notes" aria-describedby="notes-note">
+Text a person wrote keeps its Case.</textarea>
   <small id="notes-note">Saved on this device only.</small>
 </label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::textarea(&#34;notes&#34;,
@@ -256,7 +257,7 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
 <p class="text-meta text-muted">A form keeps its method and action, and its submit is busy while the form&#39;s request runs.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
   <figure class="m-0 grid gap-2">
-    <div><form action="/stub/slow" method="post" data-indicator="_busyc3759808f700" data-on:submit="@post(el.getAttribute('action'), {contentType: 'form'})"><label class="field">
+    <div><form action="/stub/slow" method="post" data-indicator="_busyc3759808f700" data-on:submit="el.checkValidity() && @post(el.getAttribute('action'), {contentType: 'form'})"><label class="field">
   <span>name</span>
   <input type="text" name="name" aria-describedby="name-note" required>
   <small id="name-note">What the server calls itself.</small>
@@ -269,7 +270,7 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
 &#60;/form&#62;</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><form action="/stub/search" method="get" data-indicator="_busy339ac526f469" data-on:submit="@get(el.getAttribute('action'), {contentType: 'form'})" data-on:input__debounce.300ms="@get(el.getAttribute('action'), {contentType: 'form'})"><input type="search" placeholder="polar bear" name="q" aria-label="search"></form><ul id="story-results" class="rows"></ul></div>
+    <div><form action="/stub/search" method="get" data-indicator="_busy339ac526f469" data-on:submit="el.checkValidity() && @get(el.getAttribute('action'), {contentType: 'form'})" data-on:input__debounce.300ms="el.checkValidity() && @get(el.getAttribute('action'), {contentType: 'form'})"><input type="search" placeholder="polar bear" name="q" aria-label="search"></form><ul id="story-results" class="rows"></ul></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{% let search = kit::Form::get(&#34;/stub/search&#34;).live() %}
 &#60;form {{ search.attrs() }}&#62;
   {{ kit::Input::search(&#34;q&#34;).label(&#34;search&#34;).placeholder(&#34;polar bear&#34;) }}
@@ -381,7 +382,7 @@ kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
     <div><span class="combo">
   <input readonly value="https://mcp.example.com/mcp/github" aria-label="mcp url" data-on:focus="el.select()">
   <button type="button" data-copied="copied" data-label="copy"
-    data-on:click="navigator.clipboard.writeText(el.previousElementSibling.value).then(() => el.dataset.copied &amp;&amp; (el.textContent = el.dataset.copied, setTimeout(() => el.textContent = el.dataset.label, 2000))).catch(() => el.previousElementSibling.select())">copy</button>
+    data-on:click="(navigator.clipboard?.writeText(el.previousElementSibling.value) ?? Promise.reject()).then(() => el.dataset.copied &amp;&amp; (el.textContent = el.dataset.copied, setTimeout(() => el.textContent = el.dataset.label, 2000))).catch(() => el.previousElementSibling.select())">copy</button>
 </span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::CopyField::new(&#34;mcp url&#34;, &#34;https://mcp.example.com/mcp/github&#34;,
 &#34;copy&#34;).copied(&#34;copied&#34;)</pre></figcaption>

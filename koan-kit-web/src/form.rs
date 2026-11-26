@@ -123,7 +123,7 @@ impl fmt::Display for FormAttrs<'_, '_> {
         write!(f, " method=\"{}\"", form.method.form())?;
         if form.datastar {
             let request = format!(
-                "{}(el.getAttribute('action'), {{contentType: 'form'}})",
+                "el.checkValidity() && {}(el.getAttribute('action'), {{contentType: 'form'}})",
                 form.method.action()
             );
             write!(
@@ -155,7 +155,7 @@ mod tests {
         );
         assert!(
             attrs.contains(
-                "data-on:submit=\"@post(el.getAttribute('action'), {contentType: 'form'})\""
+                "data-on:submit=\"el.checkValidity() && @post(el.getAttribute('action'), {contentType: 'form'})\""
             ),
             "{attrs}"
         );
