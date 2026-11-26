@@ -16,7 +16,6 @@ struct AssistantsSettings: View {
         Section {
             if let assistants {
                 LabeledContent("Address", value: assistants.mcpUrl)
-                    .selectableText()
             } else if error == nil {
                 ProgressView()
             }

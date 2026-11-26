@@ -207,7 +207,6 @@ private struct SearchTrackRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .primaryTap(open) { PlayableMenu(playable: .track(track)) }
-        .pointerHover { hovering = $0 }
     }
 
     private func open() {

@@ -38,8 +38,6 @@ struct TabShell: View {
     /// The bar's height as laid out, kept for the room it leaves.
     @State private var barHeight: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var width
-    @State private var showingNowPlaying = false
-    @State private var showingDevices = false
     /// Which tab is showing. Held rather than derived from the navigator: a
     /// record belongs to whichever tab it was opened from, and the navigator
     /// cannot say which that was.
@@ -56,7 +54,7 @@ struct TabShell: View {
                 SignInPage { joined() }
             }
         }
-        .toggleStyle(SystemSwitch())
+        .toggleStyle(TelevisionToggle())
         .buttonStyle(TelevisionButton())
         .task { await checkSignedIn() }
     }
@@ -80,7 +78,7 @@ struct TabShell: View {
                 stack(.library) { LibraryTab() }
             }
             Tab(Self.title("Search"), systemImage: Icon.search, value: TabID.search, role: .search) { // theme: raw
-                stack(.search) { IOSSearchView() }
+                stack(.search) { SearchTab() }
             }
             // Last on a television, where it is visited least.
             Tab(Self.title("Settings"), systemImage: Icon.settings, value: TabID.settings) { // theme: raw
@@ -114,13 +112,7 @@ struct TabShell: View {
             ServerBanner { tab.wrappedValue = .settings }
                 .koanAnimation(KoanTheme.Motion.normal, value: mirror.connection?.standing)
         }
-        .toggleStyle(SystemSwitch())
-        .modifier(Transport(
-            showingNowPlaying: $showingNowPlaying,
-            showingDevices: $showingDevices,
-            selection: tab,
-            reselect: reselect
-        ))
+        .toggleStyle(TelevisionToggle())
         // The remote's Play/Pause, wherever focus is.
         .onPlayPauseCommand { player.togglePlayPause() }
         .shareCodes(player)
@@ -130,7 +122,6 @@ struct TabShell: View {
         .onReceive(NotificationCenter.default.publisher(for: .koanSignedOut)) { _ in
             Task { await checkSignedIn() }
         }
-        .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
         // sidebar; with no sidebar they float above the transport, which is
         // the one part of the screen that is the same wherever you are.
@@ -152,7 +143,6 @@ struct TabShell: View {
         // Something other than the stacks can move the navigator: a link on a
         // page, a search result, Now Playing, playback showing the queue.
         .onChange(of: nav.current) { _, page in arrive(at: page) }
-        .modifier(NowPlayingPresentation(isPresented: $showingNowPlaying))
         .modifier(RecordRoom())
         // As on the Mac: the things that ask for a new playlist are mostly
         // context menus, which take their own alerts down with them.
@@ -179,7 +169,7 @@ struct TabShell: View {
         }
         // Held as a background task: iOS suspends an app soon after it
         // leaves, and a save cut off there is the session lost.
-        .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
             let held = HeldTask()
             held.id = UIApplication.shared.beginBackgroundTask(withName: "koan save") {
                 MainActor.assumeIsolated { held.end() }
@@ -472,35 +462,6 @@ private struct PlayerAlert: ViewModifier {
     private func dismiss() {
         player.lastError = nil
         player.lastNotice = nil
-    }
-}
-
-/// The mini player. On a phone it sits above the tab bar: `safeAreaInset`
-/// would put it where the tab bar goes, which is to say on top of it.
-private struct Transport: ViewModifier {
-    @Binding var showingNowPlaying: Bool
-    @Binding var showingDevices: Bool
-    @Binding var selection: TabShell.TabID
-    /// The tab already showing, chosen again: back to its root, as a tab bar does.
-    let reselect: (TabShell.TabID) -> Void
-    @Environment(\.horizontalSizeClass) private var width
-    /// The bar's height as laid out, which Dynamic Type moves.
-    @State private var barHeight: CGFloat = 0
-    /// How far the keyboard reaches up from the foot of the screen: zero while
-    /// none is up, and for one floating clear of the foot. The bar is behind a
-    /// docked one, and the room a page keeps for the bar would sit above it as
-    /// a blank strip over the page's own controls.
-    @State private var keyboardOverlap: CGFloat = 0
-    @Namespace private var underline
-
-    func body(content: Content) -> some View {
-        // Now Playing is a tab of its own there.
-        content
-    }
-
-
-    private var player: some View {
-        MiniPlayer(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices)
     }
 }
 

@@ -148,12 +148,6 @@ struct QueueView: View {
                 list(rows, numbering: layout.numbering)
             }
         }
-        // On the whole stage, not the List: an empty queue is exactly when you
-        // want to drop a folder on it, and it has no rows to land on.
-        .dropTarget(for: URL.self) { urls, _ in
-            player.importFiles(urls)
-            return true
-        }
     }
 
     private func list(_ rows: [Row], numbering: Numbering) -> some View {
@@ -164,7 +158,7 @@ struct QueueView: View {
                         }
                         .onMove(perform: move)
                     }
-                    .insetList()
+                    .listStyle(.plain)
                     .washedGround()
                     // `g` / `G`. Watches the token rather than the edge: jumping
                     // to where you already are still has to scroll, because the
@@ -180,13 +174,6 @@ struct QueueView: View {
                         if phase == .interacting, ui.followingQueue {
                             ui.followingQueue = false
                         }
-                    }
-                    // Double-click and context menu both come from the List, keyed
-                    // on the rows under the pointer rather than on a gesture.
-                    .selectionMenu(for: String.self) { ids in
-                        menu(forRows: ids)
-                    } primaryAction: { ids in
-                        play(rowIds: ids)
                     }
                     // Enter plays the selection, the way Return opens things
                     // everywhere else on the platform.
@@ -739,7 +726,6 @@ private struct JumpToPlayingButton: View {
                     in: Circle()
                 )
                 .contentShape(Circle())
-                .touchTarget()
         }
         // A default button tints its label on a phone whatever the label
         // asks for, which left the button lit after following stopped.

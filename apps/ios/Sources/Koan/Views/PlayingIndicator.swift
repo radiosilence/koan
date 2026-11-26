@@ -32,22 +32,20 @@ struct PlayingIndicator: View {
     }
 
     var body: some View {
-        PlayingBars(live: live, tint: PlatformColor(tint), levels: levels)
+        PlayingBars(live: live, tint: UIColor(tint), levels: levels)
             .frame(width: PlayingBarsView.width, height: PlayingBarsView.maxHeight)
             .accessibilityLabel(isPlaying ? "Playing" : "Paused")
     }
 }
 
-private struct PlayingBars: PlatformViewRepresentable {
+private struct PlayingBars: UIViewRepresentable {
     let live: Bool
-    let tint: PlatformColor
+    let tint: UIColor
     let levels: PlayingLevels
 
-    typealias PlatformViewType = PlayingBarsView
+    func makeUIView(context: Context) -> PlayingBarsView { PlayingBarsView() }
 
-    func makeView(context: Context) -> PlayingBarsView { PlayingBarsView() }
-
-    func updateView(_ view: PlayingBarsView, context: Context) {
+    func updateUIView(_ view: PlayingBarsView, context: Context) {
         view.tint = tint
         view.source = levels
         if live {
@@ -58,7 +56,7 @@ private struct PlayingBars: PlatformViewRepresentable {
         }
     }
 
-    static func dismantleView(_ view: PlayingBarsView, coordinator: ()) {
+    static func dismantleUIView(_ view: PlayingBarsView, coordinator: ()) {
         view.source?.detach(view)
     }
 }
@@ -80,7 +78,7 @@ final class PlayingBarsView: LevelsView {
 
     private let bars = resting.map { _ in CALayer() }
 
-    var tint: PlatformColor = .label {
+    var tint: UIColor = .label {
         didSet {
             guard tint != oldValue else { return }
             paint()
@@ -91,7 +89,7 @@ final class PlayingBarsView: LevelsView {
         super.init(frame: frame)
         // Bars stand on the floor. AppKit's origin is already there; UIKit's is
         // at the top, and would hang them from the ceiling.
-        hostLayer.isGeometryFlipped = true
+        layer.isGeometryFlipped = true
         for (index, bar) in bars.enumerated() {
             bar.cornerRadius = KoanTheme.radius(Self.barWidth / 2)
             // Grown from the foot, so a height is one number rather than a
@@ -102,7 +100,7 @@ final class PlayingBarsView: LevelsView {
                 y: 0
             )
             bar.actions = ["bounds": NSNull(), "position": NSNull(), "backgroundColor": NSNull()]
-            hostLayer.addSublayer(bar)
+            layer.addSublayer(bar)
         }
         paint()
         rest()
@@ -145,9 +143,9 @@ final class PlayingBarsView: LevelsView {
         spark.bounds = CGRect(x: 0, y: 0, width: 3, height: 3)
         spark.position = CGPoint(x: bars[index].position.x, y: height + 2)
         spark.transform = CATransform3DMakeRotation(.pi / 4, 0, 0, 1)
-        spark.backgroundColor = resolved(PlatformColor(KoanAccent.rainbow(Rainbow.step + index * 4 + 2).color))
+        spark.backgroundColor = resolved(UIColor(KoanAccent.rainbow(Rainbow.step + index * 4 + 2).color))
         spark.opacity = 0
-        hostLayer.addSublayer(spark)
+        layer.addSublayer(spark)
         let rise = CABasicAnimation(keyPath: "position.y")
         rise.byValue = 9
         let fade = CABasicAnimation(keyPath: "opacity")
@@ -175,7 +173,7 @@ final class PlayingBarsView: LevelsView {
         let colour = resolved(tint)
         for (index, bar) in bars.enumerated() {
             bar.backgroundColor = Rainbow.drawn && tint != .white
-                ? resolved(PlatformColor(KoanAccent.rainbow(Rainbow.step + index * 4).color))
+                ? resolved(UIColor(KoanAccent.rainbow(Rainbow.step + index * 4).color))
                 : colour
         }
     }

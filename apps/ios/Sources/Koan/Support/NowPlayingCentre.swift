@@ -132,7 +132,7 @@ final class NowPlayingCentre {
     /// isolation whatever the captures are marked, and the runtime check then
     /// traps the first time a track with artwork starts. Building it here, out
     /// of the actor's reach, is what removes the isolation.
-    private nonisolated static func artwork(for image: PlatformImage) -> MPMediaItemArtwork {
+    private nonisolated static func artwork(for image: UIImage) -> MPMediaItemArtwork {
         MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }
 

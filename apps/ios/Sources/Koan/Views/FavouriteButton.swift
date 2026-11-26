@@ -34,12 +34,11 @@ struct FavouriteButton: View {
                 // hand when something becomes a favourite.
                 .symbolEffect(.bounce.up.byLayer, options: .speed(1.4), value: isOn)
                 .padding(inset)
-                .touchTarget()
                 // The glyph's outline is hollow; the whole cell takes the click,
                 // or the disc a host draws behind an inset heart.
                 .contentShape(inset > 0 ? AnyShape(Circle()) : AnyShape(Rectangle()))
         }
-        .controlButton()
+        .buttonStyle(TelevisionButton())
         .opacity(isOn || showing ? 1 : 0)
         .help(help)
         .accessibilityLabel(isOn ? "Remove favourite" : "Favourite")

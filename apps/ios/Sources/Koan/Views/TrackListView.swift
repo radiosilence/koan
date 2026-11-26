@@ -109,9 +109,8 @@ struct TrackListView: View {
                                 // Each button its own tap target: a row of automatic-style
                                 // buttons is one target that fires them all.
                                 .buttonStyle(.borderless)
-                                .rowSeparator(.hidden)
                                 .selectionDisabled()
-                                .washedRow()
+                                .listRowBackground(Color.clear)
                                 .listRowInsets(RowMetrics.compactInsets)
                                 .onAppear { headerShown = true }
                                 .onDisappear { headerShown = false }
@@ -132,17 +131,8 @@ struct TrackListView: View {
                             }
                         }
                     }
-                    .insetList()
+                    .listStyle(.plain)
                     .washedGround()
-
-                    // The List's own double-click hook. Wired into selection
-                    // rather than the gesture system, so it doesn't steal the
-                    // first click.
-                    .selectionMenu(for: Int64.self) { ids in
-                        menu(for: ids)
-                    } primaryAction: { ids in
-                        play(ids)
-                    }
                     .onKeyPress(.return) {
                         play(selection)
                         return .handled
@@ -395,7 +385,6 @@ struct TrackRow: View {
         // The row is only clickable where a view sits; the Spacer would
         // otherwise be a dead zone.
         .contentShape(Rectangle())
-        .pointerHover { hovering = $0 }
     }
 }
 

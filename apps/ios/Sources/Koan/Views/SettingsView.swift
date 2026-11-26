@@ -79,7 +79,7 @@ struct SettingsView: View {
                     Text(AppVersion.text)
                         .koanText(.fine, .muted)
                         .frame(maxWidth: .infinity)
-                        .washedRow()
+                        .listRowBackground(Color.clear)
                 }
                 .koanList()
                 .onMoveCommand { direction in
@@ -220,7 +220,7 @@ private struct LibrarySettings: View {
                         .koanButton(.bordered)
                         .help("Re-read every file's tags, ignoring the scan cache")
                 }
-                .rowButtons()
+                .buttonStyle(TelevisionButton())
                 // One pass over your files at a time. A sync or a download
                 // clear is welcome to run alongside; another scan, a drop or a
                 // file move would be reading and writing the same things.
@@ -280,14 +280,6 @@ private struct LibrarySettings: View {
             Button("Cancel", role: .cancel) { removing = nil }
         } message: {
             Text("Your files are not touched either way. Keeping them leaves records in the library that kōan will not scan again.")
-        }
-        .filePicker(
-            isPresented: $choosingFolder,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: true
-        ) { result in
-            guard case .success(let urls) = result else { return }
-            model.addFolders(urls.map(\.path))
         }
     }
 }
@@ -389,7 +381,7 @@ private struct RemoteSettings: View {
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                             .koanButton(.bordered)
                     }
-                    .rowButtons()
+                    .buttonStyle(TelevisionButton())
                 } header: {
                     KoanSectionHeader("Signed in")
                 }
@@ -447,7 +439,7 @@ private struct RemoteSettings: View {
                             .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                         Spacer()
                     }
-                    .rowButtons()
+                    .buttonStyle(TelevisionButton())
                 } header: {
                     KoanSectionHeader("Subsonic or Navidrome")
                 } footer: {

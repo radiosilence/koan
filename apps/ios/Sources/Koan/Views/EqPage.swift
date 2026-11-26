@@ -96,14 +96,16 @@ struct EqSettings: View {
         .task(id: app.dsp.stamp) { app.dsp.reload() }
         // On a television, the account's own profiles only: no file reaches
         // one, and it has no microphone to measure with.
-        .formTray(item: $choosing, onDismiss: {
-        }) { stage in
-            if let o = overview, let device {
-                StagePicker(dsp: app.dsp, stage: stage, overview: o, device: device) { add in
-                    adding = (stage, add)
-                    choosing = nil
+        .sheet(item: $choosing) { stage in
+            Group {
+                if let o = overview, let device {
+                    StagePicker(dsp: app.dsp, stage: stage, overview: o, device: device) { add in
+                        adding = (stage, add)
+                        choosing = nil
+                    }
                 }
             }
+            .koanSheet()
         }
         .navigationDestination(item: $showing) { shown in
             DspProfilePage(dsp: app.dsp, name: shown.name, device: device)

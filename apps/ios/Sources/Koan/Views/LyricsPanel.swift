@@ -70,7 +70,6 @@ struct LyricsPanel: View {
                     .font(.role(.control, system: .callout))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(18)
-                    .selectableText()
             }
         } else if loading {
             Color.clear

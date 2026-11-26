@@ -668,7 +668,7 @@ struct OutputButton: View {
             }
             .contentShape(Rectangle())
         }
-        .controlButton()
+        .buttonStyle(TelevisionButton())
         .help(help)
         .accessibilityLabel(help)
     }
@@ -723,10 +723,18 @@ extension PlayerModel {
 extension View {
     /// The sheets the buttons open, attached to a view that outlives them.
     func controlSheet(isPresented: Binding<Bool>) -> some View {
-        tray(isPresented: isPresented) { ControlPicker() }
+        sheet(isPresented: isPresented) {
+            ScrollView { ControlPicker() }
+                .koanSheet()
+                .presentationDetents([.medium, .large])
+        }
     }
 
     func outputSheet(isPresented: Binding<Bool>) -> some View {
-        tray(isPresented: isPresented) { OutputPicker() }
+        sheet(isPresented: isPresented) {
+            ScrollView { OutputPicker() }
+                .koanSheet()
+                .presentationDetents([.medium, .large])
+        }
     }
 }

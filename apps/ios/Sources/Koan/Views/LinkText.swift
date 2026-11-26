@@ -185,7 +185,6 @@ struct PlayableArtwork: View {
                 }
             }
             .animation(.easeOut(duration: 0.12), value: hovering)
-            .pointerHover { hovering = $0 }
             .onTapGesture { play() }
             .help("Play album")
     }

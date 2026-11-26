@@ -223,7 +223,6 @@ struct QueueRow: View {
         // the Spacer between the title and the duration is a dead zone, and
         // clicks landing there select nothing.
         .contentShape(Rectangle())
-        .pointerHover { hovering = $0 }
         // Offline, a track with no file here cannot play: it steps back and
         // says so, rather than failing when tapped.
         .opacity(unplayable ? 0.4 : 1)

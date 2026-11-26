@@ -30,7 +30,7 @@ struct ArtworkBleed: View {
     @AppStorage("graphics") private var graphics = Graphics.full
     /// The last cover that had to be fetched, and the record it was for. Only
     /// consulted when the cache cannot answer.
-    @State private var fetched: (source: AlbumArtwork.Source, image: PlatformImage?)?
+    @State private var fetched: (source: AlbumArtwork.Source, image: UIImage?)?
 
     /// What this record's sleeve is — read straight through the cache on every
     /// pass, the way `AlbumArtwork` reads its bitmap. Held in `@State` and
@@ -43,7 +43,7 @@ struct ArtworkBleed: View {
     /// the room as it is until the sleeve arrives, the second empties it. Told
     /// apart, a record whose art is still being fetched does not wipe the wash
     /// grey and then fade the new one in over two seconds.
-    private var answered: PlatformImage?? {
+    private var answered: UIImage?? {
         if rainbow { return .some(Rainbow.wash) }
         guard let source, !cache.isAbsent(source) else { return .some(nil) }
         if let held = cache.cached(source, size: .tile) { return .some(held) }

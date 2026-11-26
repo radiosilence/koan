@@ -84,10 +84,8 @@ struct OrganizeSheet: View {
                     // to the field: Esc abandons the edit, Return commits it.
                     // They are handed back to Close and Move on the way out.
                     Button("Cancel") { organize.cancelEditing() }
-                        .shortcut(.cancelAction)
                         .koanButton(.compact)
                     Button("Save") { organize.saveEditing() }
-                        .shortcut(.defaultAction)
                         .koanButton(.prominent)
                         .disabled(!organize.isModified)
                         .help("Store this pattern in config.toml under its name")
@@ -102,7 +100,6 @@ struct OrganizeSheet: View {
                 TextField("Format string", text: $organize.draft)
                     .verbatimEntry()
                     .koanField()
-                    .borderedField()
                     .koanText(.meta)
                     .monospaced()
             } else {
@@ -111,7 +108,6 @@ struct OrganizeSheet: View {
                     .monospaced()
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .selectableText()
             }
 
             HStack(spacing: 6) {
@@ -163,9 +159,8 @@ struct OrganizeSheet: View {
             // On the sheet's ground, which `koanSheet()` hides the list's for.
             List(plan.entries, id: \.fromPath) { entry in // theme: raw
                 OrganizeRow(entry: entry, baseDir: organize.baseDir)
-                    .rowSeparator(.hidden)
             }
-            .insetList()
+            .listStyle(.plain)
         } else if organize.previewing {
             Color.clear
         } else {
@@ -189,10 +184,8 @@ struct OrganizeSheet: View {
                 organize.dismiss()
                 dismiss()
             }
-            .shortcut(organize.editing ? nil : .cancelAction)
             .koanButton(.standard)
             Button(runTitle) { organize.run() }
-                .shortcut(organize.editing ? nil : .defaultAction)
                 .koanButton(.prominent)
                 .disabled(!canRun)
         }

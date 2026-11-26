@@ -116,7 +116,7 @@ struct PickerSheet: View {
                     }
                 }
             }
-            .insetList()
+            .listStyle(.plain)
             .koanBottomEdge()
         }
     }
@@ -148,13 +148,10 @@ struct PickerSheet: View {
             }
 
             Button("Replace Queue") { commit(.replace) }
-                .shortcut(.return, modifiers: [.command, .shift])
                 .koanButton(.standard)
             Button("Add") { commit(.append) }
-                .shortcut(.return, modifiers: [])
                 .koanButton(.standard)
             Button("Add & Play") { commit(.appendAndPlay) }
-                .shortcut(.return, modifiers: .command)
                 .koanButton(.prominent, system: .borderedProminent)
         }
         .disabled(resolving || (picked.isEmpty && highlighted == nil))

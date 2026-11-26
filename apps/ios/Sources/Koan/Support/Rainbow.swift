@@ -37,11 +37,11 @@ enum Rainbow {
 
     /// A sleeve for the wash, which blurs, tones and drifts it as it would a
     /// record's: an iridescent diagonal through the palette, or brat's lime.
-    static var wash: PlatformImage { brat ? bratWash : holoWash }
+    static var wash: UIImage { brat ? bratWash : holoWash }
     private static let holoWash = sheen(hyperpop)
     private static let bratWash = sheen(bratLimes)
 
-    private static func sheen(_ colours: [UInt32]) -> PlatformImage {
+    private static func sheen(_ colours: [UInt32]) -> UIImage {
         let side = 84
         let context = CGContext(
             data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
@@ -365,10 +365,9 @@ private struct Sticker: View {
     }
 }
 
-private struct Confetti: PlatformViewRepresentable {
-    typealias PlatformViewType = ConfettiView
-    func makeView(context: Context) -> ConfettiView { ConfettiView(frame: .zero) }
-    func updateView(_ view: ConfettiView, context: Context) {}
+private struct Confetti: UIViewRepresentable {
+    func makeUIView(context: Context) -> ConfettiView { ConfettiView(frame: .zero) }
+    func updateUIView(_ view: ConfettiView, context: Context) {}
 }
 
 /// The celebration: confetti, glitter and emoji raining from the top edge,
@@ -431,7 +430,7 @@ final class ConfettiView: LayerView {
             cell.spin = 2
             return cell
         }
-        for emitter in [rain, sparkles] { hostLayer.addSublayer(emitter) }
+        for emitter in [rain, sparkles] { layer.addSublayer(emitter) }
     }
 
     private static func falling(_ image: CGImage?, colour: UInt32?, rate: Float, velocity: CGFloat, spin: CGFloat) -> CAEmitterCell {
@@ -541,11 +540,10 @@ struct MirrorBall: View {
     }
 }
 
-private struct MirrorBallLayers: PlatformViewRepresentable {
+private struct MirrorBallLayers: UIViewRepresentable {
     let active: Bool
-    typealias PlatformViewType = MirrorBallView
-    func makeView(context: Context) -> MirrorBallView { MirrorBallView(frame: .zero) }
-    func updateView(_ view: MirrorBallView, context: Context) {
+    func makeUIView(context: Context) -> MirrorBallView { MirrorBallView(frame: .zero) }
+    func updateUIView(_ view: MirrorBallView, context: Context) {
         view.moving = active
     }
 }
@@ -610,7 +608,7 @@ final class MirrorBallView: LayerView {
         ball.addSublayer(holo)
         // Hung from the top of the window.
         ball.anchorPoint = CGPoint(x: 0.5, y: -0.6)
-        for layer in [flecks, ball] { hostLayer.addSublayer(layer) }
+        for layer in [flecks, ball] { self.layer.addSublayer(layer) }
     }
 
     override func layoutLayers() {
@@ -650,19 +648,17 @@ final class MirrorBallView: LayerView {
 /// following the music. Fed by `PlayingLevels` like the playing bars, so it
 /// reads the analyser only while it is on screen — which is only while the
 /// rainbow is on and motion allowed.
-struct RainbowPulse: PlatformViewRepresentable {
+struct RainbowPulse: UIViewRepresentable {
     let levels: PlayingLevels
 
-    typealias PlatformViewType = RainbowPulseView
+    func makeUIView(context: Context) -> RainbowPulseView { RainbowPulseView(frame: .zero) }
 
-    func makeView(context: Context) -> RainbowPulseView { RainbowPulseView(frame: .zero) }
-
-    func updateView(_ view: RainbowPulseView, context: Context) {
+    func updateUIView(_ view: RainbowPulseView, context: Context) {
         view.source = levels
         levels.attach(view)
     }
 
-    static func dismantleView(_ view: RainbowPulseView, coordinator: ()) {
+    static func dismantleUIView(_ view: RainbowPulseView, coordinator: ()) {
         view.source?.detach(view)
     }
 }
@@ -679,7 +675,7 @@ final class RainbowPulseView: LevelsView {
         disco.colors = colours + [colours[0]]
         disco.opacity = 0.12
         disco.actions = ["opacity": NSNull(), "bounds": NSNull(), "position": NSNull()]
-        hostLayer.addSublayer(disco)
+        layer.addSublayer(disco)
     }
 
     override func layoutLayers() {

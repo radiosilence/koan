@@ -13,6 +13,19 @@ struct ArtistPill: View {
     @Environment(Navigator.self) private var nav
 
     var body: some View {
+        Button {
+            if selection?.take(playable) == true { return }
+            nav.open(artist: artistId)
+        } label: {
+            pill
+        }
+        .buttonStyle(TelevisionChip())
+        .help("Go to \(name)")
+        .contextMenu { PlayableMenu(playable: playable) }
+        .modifier(SelectableDrag(playable: playable, inContainer: selection != nil))
+    }
+
+    private var pill: some View {
         HStack(spacing: 5) {
             Group {
                 if let selection, selection.isActive {
@@ -46,13 +59,6 @@ struct ArtistPill: View {
         .contentShape(Self.shape)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .tapAction {
-            if selection?.take(playable) == true { return }
-            nav.open(artist: artistId)
-        }
-        .help("Go to \(name)")
-        .contextMenu { PlayableMenu(playable: playable) }
-        .modifier(SelectableDrag(playable: playable, inContainer: selection != nil))
     }
 
     private var playable: Playable { .artist(id: artistId, name: name) }

@@ -405,18 +405,18 @@ GPUI comes from koan's fork of Zed, radiosilence/zed, whose default branch `koan
 
 ### apps/ios (`apps/ios/Sources/`)
 
-`Koan/` holds the models, pages and rows both platforms share. `KoanIOS/` is
-the scene root and audio session: the phone's shell over that state, which
-tvOS uses too. `KoanTV/` holds what only a television has: Now Playing as a
-page, share links as codes to scan. What tvOS lacks — hover, drag, the
-pasteboard, sliders, selection menus — goes through small shims in
-`Support/Platform.swift` that leave a view as it is there. Builds, device
-installs and the UI walks go through an Xcode project that XcodeGen generates
-from `apps/ios/project.yml` (`just ios-project`); it is not checked in.
+The SwiftUI here is the tvOS app. `Koan/` holds its models, pages and rows,
+and `KoanTV/` its scene root, tab shell, audio session and what only a
+television has: Now Playing as a page, share links as codes to scan, the Top
+Shelf. `KoanIOS/` is the Swift the GPUI iOS app links beside koan-gui (push,
+App Attest, the Live Activity); push and App Attest are compiled into tvOS too.
+`KoanGUI/` is that app's entry point. Builds, device installs and the UI walks
+go through an Xcode project that XcodeGen generates from `apps/ios/project.yml`
+(`just ios-project`); it is not checked in.
 
-On iOS each tab is a `NavigationStack` with its own path of `Route`s. Pages draw
-from the route that pushed them, never from `nav.current`, and the navigator
-follows the top of the stack in front — see `TabShell`.
+Each tab is a `NavigationStack` with its own path of `Route`s. Pages draw from
+the route that pushed them, never from `nav.current`, and the navigator follows
+the top of the stack in front — see `TabShell`.
 
 | Module | What |
 |--------|------|
@@ -434,7 +434,8 @@ follows the top of the stack in front — see `TabShell`.
 | `Support/PlayableSelection.swift` | Things picked out of a page to play or queue together — the album grid, an artist's records, search results of every kind. A mode, because a click already plays or navigates. Held in tick order, so a pick can span several filters or queries |
 | `Support/CoverArtCache.swift` | Album-keyed art cache: bytes once per record on disk, bitmaps per record and draw size in a bounded `NSCache`. Deliberately off the main actor — see the note there. Each miss is an HTTP round trip on remote libraries |
 | `Support/ImageWork.swift` | The two lanes image work runs in, neither of them the cooperative pool: a wide one for blocking file reads, a bounded one for decoding that runs what is on screen first and drops what nobody is waiting for |
-| `Support/Platform.swift` | The shims that let a view written for iOS build for tvOS unchanged, and the UIKit types the views share |
+| `Support/TelevisionControls.swift` | The controls as the television draws them, in the platform's look and the theme: `TelevisionButton`, `TelevisionRow`, `TelevisionChip`, `TelevisionToggle`, the theme's panel (`televisionPanel`), a row's action and long-press menu (`primaryTap`), fields for machine values (`verbatimEntry`) |
+| `Support/LayerView.swift` | The base of the views that draw with their own sublayers, so motion stays in the render server |
 | `Views/DriftingWash.swift` | The window's wash, as Core Animation. Drift, blur and dissolve belong to the compositor; nothing here costs a main-thread frame |
 | `Support/FrameTimer.swift` | Times a tap against the display link, so the region after a body evaluation — layout, the commit, the render server — is measurable at all. See CONTRIBUTING |
 | `Support/TransferMeter.swift` | Download progress at the display's rate: a display link, alive only while a transfer runs and something on screen draws it, reading byte counts per frame and handing them to rings and bars as layer geometry |

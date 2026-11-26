@@ -90,6 +90,5 @@ private struct ActivityRow: View {
             }
         }
         .help(task.detail ?? task.label)
-        .pointerHover { hovering = $0 }
     }
 }

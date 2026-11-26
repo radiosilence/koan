@@ -118,7 +118,7 @@ struct PeopleSettings: View {
                         .koanButton(.bordered)
                         .disabled(newUsername.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
-                    .rowButtons()
+                    .buttonStyle(TelevisionButton())
                 } header: {
                     KoanSectionHeader("People")
                 } footer: {
@@ -267,7 +267,6 @@ struct InviteSheet: View {
                         Text("Shown this once: the server keeps only its hash.")
                             .koanText(.fine, .muted)
                     }
-                    .selectableText()
                 }
             }
             .koanSheet()

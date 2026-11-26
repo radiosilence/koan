@@ -23,7 +23,6 @@ struct TrackInfoView: View {
         .padding(.horizontal, 14)
         .padding(.top, 12)
         .padding(.bottom, KoanTheme.Space.l)
-        .selectableText()
     }
 
     private var ids: [InfoField] {
