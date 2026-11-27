@@ -125,9 +125,10 @@ check:
 protocol-schema:
     KOAN_WRITE_PROTOCOL_SCHEMA=1 cargo test -p koan-core --lib remote::schema
 
-# Format
+# Format the Rust and the templates
 fmt:
     cargo fmt
+    askama-analyzer fmt
 
 # Install the git hooks (lefthook.yml): `cargo fmt` before every commit.
 hooks:
