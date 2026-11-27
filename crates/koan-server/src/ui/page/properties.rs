@@ -165,51 +165,51 @@ struct Linked {
 mod tests {
     use crate::ui::fixture::*;
 
-#[tokio::test]
-async fn track_properties_show_the_file_path_to_admins_only() {
-    let f = setup(true);
-    let db = Database::open(f.state.pool.path()).unwrap();
-    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
-    let admin =
-        auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
-    let uri = format!("/track/{}/properties", f.track_id);
-    let path = f.dir.path().join("a.flac").to_string_lossy().into_owned();
+    #[tokio::test]
+    async fn track_properties_show_the_file_path_to_admins_only() {
+        let f = setup(true);
+        let db = Database::open(f.state.pool.path()).unwrap();
+        let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+        let admin =
+            auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+        let uri = format!("/track/{}/properties", f.track_id);
+        let path = f.dir.path().join("a.flac").to_string_lossy().into_owned();
 
-    let r = send(
-        &f.app,
-        get(&uri)
-            .header("x-koan-partial", "1")
-            .header(header::COOKIE, format!("koan_access={admin}"))
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::OK);
-    assert!(r.body.contains(&path), "{}", r.body);
-    assert!(r.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
+        let r = send(
+            &f.app,
+            get(&uri)
+                .header("x-koan-partial", "1")
+                .header(header::COOKIE, format!("koan_access={admin}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(r.body.contains(&path), "{}", r.body);
+        assert!(r.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
 
-    let r = send(
-        &f.app,
-        authed(&f.state, &uri)
-            .header("x-koan-partial", "1")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::OK);
-    assert!(!r.body.contains(&path), "{}", r.body);
-    assert!(!r.body.contains("a.flac"));
-    assert!(r.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
-    assert!(r.body.contains("FLAC"));
+        let r = send(
+            &f.app,
+            authed(&f.state, &uri)
+                .header("x-koan-partial", "1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(!r.body.contains(&path), "{}", r.body);
+        assert!(!r.body.contains("a.flac"));
+        assert!(r.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
+        assert!(r.body.contains("FLAC"));
 
-    let r = send(
-        &f.app,
-        authed(&f.state, "/track/999999/properties")
-            .header("x-koan-partial", "1")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::NOT_FOUND);
-}
+        let r = send(
+            &f.app,
+            authed(&f.state, "/track/999999/properties")
+                .header("x-koan-partial", "1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND);
+    }
 }

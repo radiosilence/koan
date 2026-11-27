@@ -556,228 +556,230 @@ pub(in crate::ui) async fn remove_second_factor(
 mod tests {
     use crate::ui::fixture::*;
 
-#[tokio::test]
-async fn admins_create_invite_and_remove_accounts() {
-    static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    koan_core::config::set_config_dir(CONFIG.get_or_init(|| tempfile::tempdir().unwrap()).path());
-    let f = setup_at(true, Some(ORIGIN));
-    let db = Database::open(f.state.pool.path()).unwrap();
-    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
-    let token = |id: i64, name: &str, role: Role| {
-        auth::mint_access_token(&f.state.private_pem, id, name, role, 900).unwrap()
-    };
-    let admin = token(boss, "boss", Role::Admin);
-    let post = |uri: &str, body: &str, access: &str| {
-        Request::post(uri)
-            .header(header::HOST, HOST)
-            .header(header::COOKIE, format!("koan_access={access}"))
-            .header(header::CONTENT_TYPE, "application/json")
-            .header("datastar-request", "true")
-            .body(Body::from(body.to_owned()))
+    #[tokio::test]
+    async fn admins_create_invite_and_remove_accounts() {
+        static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+        koan_core::config::set_config_dir(
+            CONFIG.get_or_init(|| tempfile::tempdir().unwrap()).path(),
+        );
+        let f = setup_at(true, Some(ORIGIN));
+        let db = Database::open(f.state.pool.path()).unwrap();
+        let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+        let token = |id: i64, name: &str, role: Role| {
+            auth::mint_access_token(&f.state.private_pem, id, name, role, 900).unwrap()
+        };
+        let admin = token(boss, "boss", Role::Admin);
+        let post = |uri: &str, body: &str, access: &str| {
+            Request::post(uri)
+                .header(header::HOST, HOST)
+                .header(header::COOKIE, format!("koan_access={access}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("datastar-request", "true")
+                .body(Body::from(body.to_owned()))
+                .unwrap()
+        };
+        let page = |access: &str| {
+            get("/users")
+                .header(header::COOKIE, format!("koan_access={access}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        let r = send(&f.app, page(&access_token(&f.state))).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+        let r = send(
+            &f.app,
+            post("/users", r#"{"newuser":"x"}"#, &access_token(&f.state)),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+        // A token minted while alice was an admin: the account's role now governs.
+        let r = send(&f.app, page(&token(1, "alice", Role::Admin))).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+        let r = send(&f.app, page(&admin)).await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(
+            r.body.contains("alice") && r.body.contains("boss"),
+            "{}",
+            r.body
+        );
+
+        let r = send(
+            &f.app,
+            post(
+                "/users",
+                r#"{"newuser":"sarita","newrole":"readonly"}"#,
+                &admin,
+            ),
+        )
+        .await;
+        let link = r
+            .body
+            .split("id=\"invite-link\" readonly value=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_else(|| panic!("no link in {}", r.body))
+            .replace("&#38;", "&");
+        let invite = koan_core::invite::Invite::parse(&link).unwrap();
+        assert_eq!(invite.server, ORIGIN);
+        assert_eq!(invite.username, "sarita");
+        assert_eq!(invite.password, None);
+        let password = r
+            .body
+            .split("<dt>Password</dt><dd><code>")
+            .nth(1)
+            .and_then(|rest| rest.split('<').next())
+            .unwrap_or_else(|| panic!("no password in {}", r.body))
+            .to_owned();
+        let row = queries::auth::get_user_by_username(&db.conn, "sarita")
             .unwrap()
-    };
-    let page = |access: &str| {
-        get("/users")
-            .header(header::COOKIE, format!("koan_access={access}"))
-            .body(Body::empty())
-            .unwrap()
-    };
+            .unwrap();
+        assert_eq!(row.role, Role::Readonly);
+        auth::verify_password(&password, &row.password_hash).unwrap();
 
-    let r = send(&f.app, page(&access_token(&f.state))).await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN);
-    let r = send(
-        &f.app,
-        post("/users", r#"{"newuser":"x"}"#, &access_token(&f.state)),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN);
-    // A token minted while alice was an admin: the account's role now governs.
-    let r = send(&f.app, page(&token(1, "alice", Role::Admin))).await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN);
-
-    let r = send(&f.app, page(&admin)).await;
-    assert_eq!(r.status, StatusCode::OK);
-    assert!(
-        r.body.contains("alice") && r.body.contains("boss"),
-        "{}",
-        r.body
-    );
-
-    let r = send(
-        &f.app,
-        post(
-            "/users",
-            r#"{"newuser":"sarita","newrole":"readonly"}"#,
-            &admin,
-        ),
-    )
-    .await;
-    let link = r
-        .body
-        .split("id=\"invite-link\" readonly value=\"")
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
-        .unwrap_or_else(|| panic!("no link in {}", r.body))
-        .replace("&#38;", "&");
-    let invite = koan_core::invite::Invite::parse(&link).unwrap();
-    assert_eq!(invite.server, ORIGIN);
-    assert_eq!(invite.username, "sarita");
-    assert_eq!(invite.password, None);
-    let password = r
-        .body
-        .split("<dt>Password</dt><dd><code>")
-        .nth(1)
-        .and_then(|rest| rest.split('<').next())
-        .unwrap_or_else(|| panic!("no password in {}", r.body))
-        .to_owned();
-    let row = queries::auth::get_user_by_username(&db.conn, "sarita")
-        .unwrap()
+        // The link's token is signed with this server's key and redeems for a key.
+        let joined = koan_core::invite::redeem(
+            &db.conn,
+            &crate::auth::signing_keys().unwrap().1,
+            invite.token.as_deref().unwrap(),
+            "phone",
+        )
         .unwrap();
-    assert_eq!(row.role, Role::Readonly);
-    auth::verify_password(&password, &row.password_hash).unwrap();
+        assert_eq!(joined.username, "sarita");
 
-    // The link's token is signed with this server's key and redeems for a key.
-    let joined = koan_core::invite::redeem(
-        &db.conn,
-        &crate::auth::signing_keys().unwrap().1,
-        invite.token.as_deref().unwrap(),
-        "phone",
-    )
-    .unwrap();
-    assert_eq!(joined.username, "sarita");
+        // Inviting again shows no password: the server cannot read one back.
+        let r = send(
+            &f.app,
+            post(&format!("/users/{}/invite", row.id), "{}", &admin),
+        )
+        .await;
+        assert!(r.body.contains("id=\"invite-link\""), "{}", r.body);
+        assert!(
+            r.body
+                .contains("aria-label=\"Invite link as a QR code\"><svg"),
+            "{}",
+            r.body
+        );
+        assert!(!r.body.contains("<dt>Password</dt>"), "{}", r.body);
 
-    // Inviting again shows no password: the server cannot read one back.
-    let r = send(
-        &f.app,
-        post(&format!("/users/{}/invite", row.id), "{}", &admin),
-    )
-    .await;
-    assert!(r.body.contains("id=\"invite-link\""), "{}", r.body);
-    assert!(
-        r.body
-            .contains("aria-label=\"Invite link as a QR code\"><svg"),
-        "{}",
-        r.body
-    );
-    assert!(!r.body.contains("<dt>Password</dt>"), "{}", r.body);
+        // A reset does show one, and signs the account's devices out.
+        let alice_link = open_link("alice");
+        let r = send(&f.app, post("/users/1/invite?reset=true", "{}", &admin)).await;
+        assert!(r.body.contains("<dt>Password</dt>"), "{}", r.body);
+        assert_closed(alice_link);
 
-    // A reset does show one, and signs the account's devices out.
-    let alice_link = open_link("alice");
-    let r = send(&f.app, post("/users/1/invite?reset=true", "{}", &admin)).await;
-    assert!(r.body.contains("<dt>Password</dt>"), "{}", r.body);
-    assert_closed(alice_link);
-
-    // So does a password the admin chooses. The row's button asks for the
-    // form, and a value typed into another account's form and never
-    // submitted, which Datastar posts along with it, changes nothing.
-    let before = queries::auth::get_user_by_id(&db.conn, 1)
-        .unwrap()
-        .unwrap()
-        .password_hash;
-    let r = send(
-        &f.app,
-        post(
-            "/users/1/password/form",
-            r#"{"setpassword":"typed for someone else"}"#,
-            &admin,
-        ),
-    )
-    .await;
-    assert!(r.body.contains("data-bind:setpassword"), "{}", r.body);
-    assert!(r.body.contains(r#"{"setpassword":""}"#), "{}", r.body);
-    let after = queries::auth::get_user_by_id(&db.conn, 1)
-        .unwrap()
-        .unwrap()
-        .password_hash;
-    assert_eq!(before, after);
-    let r = send(
-        &f.app,
-        post("/users/1/password", r#"{"setpassword":"short"}"#, &admin),
-    )
-    .await;
-    assert!(r.body.contains("at least 8"), "{}", r.body);
-    let r = send(
-        &f.app,
-        post(
-            "/users/1/password",
-            r#"{"setpassword":"correct horse"}"#,
-            &admin,
-        ),
-    )
-    .await;
-    assert!(r.body.contains("password is changed"), "{}", r.body);
-    let alice = queries::auth::get_user_by_id(&db.conn, 1).unwrap().unwrap();
-    auth::verify_password("correct horse", &alice.password_hash).unwrap();
-    assert!(
-        queries::api_keys::authenticate_api_key(&db.conn, &joined.api_key)
-            .unwrap()
-            .is_some()
-    );
-
-    let r = send(
-        &f.app,
-        post(&format!("/users/{}/role?role=user", row.id), "{}", &admin),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::OK);
-    let r = send(
-        &f.app,
-        post(&format!("/users/{boss}/role?role=user",), "{}", &admin),
-    )
-    .await;
-    assert!(r.body.contains("last admin"), "{}", r.body);
-    assert_eq!(
-        queries::auth::get_user_by_username(&db.conn, "sarita")
+        // So does a password the admin chooses. The row's button asks for the
+        // form, and a value typed into another account's form and never
+        // submitted, which Datastar posts along with it, changes nothing.
+        let before = queries::auth::get_user_by_id(&db.conn, 1)
             .unwrap()
             .unwrap()
-            .role,
-        Role::User
-    );
-
-    let r = send(&f.app, post(&format!("/users/{boss}/delete"), "{}", &admin)).await;
-    assert!(r.body.contains("own account"), "{}", r.body);
-    let sarita_link = open_link("sarita");
-    send(
-        &f.app,
-        post(&format!("/users/{}/delete", row.id), "{}", &admin),
-    )
-    .await;
-    assert!(
-        queries::auth::get_user_by_username(&db.conn, "sarita")
+            .password_hash;
+        let r = send(
+            &f.app,
+            post(
+                "/users/1/password/form",
+                r#"{"setpassword":"typed for someone else"}"#,
+                &admin,
+            ),
+        )
+        .await;
+        assert!(r.body.contains("data-bind:setpassword"), "{}", r.body);
+        assert!(r.body.contains(r#"{"setpassword":""}"#), "{}", r.body);
+        let after = queries::auth::get_user_by_id(&db.conn, 1)
             .unwrap()
-            .is_none()
-    );
-    assert_closed(sarita_link);
-}
+            .unwrap()
+            .password_hash;
+        assert_eq!(before, after);
+        let r = send(
+            &f.app,
+            post("/users/1/password", r#"{"setpassword":"short"}"#, &admin),
+        )
+        .await;
+        assert!(r.body.contains("at least 8"), "{}", r.body);
+        let r = send(
+            &f.app,
+            post(
+                "/users/1/password",
+                r#"{"setpassword":"correct horse"}"#,
+                &admin,
+            ),
+        )
+        .await;
+        assert!(r.body.contains("password is changed"), "{}", r.body);
+        let alice = queries::auth::get_user_by_id(&db.conn, 1).unwrap().unwrap();
+        auth::verify_password("correct horse", &alice.password_hash).unwrap();
+        assert!(
+            queries::api_keys::authenticate_api_key(&db.conn, &joined.api_key)
+                .unwrap()
+                .is_some()
+        );
 
-#[tokio::test]
-async fn a_username_reaches_the_delete_confirmation_as_data() {
-    let f = setup(true);
-    let db = Database::open(f.state.pool.path()).unwrap();
-    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
-    queries::auth::create_user(&db.conn, "x');alert(1)//", "sesame", Role::User).unwrap();
-    let admin =
-        auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
-    let r = send(
-        &f.app,
-        get("/users")
-            .header(header::COOKIE, format!("koan_access={admin}"))
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::OK);
-    let button = r
-        .body
-        .split("<button")
-        .find(|b| b.contains("data-username=\"x&#39;);alert(1)//\""))
-        .unwrap_or_else(|| panic!("{}", r.body));
-    let expression = button
-        .split("data-on:click=\"")
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
-        .unwrap();
-    assert!(expression.contains("/delete')"), "{expression}");
-    assert!(!expression.contains("alert"), "{expression}");
-}
+        let r = send(
+            &f.app,
+            post(&format!("/users/{}/role?role=user", row.id), "{}", &admin),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK);
+        let r = send(
+            &f.app,
+            post(&format!("/users/{boss}/role?role=user",), "{}", &admin),
+        )
+        .await;
+        assert!(r.body.contains("last admin"), "{}", r.body);
+        assert_eq!(
+            queries::auth::get_user_by_username(&db.conn, "sarita")
+                .unwrap()
+                .unwrap()
+                .role,
+            Role::User
+        );
+
+        let r = send(&f.app, post(&format!("/users/{boss}/delete"), "{}", &admin)).await;
+        assert!(r.body.contains("own account"), "{}", r.body);
+        let sarita_link = open_link("sarita");
+        send(
+            &f.app,
+            post(&format!("/users/{}/delete", row.id), "{}", &admin),
+        )
+        .await;
+        assert!(
+            queries::auth::get_user_by_username(&db.conn, "sarita")
+                .unwrap()
+                .is_none()
+        );
+        assert_closed(sarita_link);
+    }
+
+    #[tokio::test]
+    async fn a_username_reaches_the_delete_confirmation_as_data() {
+        let f = setup(true);
+        let db = Database::open(f.state.pool.path()).unwrap();
+        let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+        queries::auth::create_user(&db.conn, "x');alert(1)//", "sesame", Role::User).unwrap();
+        let admin =
+            auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+        let r = send(
+            &f.app,
+            get("/users")
+                .header(header::COOKIE, format!("koan_access={admin}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK);
+        let button = r
+            .body
+            .split("<button")
+            .find(|b| b.contains("data-username=\"x&#39;);alert(1)//\""))
+            .unwrap_or_else(|| panic!("{}", r.body));
+        let expression = button
+            .split("data-on:click=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap();
+        assert!(expression.contains("/delete')"), "{expression}");
+        assert!(!expression.contains("alert"), "{expression}");
+    }
 }

@@ -112,81 +112,81 @@ pub(in crate::ui) async fn revoke(
 mod tests {
     use crate::ui::fixture::*;
 
-#[tokio::test]
-async fn app_passwords_are_shown_once_sealed_and_revoked() {
-    let f = setup(true);
-    let post = |uri: &str, body: &str| {
-        Request::post(uri)
-            .header(header::HOST, HOST)
-            .header(
-                header::COOKIE,
-                format!("koan_access={}", access_token(&f.state)),
-            )
-            .header(header::CONTENT_TYPE, "application/json")
-            .header("datastar-request", "true")
-            .body(Body::from(body.to_owned()))
-            .unwrap()
-    };
-    let r = send(
-        &f.app,
-        authed(&f.state, "/account").body(Body::empty()).unwrap(),
-    )
-    .await;
-    assert!(r.body.contains("No app passwords yet."), "{}", r.body);
-
-    let r = send(
-        &f.app,
-        post("/account/app-passwords", r#"{"appname":"Arpeggi"}"#),
-    )
-    .await;
-    let password = r
-        .body
-        .split("id=\"app-password-result-value\" readonly value=\"")
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
-        .unwrap_or_else(|| panic!("no app password in {}", r.body))
-        .to_owned();
-
-    // Sealed in the database, never kept or listed as itself.
-    let db = Database::open(f.state.pool.path()).unwrap();
-    let stored: Vec<u8> = db
-        .conn
-        .query_row("SELECT sealed FROM app_passwords", [], |row| row.get(0))
-        .unwrap();
-    assert!(
-        !stored
-            .windows(password.len())
-            .any(|w| w == password.as_bytes())
-    );
-    let r = send(
-        &f.app,
-        authed(&f.state, "/account").body(Body::empty()).unwrap(),
-    )
-    .await;
-    assert!(r.body.contains("Arpeggi") && !r.body.contains(&password));
-
-    let key = koan_core::auth::app_password_key(&f.state.private_pem);
-    let signed_in = |db: &Database| {
-        matches!(
-            queries::app_passwords::authenticate_app_password(&db.conn, &key, "alice", |p| {
-                p == password
-            })
-            .unwrap(),
-            queries::app_passwords::AppPasswordAuth::Matched(_)
+    #[tokio::test]
+    async fn app_passwords_are_shown_once_sealed_and_revoked() {
+        let f = setup(true);
+        let post = |uri: &str, body: &str| {
+            Request::post(uri)
+                .header(header::HOST, HOST)
+                .header(
+                    header::COOKIE,
+                    format!("koan_access={}", access_token(&f.state)),
+                )
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("datastar-request", "true")
+                .body(Body::from(body.to_owned()))
+                .unwrap()
+        };
+        let r = send(
+            &f.app,
+            authed(&f.state, "/account").body(Body::empty()).unwrap(),
         )
-    };
-    assert!(signed_in(&db));
+        .await;
+        assert!(r.body.contains("No app passwords yet."), "{}", r.body);
 
-    let user = queries::auth::get_user_by_username(&db.conn, "alice")
-        .unwrap()
-        .unwrap();
-    let id = queries::app_passwords::list_app_passwords(&db.conn, user.id).unwrap()[0].id;
-    let r = send(
-        &f.app,
-        post(&format!("/account/app-passwords/{id}/revoke"), "{}"),
-    )
-    .await;
-    assert!(r.body.contains("No app passwords yet."), "{}", r.body);
-    assert!(!signed_in(&db));
-}
+        let r = send(
+            &f.app,
+            post("/account/app-passwords", r#"{"appname":"Arpeggi"}"#),
+        )
+        .await;
+        let password = r
+            .body
+            .split("id=\"app-password-result-value\" readonly value=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_else(|| panic!("no app password in {}", r.body))
+            .to_owned();
+
+        // Sealed in the database, never kept or listed as itself.
+        let db = Database::open(f.state.pool.path()).unwrap();
+        let stored: Vec<u8> = db
+            .conn
+            .query_row("SELECT sealed FROM app_passwords", [], |row| row.get(0))
+            .unwrap();
+        assert!(
+            !stored
+                .windows(password.len())
+                .any(|w| w == password.as_bytes())
+        );
+        let r = send(
+            &f.app,
+            authed(&f.state, "/account").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert!(r.body.contains("Arpeggi") && !r.body.contains(&password));
+
+        let key = koan_core::auth::app_password_key(&f.state.private_pem);
+        let signed_in = |db: &Database| {
+            matches!(
+                queries::app_passwords::authenticate_app_password(&db.conn, &key, "alice", |p| {
+                    p == password
+                })
+                .unwrap(),
+                queries::app_passwords::AppPasswordAuth::Matched(_)
+            )
+        };
+        assert!(signed_in(&db));
+
+        let user = queries::auth::get_user_by_username(&db.conn, "alice")
+            .unwrap()
+            .unwrap();
+        let id = queries::app_passwords::list_app_passwords(&db.conn, user.id).unwrap()[0].id;
+        let r = send(
+            &f.app,
+            post(&format!("/account/app-passwords/{id}/revoke"), "{}"),
+        )
+        .await;
+        assert!(r.body.contains("No app passwords yet."), "{}", r.body);
+        assert!(!signed_in(&db));
+    }
 }

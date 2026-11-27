@@ -231,22 +231,22 @@ pub(in crate::ui) async fn passkey(
 mod tests {
     use crate::ui::fixture::*;
 
-#[tokio::test]
-async fn the_sign_in_page_offers_passkeys_only_where_browsers_allow_them() {
-    let f = setup_at(true, Some("https://music.example.org"));
-    let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
-    assert!(r.body.contains("data-passkey-login"), "{}", r.body);
-    assert!(r.body.contains("username webauthn"));
-    let r = send(&f.app, form("/login/passkey/challenge", "")).await;
-    let v: serde_json::Value = serde_json::from_str(&r.body).unwrap();
-    assert_eq!(v["options"]["userVerification"], "required", "{}", r.body);
-    assert_eq!(v["options"]["rpId"], "music.example.org");
-    assert!(v["ticket"].as_str().is_some_and(|t| !t.is_empty()));
+    #[tokio::test]
+    async fn the_sign_in_page_offers_passkeys_only_where_browsers_allow_them() {
+        let f = setup_at(true, Some("https://music.example.org"));
+        let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
+        assert!(r.body.contains("data-passkey-login"), "{}", r.body);
+        assert!(r.body.contains("username webauthn"));
+        let r = send(&f.app, form("/login/passkey/challenge", "")).await;
+        let v: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+        assert_eq!(v["options"]["userVerification"], "required", "{}", r.body);
+        assert_eq!(v["options"]["rpId"], "music.example.org");
+        assert!(v["ticket"].as_str().is_some_and(|t| !t.is_empty()));
 
-    let f = setup(true);
-    let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
-    assert!(!r.body.contains("data-passkey-login"));
-    let r = send(&f.app, form("/login/passkey/challenge", "")).await;
-    assert_eq!(r.status, StatusCode::NOT_FOUND);
-}
+        let f = setup(true);
+        let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
+        assert!(!r.body.contains("data-passkey-login"));
+        let r = send(&f.app, form("/login/passkey/challenge", "")).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND);
+    }
 }

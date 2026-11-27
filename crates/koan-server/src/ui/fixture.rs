@@ -198,14 +198,18 @@ pub(in crate::ui) fn row_ids(body: &str) -> Vec<String> {
 }
 
 /// An open koanLink for `username`, as the link route registers one.
-pub(in crate::ui) fn open_link(username: &str) -> tokio::sync::mpsc::Receiver<koan_core::remote::acks::Envelope> {
+pub(in crate::ui) fn open_link(
+    username: &str,
+) -> tokio::sync::mpsc::Receiver<koan_core::remote::acks::Envelope> {
     let (tx, rx) = crate::clients::LinkTx::channel();
     crate::clients::registry().register(username, "phone", "ios", "ui-tests", tx, false, false);
     rx
 }
 
 /// The link's session would see its channel close, which is what ends it.
-pub(in crate::ui) fn assert_closed(mut rx: tokio::sync::mpsc::Receiver<koan_core::remote::acks::Envelope>) {
+pub(in crate::ui) fn assert_closed(
+    mut rx: tokio::sync::mpsc::Receiver<koan_core::remote::acks::Envelope>,
+) {
     while rx.try_recv().is_ok() {}
     assert!(matches!(
         rx.try_recv(),
@@ -220,14 +224,19 @@ pub(in crate::ui) fn setup_behind_proxy() -> Fixture {
     setup_full(true, None, proxy)
 }
 
-pub(in crate::ui) fn from_peer(builder: axum::http::request::Builder, peer: &str) -> axum::http::request::Builder {
+pub(in crate::ui) fn from_peer(
+    builder: axum::http::request::Builder,
+    peer: &str,
+) -> axum::http::request::Builder {
     let addr: std::net::SocketAddr = format!("{peer}:50000").parse().unwrap();
     builder.extension(axum::extract::ConnectInfo(addr))
 }
 
 /// The UI over a server with no accounts, its setup page on or off, and the
 /// setup code the server logged when on.
-pub(in crate::ui) fn unset(setup_wizard: bool) -> (tempfile::TempDir, axum::Router, Option<String>) {
+pub(in crate::ui) fn unset(
+    setup_wizard: bool,
+) -> (tempfile::TempDir, axum::Router, Option<String>) {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("koan.db");
     Database::open(&db_path).unwrap();

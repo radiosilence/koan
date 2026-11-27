@@ -49,8 +49,7 @@ async fn every_answer_escapes_what_people_and_servers_control_exactly_once() {
         m.genre = Some(HOSTILE.into());
         m.codec = Some(HOSTILE.into());
         let track = queries::upsert_track(&db.conn, &m).unwrap();
-        let playlist =
-            queries::create_playlist(&db.conn, 1, HOSTILE, Some(HOSTILE)).unwrap();
+        let playlist = queries::create_playlist(&db.conn, 1, HOSTILE, Some(HOSTILE)).unwrap();
         queries::set_playlist_tracks(&db.conn, playlist, &[track, f.track_id]).unwrap();
         queries::add_favourite(&db.conn, 1, track).unwrap();
         queries::record_play(&db.conn, 1, track, Some(1000)).unwrap();
@@ -72,7 +71,10 @@ async fn every_answer_escapes_what_people_and_servers_control_exactly_once() {
     let guard = Guard::new(&[HOSTILE])
         .templates(concat!(env!("CARGO_MANIFEST_DIR"), "/templates"))
         .unwrap()
-        .templates(concat!(env!("CARGO_MANIFEST_DIR"), "/../../koan-kit-web/templates"))
+        .templates(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../koan-kit-web/templates"
+        ))
         .unwrap();
     let cookie = format!("koan_access={}", access_token(&f.state));
     let request = |method: &str, uri: &str, datastar: bool, body: &str| {
@@ -116,14 +118,22 @@ async fn every_answer_escapes_what_people_and_servers_control_exactly_once() {
     let mut found = Vec::new();
     for (url, shows) in &pages {
         for in_place in [false, true] {
-            let (status, answer) =
-                send(&f.app, request("GET", url, in_place, ""), WAIT).await;
+            let (status, answer) = send(&f.app, request("GET", url, in_place, ""), WAIT).await;
             let how = if in_place { "in place" } else { "whole" };
             if !status.is_success() {
                 found.push(format!("{url} {how}: {status}"));
             }
-            found.extend(guard.problems(&answer).iter().map(|p| format!("{url} {how}: {p}")));
-            found.extend(twice(&answer).into_iter().map(|p| format!("{url} {how}: {p}")));
+            found.extend(
+                guard
+                    .problems(&answer)
+                    .iter()
+                    .map(|p| format!("{url} {how}: {p}")),
+            );
+            found.extend(
+                twice(&answer)
+                    .into_iter()
+                    .map(|p| format!("{url} {how}: {p}")),
+            );
             if *shows && !answer.contains(&escaped(HOSTILE)) {
                 found.push(format!("{url} {how}: the hostile text is missing"));
             }
@@ -131,19 +141,39 @@ async fn every_answer_escapes_what_people_and_servers_control_exactly_once() {
         let signals = serde_json::json!({ "url": url }).to_string();
         let live = format!("/ui/live?datastar={}", enc(&signals));
         let (_, answer) = send(&f.app, request("GET", &live, true, ""), WAIT).await;
-        found.extend(guard.problems(&answer).iter().map(|p| format!("{url} live: {p}")));
+        found.extend(
+            guard
+                .problems(&answer)
+                .iter()
+                .map(|p| format!("{url} live: {p}")),
+        );
     }
     // What actions answer with: the queue's rows, a share, a heart, a key
     // made with a hostile name.
     let actions = [
-        ("/queue/rows".to_owned(), format!(r#"{{"ids":[{track},{}]}}"#, f.track_id)),
+        (
+            "/queue/rows".to_owned(),
+            format!(r#"{{"ids":[{track},{}]}}"#, f.track_id),
+        ),
         (format!("/favourite/song/{track}?on=0"), "{}".to_owned()),
-        (format!("/album/{album}/share?track={track}"), "{}".to_owned()),
+        (
+            format!("/album/{album}/share?track={track}"),
+            "{}".to_owned(),
+        ),
     ];
     for (url, body) in &actions {
         let (_, answer) = send(&f.app, request("POST", url, true, body), WAIT).await;
-        found.extend(guard.problems(&answer).iter().map(|p| format!("POST {url}: {p}")));
-        found.extend(twice(&answer).into_iter().map(|p| format!("POST {url}: {p}")));
+        found.extend(
+            guard
+                .problems(&answer)
+                .iter()
+                .map(|p| format!("POST {url}: {p}")),
+        );
+        found.extend(
+            twice(&answer)
+                .into_iter()
+                .map(|p| format!("POST {url}: {p}")),
+        );
     }
     let key = Request::post("/account/keys")
         .header(header::HOST, HOST)
@@ -154,7 +184,12 @@ async fn every_answer_escapes_what_people_and_servers_control_exactly_once() {
         .body(Body::from(format!("name={}", enc("<b>k</b> & 'q'"))))
         .unwrap();
     let (_, answer) = send(&f.app, key, WAIT).await;
-    found.extend(guard.problems(&answer).iter().map(|p| format!("POST /account/keys: {p}")));
+    found.extend(
+        guard
+            .problems(&answer)
+            .iter()
+            .map(|p| format!("POST /account/keys: {p}")),
+    );
     // The pages outside the shell.
     for url in ["/login", &format!("/login?next={}", enc(HOSTILE)), "/pair"] {
         let r = Request::get(url)
@@ -162,7 +197,12 @@ async fn every_answer_escapes_what_people_and_servers_control_exactly_once() {
             .body(Body::empty())
             .unwrap();
         let (_, answer) = send(&f.app, r, WAIT).await;
-        found.extend(guard.problems(&answer).iter().map(|p| format!("{url}: {p}")));
+        found.extend(
+            guard
+                .problems(&answer)
+                .iter()
+                .map(|p| format!("{url}: {p}")),
+        );
     }
     assert!(found.is_empty(), "{}", found.join("\n"));
 }

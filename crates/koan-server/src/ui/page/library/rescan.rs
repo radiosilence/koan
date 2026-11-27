@@ -126,115 +126,115 @@ pub(in crate::ui) async fn start(
 mod tests {
     use crate::ui::fixture::*;
 
-#[tokio::test]
-async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
-    // The scan reads the library folders from config: the process's own,
-    // which has none.
-    koan_core::config::isolate_config_for_tests();
-    let f = setup(true);
-    let db = Database::open(f.state.pool.path()).unwrap();
-    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
-    let admin =
-        auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
-    let scan = |access: &str, signals: &'static str| {
-        Request::post("/library/scan")
-            .header(header::HOST, HOST)
-            .header(header::COOKIE, format!("koan_access={access}"))
-            .header(header::CONTENT_TYPE, "application/json")
-            .header("datastar-request", "true")
-            .body(Body::from(signals))
-            .unwrap()
-    };
-    let library = |access: &str| {
-        get("/library")
-            .header(header::COOKIE, format!("koan_access={access}"))
-            .body(Body::empty())
-            .unwrap()
-    };
+    #[tokio::test]
+    async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
+        // The scan reads the library folders from config: the process's own,
+        // which has none.
+        koan_core::config::isolate_config_for_tests();
+        let f = setup(true);
+        let db = Database::open(f.state.pool.path()).unwrap();
+        let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+        let admin =
+            auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+        let scan = |access: &str, signals: &'static str| {
+            Request::post("/library/scan")
+                .header(header::HOST, HOST)
+                .header(header::COOKIE, format!("koan_access={access}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("datastar-request", "true")
+                .body(Body::from(signals))
+                .unwrap()
+        };
+        let library = |access: &str| {
+            get("/library")
+                .header(header::COOKIE, format!("koan_access={access}"))
+                .body(Body::empty())
+                .unwrap()
+        };
 
-    // A wide screen's sidebar links the Library page for an admin only.
-    let wide_link = "href=\"library\" data-nav=\"library\"";
-    let r = send(&f.app, library(&access_token(&f.state))).await;
-    assert_eq!(r.status, StatusCode::OK);
-    assert!(!r.body.contains("/library/scan"), "{}", r.body);
-    assert!(!r.body.contains(wide_link), "{}", r.body);
-    let hidden_lists = "<ul class=\"wide:hidden\">";
-    assert!(
-        !r.body.contains(hidden_lists),
-        "the lists are all a listener's page has: {}",
-        r.body
-    );
-    let r = send(&f.app, scan(&access_token(&f.state), "{}")).await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN);
+        // A wide screen's sidebar links the Library page for an admin only.
+        let wide_link = "href=\"library\" data-nav=\"library\"";
+        let r = send(&f.app, library(&access_token(&f.state))).await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(!r.body.contains("/library/scan"), "{}", r.body);
+        assert!(!r.body.contains(wide_link), "{}", r.body);
+        let hidden_lists = "<ul class=\"wide:hidden\">";
+        assert!(
+            !r.body.contains(hidden_lists),
+            "the lists are all a listener's page has: {}",
+            r.body
+        );
+        let r = send(&f.app, scan(&access_token(&f.state), "{}")).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
 
-    let r = send(&f.app, library(&admin)).await;
-    assert!(r.body.contains("@post('library/scan')"), "{}", r.body);
-    assert!(r.body.contains(wide_link), "{}", r.body);
-    assert!(r.body.contains(hidden_lists), "{}", r.body);
-    assert!(
-        !r.body.contains("aria-label=\"Scan progress\""),
-        "no bar while idle: {}",
-        r.body
-    );
-    // The stream follows the scan to its end, so the whole body is its story.
-    let r = send(&f.app, scan(&admin, r#"{"reread":false}"#)).await;
-    assert_eq!(r.status, StatusCode::OK);
-    assert!(
-        r.body
-            .contains("Last scan: 0 added, 0 updated, 0 removed, 0 unchanged"),
-        "{}",
-        r.body
-    );
-    let r = send(&f.app, scan(&admin, r#"{"reread":true}"#)).await;
-    assert!(
-        r.body.contains("Last re-read: 0 added"),
-        "the box asks for a re-read: {}",
-        r.body
-    );
-    let r = send(&f.app, library(&admin)).await;
-    assert!(
-        r.body.contains("Last re-read:"),
-        "the page remembers it: {}",
-        r.body
-    );
-    assert!(
-        r.body.contains("data-init=\"@get('library/scan')\""),
-        "the page follows scans still to come: {}",
-        r.body
-    );
+        let r = send(&f.app, library(&admin)).await;
+        assert!(r.body.contains("@post('library/scan')"), "{}", r.body);
+        assert!(r.body.contains(wide_link), "{}", r.body);
+        assert!(r.body.contains(hidden_lists), "{}", r.body);
+        assert!(
+            !r.body.contains("aria-label=\"Scan progress\""),
+            "no bar while idle: {}",
+            r.body
+        );
+        // The stream follows the scan to its end, so the whole body is its story.
+        let r = send(&f.app, scan(&admin, r#"{"reread":false}"#)).await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(
+            r.body
+                .contains("Last scan: 0 added, 0 updated, 0 removed, 0 unchanged"),
+            "{}",
+            r.body
+        );
+        let r = send(&f.app, scan(&admin, r#"{"reread":true}"#)).await;
+        assert!(
+            r.body.contains("Last re-read: 0 added"),
+            "the box asks for a re-read: {}",
+            r.body
+        );
+        let r = send(&f.app, library(&admin)).await;
+        assert!(
+            r.body.contains("Last re-read:"),
+            "the page remembers it: {}",
+            r.body
+        );
+        assert!(
+            r.body.contains("data-init=\"@get('library/scan')\""),
+            "the page follows scans still to come: {}",
+            r.body
+        );
 
-    // A scan the folder watcher runs shows with what started it.
-    let record = crate::graphql::jobs::record_watch(&f.jobs);
-    record(&koan_core::helpers::WatchScan::Started("start-up"));
-    let r = send(&f.app, library(&admin)).await;
-    assert!(
-        r.body.contains("aria-label=\"Scan progress\"></progress>")
-            && !r.body.contains("max=\"1200\""),
-        "indeterminate until the files are counted: {}",
-        r.body
-    );
-    // Counted before any file is read, so the bar has its end from the start.
-    record(&koan_core::helpers::WatchScan::Read {
-        done: 0,
-        total: 1200,
-    });
-    let r = send(&f.app, library(&admin)).await;
-    assert!(r.body.contains("value=\"0\" max=\"1200\""), "{}", r.body);
-    record(&koan_core::helpers::WatchScan::Read {
-        done: 50,
-        total: 1200,
-    });
-    let r = send(&f.app, library(&admin)).await;
-    assert!(
-        r.body
-            .contains("Scanning (start-up)… 50 of 1200 files read"),
-        "{}",
-        r.body
-    );
-    assert!(
-        r.body.contains("value=\"50\" max=\"1200\""),
-        "the bar follows the count: {}",
-        r.body
-    );
-}
+        // A scan the folder watcher runs shows with what started it.
+        let record = crate::graphql::jobs::record_watch(&f.jobs);
+        record(&koan_core::helpers::WatchScan::Started("start-up"));
+        let r = send(&f.app, library(&admin)).await;
+        assert!(
+            r.body.contains("aria-label=\"Scan progress\"></progress>")
+                && !r.body.contains("max=\"1200\""),
+            "indeterminate until the files are counted: {}",
+            r.body
+        );
+        // Counted before any file is read, so the bar has its end from the start.
+        record(&koan_core::helpers::WatchScan::Read {
+            done: 0,
+            total: 1200,
+        });
+        let r = send(&f.app, library(&admin)).await;
+        assert!(r.body.contains("value=\"0\" max=\"1200\""), "{}", r.body);
+        record(&koan_core::helpers::WatchScan::Read {
+            done: 50,
+            total: 1200,
+        });
+        let r = send(&f.app, library(&admin)).await;
+        assert!(
+            r.body
+                .contains("Scanning (start-up)… 50 of 1200 files read"),
+            "{}",
+            r.body
+        );
+        assert!(
+            r.body.contains("value=\"50\" max=\"1200\""),
+            "the bar follows the count: {}",
+            r.body
+        );
+    }
 }
