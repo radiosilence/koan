@@ -827,6 +827,8 @@ fn read_files(
         match tx.commit() {
             Ok(()) => {
                 if added + updated > 0 {
+                    // A tag edited in place moves no row count, so the
+                    // library's stamp is told.
                     queries::library_written();
                 }
                 result.added += added;
@@ -941,7 +943,7 @@ fn remove_stale(
                 result.moved -= moved;
                 return;
             }
-            if moved > 0 || !removed.is_empty() {
+            if moved + removed.len() > 0 {
                 queries::library_written();
             }
             result.removed += removed.len();
@@ -1566,6 +1568,27 @@ mod tests {
         // Verify the track exists in the DB.
         let stats = queries::library_stats(&db.conn).unwrap();
         assert_eq!(stats.total_tracks, 1, "expected 1 track in DB");
+    }
+
+    /// A file rewritten in place moves no row count, and still moves the
+    /// library's stamp: what tells linked devices to sync.
+    #[test]
+    fn a_rescan_that_rewrites_a_track_moves_the_library_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let music_dir = dir.path().join("music");
+        std::fs::create_dir_all(&music_dir).unwrap();
+        let wav_path = music_dir.join("silence.wav");
+        test_utils::generate_wav(&wav_path, 44100, 1, 1.0, 16);
+        let db = test_db(dir.path());
+        scan_folder(&db, &music_dir, ScanOptions::default(), None);
+        let before = queries::library_stamp(&db.conn).unwrap().rows;
+
+        test_utils::generate_wav(&wav_path, 44100, 1, 2.0, 16);
+        let result = scan_folder(&db, &music_dir, ScanOptions::default(), None);
+
+        assert_eq!(result.updated, 1, "{result:?}");
+        assert_eq!(queries::library_stats(&db.conn).unwrap().total_tracks, 1);
+        assert_ne!(queries::library_stamp(&db.conn).unwrap().rows, before);
     }
 
     #[test]

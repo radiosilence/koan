@@ -31,27 +31,13 @@ fn with<T>(
     what: &str,
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, koan_core::db::connection::DbError>,
 ) -> Option<T> {
-    logged(log::Level::Warn, what, f)
-}
-
-/// [`with`] for a write made on every report a device sends, whose failure is
-/// logged at debug: a database that keeps failing would otherwise fill the
-/// log, and the failure shows in the writes that are logged.
-fn quietly<T>(
-    what: &str,
-    f: impl FnOnce(&rusqlite::Connection) -> Result<T, koan_core::db::connection::DbError>,
-) -> Option<T> {
-    logged(log::Level::Debug, what, f)
-}
-
-fn logged<T>(
-    level: log::Level,
-    what: &str,
-    f: impl FnOnce(&rusqlite::Connection) -> Result<T, koan_core::db::connection::DbError>,
-) -> Option<T> {
     let db = db()?;
-    f(&db.conn)
-        .inspect_err(|e| log::log!(level, "link: could not {what}: {e}"))
+    logged(what, f(&db.conn))
+}
+
+fn logged<T>(what: &str, result: Result<T, koan_core::db::connection::DbError>) -> Option<T> {
+    result
+        .inspect_err(|e| log::warn!("link: could not {what}: {e}"))
         .ok()
 }
 
@@ -89,20 +75,25 @@ pub fn take_and_remember(
     platform: &str,
     live: &[(String, String)],
 ) -> (Vec<Envelope>, bool) {
-    if db().is_none() {
+    // One connection for the three steps, each logged on its own: a device
+    // that could not be recorded still takes what waits for it.
+    let Some(db) = db() else {
         return (seeded(username, device), false);
-    }
-    let now = now();
-    with("record a device", |c| {
-        link::record_device(c, device, username, name, platform, now)
-    });
-    let pruned = with("forget stale devices", |c| {
-        link::forget_stale(c, live, now, KEEP_SECS)
-    })
+    };
+    let (c, now) = (&db.conn, now());
+    logged(
+        "record a device",
+        link::record_device(c, device, username, name, platform, now),
+    );
+    let pruned = logged(
+        "forget stale devices",
+        link::forget_stale(c, live, now, KEEP_SECS),
+    )
     .unwrap_or(false);
-    let waiting = with("take waiting commands", |c| {
-        link::take_waiting(c, device, username)
-    })
+    let waiting = logged(
+        "take waiting commands",
+        link::take_waiting(c, device, username),
+    )
     .unwrap_or_default();
     if !waiting.is_empty() {
         log::info!("link: {} waiting commands for {name}", waiting.len());
@@ -133,7 +124,12 @@ fn seeded(_: &str, _: &str) -> Vec<Envelope> {
 
 /// Mark `(device, username)` pairs seen now.
 pub fn touch(devices: &[(String, String)]) {
-    quietly("mark devices seen", |c| link::touch(c, devices, now()));
+    // At debug: this runs on every report a device sends, so a database that
+    // keeps failing would otherwise fill the log.
+    let Some(db) = db() else { return };
+    if let Err(e) = link::touch(&db.conn, devices, now()) {
+        log::debug!("link: could not mark devices seen: {e}");
+    }
 }
 
 /// Queue `cmd` for each known device in scope that is not in `live`.

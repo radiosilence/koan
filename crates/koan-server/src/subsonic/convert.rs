@@ -247,12 +247,6 @@ pub(super) struct SongExtras {
     pub(super) library: Option<Vec<PathBuf>>,
 }
 
-/// The caller's own history: when someone else last played a track is theirs
-/// to know.
-pub(super) fn history_user(db: &Database, user: i64) -> Result<i64, SubsonicError> {
-    queries::auth::resolve_user(&db.conn, user).map_err(|e| SubsonicError::internal(e.to_string()))
-}
-
 pub(super) fn song_extras<'a>(
     db: &Database,
     caller: &Caller,
@@ -263,7 +257,9 @@ pub(super) fn song_extras<'a>(
         return Ok(SongExtras::default());
     }
     let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
-    let user = history_user(db, caller.user_id)?;
+    // The caller's own history: when someone else last played a track is
+    // theirs to know. koan-core resolves the implicit user.
+    let user = caller.user_id;
     let credits = credits_of(db, CreditsOf::Tracks, tracks.iter().map(|t| t.id))?;
     let album_credits = credits_of(
         db,
@@ -379,7 +375,6 @@ pub(super) fn album_extras<'a>(
         return Ok(AlbumExtras::default());
     }
     let album_ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
-    let user = history_user(db, user)?;
     let (genres, stats) = match tracks {
         Some(tracks) => album_totals(tracks),
         None => (
@@ -453,7 +448,6 @@ pub(super) fn artist_extras(
     ids: impl IntoIterator<Item = i64>,
 ) -> Result<ArtistExtras, SubsonicError> {
     let ids: Vec<i64> = ids.into_iter().collect();
-    let user = history_user(db, user)?;
     Ok(ArtistExtras {
         uids: Uids::load(db, ids.iter().copied(), [], [])?,
         rating: rated(db, user, queries::RatingKind::Artist, ids.iter().copied())?,

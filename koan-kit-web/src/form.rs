@@ -74,8 +74,9 @@ impl<'a> Form<'a> {
     }
 
     /// Joins the busy group `key` names, as [`Button::busy_key`](crate::Button::busy_key) does: while any request of
-    /// the group runs, its submit is disabled. Without one, its busy signal is named by its method, action and id, so
-    /// forms posting one action row by row are told apart by their ids.
+    /// the group runs, its submit is disabled. Without one, its busy signal is named by its method, action and id: the
+    /// fields it sends are not known as its tag is drawn, so forms posting one action row by row, told apart only by a
+    /// hidden field, need an [`id`](Self::id) each (which [`field`](Self::field) builds on too) or a key each.
     pub fn busy_key(mut self, key: impl Into<Text<'a>>) -> Self {
         self.busy_key = key.into();
         self
@@ -245,6 +246,20 @@ mod tests {
                 .attrs()
                 .to_string(),
             "and each draws the same markup every time"
+        );
+    }
+
+    #[test]
+    fn forms_told_apart_only_by_their_fields_need_an_id_or_a_key() {
+        let busy = |form: &Form<'_>| form.attrs().to_string();
+        let rows = |id: &'static str| Form::post("/rows/remove").id(id);
+        assert_ne!(busy(&rows("row-1")), busy(&rows("row-2")));
+        let keyed = |key: &'static str| Form::post("/rows/remove").busy_key(key);
+        assert_ne!(busy(&keyed("row-1")), busy(&keyed("row-2")));
+        assert_eq!(
+            busy(&Form::post("/rows/remove")),
+            busy(&Form::post("/rows/remove")),
+            "nothing else tells them apart as the tag is drawn"
         );
     }
 

@@ -1461,24 +1461,24 @@ pub fn album_file_versions(
     rows.collect::<Result<_, _>>().map_err(Into::into)
 }
 
-/// Every album with a track on disk here, in the order of its first file's
-/// path: an album's covers are read from beside its files, so walking in this
-/// order keeps each directory's reads together.
+/// Every album with a track on disk here, in no particular order.
 pub fn albums_with_files(conn: &Connection) -> Result<Vec<i64>, DbError> {
     let mut stmt = conn.prepare_cached(
-        "SELECT album_id FROM tracks
-          WHERE path IS NOT NULL AND album_id IS NOT NULL
-          GROUP BY album_id ORDER BY MIN(path)",
+        "SELECT DISTINCT album_id FROM tracks
+          WHERE path IS NOT NULL AND album_id IS NOT NULL",
     )?;
     let rows = stmt.query_map([], |r| r.get(0))?;
     rows.collect::<Result<_, _>>().map_err(Into::into)
 }
 
-/// The albums [`albums_with_files`] lists, in no order: for counting them
-/// without sorting every local track by path.
-pub fn albums_with_files_unordered(conn: &Connection) -> Result<Vec<i64>, DbError> {
+/// [`albums_with_files`], in the order of each album's first file's path: an
+/// album's covers are read from beside its files, so walking in this order
+/// keeps each directory's reads together.
+pub fn albums_with_files_by_path(conn: &Connection) -> Result<Vec<i64>, DbError> {
     let mut stmt = conn.prepare_cached(
-        "SELECT DISTINCT album_id FROM tracks WHERE path IS NOT NULL AND album_id IS NOT NULL",
+        "SELECT album_id FROM tracks
+          WHERE path IS NOT NULL AND album_id IS NOT NULL
+          GROUP BY album_id ORDER BY MIN(path)",
     )?;
     let rows = stmt.query_map([], |r| r.get(0))?;
     rows.collect::<Result<_, _>>().map_err(Into::into)
@@ -4691,8 +4691,13 @@ mod tests {
         let rows = tracks_by_ids(&db.conn, &ids).unwrap();
         let album = |id: i64| rows.iter().find(|t| t.id == id).unwrap().album_id.unwrap();
         assert_eq!(
-            albums_with_files(&db.conn).unwrap(),
+            albums_with_files_by_path(&db.conn).unwrap(),
             [album(ids[1]), album(ids[0])]
         );
+        let mut any_order = albums_with_files(&db.conn).unwrap();
+        any_order.sort();
+        let mut want = vec![album(ids[0]), album(ids[1])];
+        want.sort();
+        assert_eq!(any_order, want);
     }
 }

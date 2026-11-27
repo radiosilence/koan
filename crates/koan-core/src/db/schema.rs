@@ -213,7 +213,7 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             BEGIN INSERT INTO art_evictions (kind, id) VALUES ('track', old.id); END;
 
         -- A server's record of the koan apps that have linked to it, and what
-        -- waits for each while it is away: see koan_core::db::queries::link.
+        -- waits for each while it is away: see `queries::link`.
         CREATE TABLE IF NOT EXISTS link_devices (
             device     TEXT NOT NULL,
             username   TEXT NOT NULL,
@@ -249,7 +249,7 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         );
 
         -- Devices an owner has let other accounts on this server control,
-        -- granted from the device itself: see koan_core::db::queries::link.
+        -- granted from the device itself: see `queries::link`.
         CREATE TABLE IF NOT EXISTS link_grants (
             device      TEXT NOT NULL,
             owner       TEXT NOT NULL,
@@ -880,7 +880,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     // by triggers, so a row has its key however it was written.
     ("artists", "name_key", "TEXT"),
     ("albums", "title_key", "TEXT"),
-    // Where a linked device last connected from: see koan_core::db::queries::link.
+    // Where a linked device last connected from: see `queries::link`.
     ("link_devices", "addr", "TEXT"),
     // Smart playlists: the rules as JSON (see `crate::smart`), when they were
     // last evaluated (unix seconds), and the file they were read from, if
