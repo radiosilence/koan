@@ -202,8 +202,7 @@ pub(crate) fn router(
 fn routes(state: UiState) -> axum::Router {
     use page::{
         account, album, albums, artist, artists, assistants, favourites, history, library,
-        playlist, playlists, properties, queue, recently_played, scrobbling, search, tracks,
-        users,
+        playlist, playlists, properties, queue, recently_played, scrobbling, search, tracks, users,
     };
     use paths as p;
 
@@ -230,7 +229,10 @@ fn routes(state: UiState) -> axum::Router {
         .route(p::ASSISTANTS, get(page::serve::<assistants::Assistants>))
         .route(p::SCROBBLING, get(page::serve::<scrobbling::Scrobbling>))
         // Where pages were before they had the names the UI gives them.
-        .route(p::OLD_ASSISTANTS, get(|| async { see_other(p::ASSISTANTS) }))
+        .route(
+            p::OLD_ASSISTANTS,
+            get(|| async { see_other(p::ASSISTANTS) }),
+        )
         .route(p::OLD_KEYS, get(|| async { see_other(p::ACCOUNT) }));
     let streams = axum::Router::new().route(p::LIVE, get(stream::serve));
     let actions = axum::Router::new()
@@ -251,7 +253,10 @@ fn routes(state: UiState) -> axum::Router {
         .route(p::SECURITY_KEYS, post(account::two_step::finish_key))
         .route(p::SECURITY_KEYS_BEGIN, post(account::two_step::begin_key))
         .route(p::SECURITY_KEY_REMOVE, post(account::two_step::remove_key))
-        .route(p::RECOVERY_CODES, post(account::two_step::new_recovery_codes))
+        .route(
+            p::RECOVERY_CODES,
+            post(account::two_step::new_recovery_codes),
+        )
         // Scrobbling
         .route(p::LASTFM_CONNECT, get(scrobbling::lastfm_connect))
         .route(p::LASTFM_RETURN, get(scrobbling::lastfm_return))
@@ -262,7 +267,10 @@ fn routes(state: UiState) -> axum::Router {
         .route(p::AUDIO, get(audio))
         .route(p::COVER, get(cover));
     let admin = axum::Router::new()
-        .route(p::USERS, get(page::serve::<users::Users>).post(users::create))
+        .route(
+            p::USERS,
+            get(page::serve::<users::Users>).post(users::create),
+        )
         .route(p::USER_INVITE, post(users::invite))
         .route(p::USER_PASSWORD, post(users::set_password))
         .route(p::USER_PASSWORD_FORM, post(users::password_form))
@@ -284,7 +292,7 @@ fn routes(state: UiState) -> axum::Router {
     axum::Router::new()
         .merge(gated)
         .merge(sign_in::routes(&state))
-        .merge(oauth::routes(&state, &base))
+        .merge(oauth::routes(&base))
         .route(p::ASSETS, get(ui_asset))
         // Where anything that wants an icon for this host looks first, before
         // reading a page: without it, a favicon service settles for the parent
@@ -534,14 +542,13 @@ impl<T, E: std::fmt::Display> Logged<T> for Result<T, E> {
     }
 }
 
-/// A word's first letter in capitals, for an error read out of a library
-/// that writes its messages in lower case.
+/// An error from a library that writes its messages as clauses, as a
+/// sentence: its first letter in capitals and a full stop after it.
 fn capitalised(message: &str) -> String {
     let mut chars = message.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
+    chars.next().map_or_else(String::new, |c| {
+        format!("{}{}.", c.to_uppercase(), chars.as_str())
+    })
 }
 
 /// Who may change the server rather than only listen to it.

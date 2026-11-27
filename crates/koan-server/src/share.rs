@@ -268,15 +268,6 @@ pub(crate) fn binary_asset(name: &str) -> Option<Response> {
     )
 }
 
-/// `<link>`s for the icons, served under `base` (`/ui/assets` or `/share/assets`).
-pub(crate) fn icon_links(base: &str) -> Html {
-    Html::trusted(format!(
-        "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"{base}/icon-32.png\">\
-<link rel=\"icon\" type=\"image/png\" sizes=\"192x192\" href=\"{base}/icon-192.png\">\
-<link rel=\"apple-touch-icon\" href=\"{base}/apple-touch-icon.png\">"
-    ))
-}
-
 /// A text asset. Requested by its hashed URL (`?v=`), it never changes, so it
 /// is kept for good; a bare URL is rechecked hourly.
 pub(crate) fn asset(body: &'static str, kind: &'static str, query: RawQuery) -> Response {

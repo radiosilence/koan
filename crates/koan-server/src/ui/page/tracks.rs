@@ -4,6 +4,7 @@
 use askama::Template;
 use askama_datastar::View;
 use koan_core::shelves;
+use koan_kit_web as kit;
 
 use super::{Body, Page, Refusal, Section};
 use crate::auth::AuthUser;

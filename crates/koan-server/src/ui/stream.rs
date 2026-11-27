@@ -87,7 +87,9 @@ impl Seen {
     /// page says nothing of what it drew, or was drawn by another boot.
     fn moved_since(&self, drawn: Option<&Seen>) -> [bool; TOPICS] {
         match drawn {
-            Some(d) if d.boot == self.boot => std::array::from_fn(|i| d.counts[i] != self.counts[i]),
+            Some(d) if d.boot == self.boot => {
+                std::array::from_fn(|i| d.counts[i] != self.counts[i])
+            }
             _ => [true; TOPICS],
         }
     }
@@ -197,7 +199,10 @@ impl Sources {
         }
         let now = Seen {
             boot: self.boot.clone(),
-            counts: [*self.jobs.borrow_and_update(), *self.covers.borrow_and_update()],
+            counts: [
+                *self.jobs.borrow_and_update(),
+                *self.covers.borrow_and_update(),
+            ],
         };
         Some(Changed {
             topics: now.moved_since(Some(last)),
@@ -227,14 +232,12 @@ fn run<L: Live>(s: UiState, mut page: L, shown: Shown) -> Response {
         .as_ref()
         .map(|c| c.seen.clone())
         .expect("the first change");
-    let changes = futures_util::stream::unfold(
-        (sources, start),
-        |(mut sources, last)| async move {
+    let changes =
+        futures_util::stream::unfold((sources, start), |(mut sources, last)| async move {
             let changed = sources.next(&last).await?;
             let seen = changed.seen.clone();
             Some((changed, (sources, seen)))
-        },
-    );
+        });
     let events = async_stream::stream! {
         let mut changes = std::pin::pin!(paced(changes, Pace::default()));
         while let Some(changed) = changes.next().await {

@@ -140,7 +140,10 @@ fn covers(u: &Usage, report: &Report, now: SystemTime) -> Covers {
         pairs = pairs.pair("Last pass", format!("{}, {made}", ago(t, now)));
     }
     if let Some(t) = warm.next() {
-        pairs = pairs.pair("Next pass", format!("{}, or when the library changes", until(t, now)));
+        pairs = pairs.pair(
+            "Next pass",
+            format!("{}, or when the library changes", until(t, now)),
+        );
     }
     pairs = pairs.pair(
         "Last sweep",

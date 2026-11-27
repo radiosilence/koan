@@ -53,7 +53,13 @@ pub(in crate::ui) struct Row<'a> {
 
 impl<'a> Row<'a> {
     /// `artist` and `album` choose what the line under the title names.
-    pub(in crate::ui) fn new(t: &'a TrackRow, lead: Lead, rows: &Rows, artist: bool, album: bool) -> Self {
+    pub(in crate::ui) fn new(
+        t: &'a TrackRow,
+        lead: Lead,
+        rows: &Rows,
+        artist: bool,
+        album: bool,
+    ) -> Self {
         let parts = rows.credits.track(t);
         Self {
             t,
@@ -80,7 +86,10 @@ impl<'a> Row<'a> {
     /// With a button sharing it, where the account may share and the page
     /// has the region to show the link in.
     pub(in crate::ui) fn shared(mut self) -> Self {
-        self.share = self.t.album_id.map(|a| paths::album_share(a, Some(self.t.id)));
+        self.share = self
+            .t
+            .album_id
+            .map(|a| paths::album_share(a, Some(self.t.id)));
         self
     }
 

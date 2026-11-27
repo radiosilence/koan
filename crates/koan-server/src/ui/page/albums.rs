@@ -6,6 +6,7 @@ use askama::Template;
 use askama_datastar::View;
 use koan_core::db::queries;
 use koan_core::shelves;
+use koan_kit_web as kit;
 
 use super::{Body, Page, Refusal, Section};
 use crate::auth::AuthUser;
@@ -38,7 +39,8 @@ impl Page for Albums {
         let (st, bb, who) = (s.clone(), b.clone(), user.clone());
         let (count, tiles, options) = blocking(move || {
             let db = open(&st.pool)?;
-            let albums = queries::list_albums(&db.conn, &bb.albums(who.user_id, shelves::now())).logged()?;
+            let albums =
+                queries::list_albums(&db.conn, &bb.albums(who.user_id, shelves::now())).logged()?;
             let versions = Versions::of_albums(&db.conn, &albums);
             let ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
             let credits = Credits::load(&db.conn, &[], &ids);

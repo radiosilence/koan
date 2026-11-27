@@ -7,17 +7,18 @@ use axum::extract::{Path, State};
 use axum::response::Response;
 use koan_core::db::queries::{self, ArtistRow};
 use koan_core::helpers::ShareTarget;
+use koan_kit_web as kit;
 
 use super::{Body, Page, Refusal, Section};
 use crate::auth::AuthUser;
 use crate::html::Html;
 use crate::share::blocking;
+use crate::ui::parts::count;
 use crate::ui::parts::covers::Versions;
 use crate::ui::parts::credit::Credits;
 use crate::ui::parts::heart::Hearts;
 use crate::ui::parts::share::{self, Shared};
 use crate::ui::parts::tile::Tiles;
-use crate::ui::parts::count;
 use crate::ui::{Logged, UiState, open, paths};
 
 pub(in crate::ui) struct Artist;

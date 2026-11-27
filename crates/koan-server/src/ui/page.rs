@@ -160,9 +160,7 @@ impl Body {
 /// body was drawn so that nothing that moves meanwhile is missed.
 async fn draw<P: Page>(s: &UiState, user: &AuthUser, args: P::Args) -> (Body, super::stream::Seen) {
     let seen = super::stream::Seen::now(s);
-    let body = P::body(s, user, args)
-        .await
-        .unwrap_or_else(Refusal::body);
+    let body = P::body(s, user, args).await.unwrap_or_else(Refusal::body);
     (body, seen)
 }
 
@@ -210,12 +208,51 @@ pub(super) async fn serve<P: Page>(
     if askama_datastar::is_datastar(&headers) {
         return askama_datastar::events(shown::<P>(&s, &user, args, &url).await);
     }
-    let (mut body, seen) = draw::<P>(&s, &user, args).await;
-    let signals = page_signals(&mut body, &url, &seen);
+    let (body, seen) = draw::<P>(&s, &user, args).await;
+    whole(&s, &user, P::SECTION, body, &url, &seen)
+}
+
+/// A page drawn by a handler of its own rather than from its address alone,
+/// such as one carrying what an action just said: whole for a browser, in
+/// place for the page.
+pub(super) fn respond(
+    s: &UiState,
+    user: &AuthUser,
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    section: Section,
+    mut body: Body,
+) -> Response {
+    let url = s.absolute(&askama_datastar::address(uri));
+    let seen = super::stream::Seen::now(s);
+    if askama_datastar::is_datastar(headers) {
+        let signals = page_signals(&mut body, &url, &seen);
+        return askama_datastar::events([
+            patch(&Html::from_iter([
+                Main { body: body.html }.html(),
+                Title { name: &body.title }.html(),
+                Nav::new(s, user, section).html(),
+                kit::Flash::region().html(),
+            ])),
+            super::signals(signals),
+        ]);
+    }
+    whole(s, user, section, body, &url, &seen)
+}
+
+fn whole(
+    s: &UiState,
+    user: &AuthUser,
+    section: Section,
+    mut body: Body,
+    url: &str,
+    seen: &super::stream::Seen,
+) -> Response {
+    let signals = page_signals(&mut body, url, seen);
     let layout = Layout {
         base: s.base(),
         title: Title { name: &body.title }.html(),
-        nav: Nav::new(&s, &user, P::SECTION).html(),
+        nav: Nav::new(s, user, section).html(),
         main: Main { body: body.html }.html(),
         signals: signals.to_string(),
         live: s.absolute(super::paths::LIVE),

@@ -22,7 +22,11 @@ pub(in crate::ui) struct Credits {
 }
 
 impl Credits {
-    pub(in crate::ui) fn load(conn: &rusqlite::Connection, tracks: &[TrackRow], albums: &[i64]) -> Self {
+    pub(in crate::ui) fn load(
+        conn: &rusqlite::Connection,
+        tracks: &[TrackRow],
+        albums: &[i64],
+    ) -> Self {
         let list = ListCredits::read_rows(conn, tracks);
         // The tracks' records are read with them.
         let records: std::collections::HashSet<i64> =
@@ -49,7 +53,12 @@ impl Credits {
     }
 
     /// An album's artist credit, `credit` as the row names it.
-    pub(in crate::ui) fn album(&self, id: Option<i64>, credit: &str, filed: Option<i64>) -> Vec<CreditPart> {
+    pub(in crate::ui) fn album(
+        &self,
+        id: Option<i64>,
+        credit: &str,
+        filed: Option<i64>,
+    ) -> Vec<CreditPart> {
         let artists = id
             .and_then(|id| self.albums.get(&id).or_else(|| self.list.albums.get(&id)))
             .map(Vec::as_slice)
@@ -70,7 +79,11 @@ pub(in crate::ui) struct Credit<'a> {
 
 impl<'a> Credit<'a> {
     pub(in crate::ui) fn links(parts: &'a [CreditPart]) -> Html {
-        Self { parts, quiet: false }.html()
+        Self {
+            parts,
+            quiet: false,
+        }
+        .html()
     }
 
     pub(in crate::ui) fn quiet(parts: &'a [CreditPart]) -> Html {
@@ -106,9 +119,7 @@ impl<'a> Link<'a> {
 pub(in crate::ui) fn for_player(parts: &[CreditPart]) -> String {
     let parts: Vec<_> = parts
         .iter()
-        .map(|p| {
-            serde_json::json!([p.text, p.artist_id.map(paths::artist).unwrap_or_default()])
-        })
+        .map(|p| serde_json::json!([p.text, p.artist_id.map(paths::artist).unwrap_or_default()]))
         .collect();
     serde_json::Value::Array(parts).to_string()
 }

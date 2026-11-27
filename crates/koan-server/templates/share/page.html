@@ -15,7 +15,7 @@
 {%- for (attr, key, content) in preview %}
 <meta {{ attr }}="{{ key }}" content="{{ content }}">
 {%- endfor %}
-{{ crate::share::icon_links("./share/assets") }}<link rel="stylesheet" href="{{ css }}"></head><body>
+{{ crate::ui::Icons { under: "./share/assets" }.html() }}<link rel="stylesheet" href="{{ css }}"></head><body>
 <main class="mx-auto max-w-[760px] px-4 pt-[max(24px,env(safe-area-inset-top))] pb-12">
 <header class="mb-5 flex items-end gap-5 max-wide:flex-col max-wide:items-stretch">
 <img id="cover" class="size-[200px] flex-none bg-surface object-cover max-wide:aspect-square max-wide:h-auto max-wide:w-full" src="share/{{ id }}/cover" alt="">

@@ -1,0 +1,10 @@
+{#- Whether to let an assistant reach /mcp as this account. The host is named, since a client may give itself any name. -#}
+<h2>Connect kōan to <span class="normal-case">{{ host }}</span>?</h2>
+<p>An app calling itself <em>{{ name }}</em> wants to {{ abilities }}, as <strong>{{ user }}</strong>. Anyone can give an app any name: {{ host }} is where it really goes.</p>
+<p><small>Approve only a connection you started yourself, just now. Approving connects whichever account started it.</small></p>
+{%- let form = self.form() %}
+<form {{ form.attrs() }} class="grid gap-3.5">
+{%- for (field, value) in fields %}{{ kit::Input::hidden(*field, *value) }}{% endfor %}
+{{ self.allow() }}{{ self.deny() }}</form>
+{%- let out = self.sign_out() %}
+<form {{ out.attrs() }} class="mt-3.5 grid gap-3.5">{{ kit::Input::hidden("next", here) }}{{ self.not_me() }}</form>

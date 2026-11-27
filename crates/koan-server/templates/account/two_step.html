@@ -1,0 +1,53 @@
+{#- Two-step sign-in: an authenticator app, security keys and passkeys, and recovery codes. One region, redrawn whole by each action. -#}
+<section id="{{ self.id() }}">
+<h2>Two-step sign-in</h2>
+{%- if factors.enabled() %}
+<p class="mt-0 mb-3.5 text-muted"><strong class="text-ink">On.</strong> Signing in with your password also asks for a code from your authenticator app or a security key, and a passkey signs you in on its own. Apps you signed in to stay signed in; Subsonic apps sign in with an API key or app password, not your password.</p>
+{%- else %}
+<p class="mt-0 mb-3.5 text-muted">Off: your password alone signs you in. Add an authenticator app, a passkey or a security key and signing in will ask for it too; a passkey can sign you in on its own. Turning it on signs out every device, key and app password you have, so nothing signed in with the password alone stays signed in.</p>
+{%- endif %}
+{%- if let Some(e) = error %}{{ kit::Notice::bad(e).class("max-w-form") }}{% endif %}
+
+{%- if let Some(codes) = codes %}
+<div class="panel mt-3 mb-4 max-w-panel"><h3 class="mt-0">Recovery codes</h3>
+<p class="mt-0 mb-3.5 text-muted">Keep these somewhere safe, apart from your phone and keys: a password manager, or on paper. Each one signs you in once in place of a code, if you lose your app and keys. They are not shown again.</p>
+<ul class="codes my-3" aria-label="Recovery codes">{% for c in codes %}<li>{{ c }}</li>{% endfor %}</ul></div>
+{%- endif %}
+
+<h3>Authenticator app</h3>
+{%- if factors.totp %}
+<ul><li class="flex min-w-0 items-center gap-3 border-b border-rule px-1 py-2.5"><span class="min-w-0 flex-1">Set up</span>{{ self.remove_totp() }}</li></ul>
+{%- else if let Some(setup) = setup %}
+{%- let form = self.confirm_form() %}
+<div class="panel mt-2 mb-4 flex max-w-4xl flex-wrap items-center gap-x-8 gap-y-4">
+{%- if let Some(qr) = setup.qr %}{{ qr }}{% endif %}
+<div class="min-w-0 flex-1 basis-64"><p class="mt-0 text-body text-ink">Scan this with your authenticator app, or type the key into it.</p>
+<span class="code select-all">{{ setup.secret }}</span>
+<form {{ form.attrs() }} class="flex max-w-form gap-2">{{ self.code() }}{{ form.submit(kit::Button::primary("Turn on")) }}</form>
+<p class="mt-0 mb-3.5 text-muted">The app shows a new six-digit code every 30 seconds. Type the one it shows now.</p></div></div>
+{%- else %}
+<p class="mt-0 mb-3.5 text-muted">An app such as 1Password, Google Authenticator or Aegis, which shows a code that changes every 30 seconds.</p>
+{{ self.begin_totp() }}
+{%- endif %}
+
+<h3>Passkeys and security keys</h3>
+{%- if keys_possible %}
+<ul>
+{%- for k in keys %}
+<li class="flex min-w-0 items-center gap-3 border-b border-rule px-1 py-2.5"><span class="min-w-0 flex-1 overflow-hidden text-ellipsis wrap-anywhere">{{ k.name }}<small class="block text-meta text-muted">{{ self.key_detail(k) }}</small></span>{{ self.remove_key(k) }}</li>
+{%- endfor %}
+</ul>
+<p class="mt-0 mb-3.5 text-muted">A passkey kept by this device or your password manager, or a hardware key such as a YubiKey. A passkey signs you in on its own, with no password, once it has checked it is you with Face ID, a fingerprint or the device's PIN. A key that cannot check who you are is the second step after your password.</p>
+{#- The page's passkey script asks the browser to make the key, then raises `koan-key` on the form with what it made, which the form sends here through Datastar. #}
+<form class="mb-2 flex max-w-form gap-2" action="{{ self.finish_key() }}" method="post" data-begin="{{ self.begin_key() }}" data-passkey-register data-on:koan-key="@post(el.getAttribute('action'), {payload: evt.detail})">
+{{ self.key_name() }}{{ kit::Button::standard("Add a passkey or key").submit() }}</form>
+{%- else %}
+{{ kit::Notice::new("Passkeys and security keys need the server's address, server.url, set to an https:// address: browsers allow them nowhere else.") }}
+{%- endif %}
+
+{%- if factors.enabled() %}
+<h3>Recovery codes</h3>
+<p class="mt-0 mb-3.5 text-muted">{{ factors.recovery_left }} unused. Each signs you in once in place of a code.</p>
+{{ self.new_codes() }}
+{%- endif %}
+</section>

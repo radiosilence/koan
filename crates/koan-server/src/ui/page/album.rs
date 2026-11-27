@@ -7,6 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::response::Response;
 use koan_core::db::queries::{self, AlbumRow};
 use koan_core::helpers::ShareTarget;
+use koan_kit_web as kit;
 
 use super::{Body, Page, Refusal, Section};
 use crate::auth::AuthUser;
@@ -91,7 +92,10 @@ impl Page for Album {
                 &album.artist_name,
                 Some(album.artist_id),
             ));
-            let heart = hearts.as_ref().map(|h| h.album(album.id)).unwrap_or_default();
+            let heart = hearts
+                .as_ref()
+                .map(|h| h.album(album.id))
+                .unwrap_or_default();
             Some(Ok((
                 (album, credit, heart, tracks.len(), total),
                 drawn,

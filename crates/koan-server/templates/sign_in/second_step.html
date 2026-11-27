@@ -1,0 +1,14 @@
+{#- A sign-in's second step, its password passed: a security key, or a code from an authenticator app, or a recovery code. -#}
+<p class="m-0 mb-3.5 text-ink">This account uses two-step sign-in.</p>
+{%- if let Some(options) = key_options %}
+{%- let key = self.form() %}
+<form {{ key.attrs() }} class="mb-3.5 grid gap-3.5" data-passkey-sign-in data-options="{{ options }}">{{ kit::Input::hidden("ticket", ticket) }}{{ kit::Input::hidden("next", next) }}{{ kit::Input::hidden("assertion", "") }}
+{{ key.submit(self.key_button()) }}
+<p class="notice bad m-0" role="alert" data-passkey-error hidden></p></form>
+{%- endif %}
+{%- let form = self.form() %}
+<form {{ form.attrs() }} class="grid gap-3.5">{{ kit::Input::hidden("ticket", ticket) }}{{ kit::Input::hidden("next", next) }}
+{{ self.code() }}
+{%- if let Some(e) = error %}{{ kit::Notice::bad(e) }}{% endif %}
+{{ form.submit(self.continue_button()) }}</form>
+<p class="mt-3.5 text-muted"><a href="{{ self.someone_else() }}">Sign in as someone else</a></p>

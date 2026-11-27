@@ -43,6 +43,7 @@ const ROUTES: &[&str] = &[
     "apple-touch-icon.png",
     "artist",
     "artists",
+    "assistants",
     "auth",
     "connect",
     "favicon.ico",

@@ -38,7 +38,12 @@ impl Read {
         let credits = Credits::load(
             &db.conn,
             &summary.tracks.preview,
-            &summary.albums.preview.iter().map(|a| a.id).collect::<Vec<_>>(),
+            &summary
+                .albums
+                .preview
+                .iter()
+                .map(|a| a.id)
+                .collect::<Vec<_>>(),
         );
         Some(Self {
             hearts: Hearts::load(&db.conn, user),

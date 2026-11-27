@@ -94,11 +94,7 @@ pub(in crate::ui) async fn rows(
     Sent(Ids { mut ids }): Sent<Ids>,
 ) -> Response {
     ids.truncate(MOST);
-    let drawn = ids
-        .iter()
-        .map(i64::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
+    let drawn = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
     let list = blocking(move || {
         let db = open(&s.pool)?;
         let mut unique = ids.clone();
@@ -121,12 +117,14 @@ pub(in crate::ui) async fn rows(
             .filter_map(|(i, id)| by_id.get(id).map(|t| (i, *t)))
             .map(|(i, t)| Row::new(t, Lead::Queued(i), &rows, true, true).html())
             .collect();
-        Some(List {
-            empty: ids.is_empty(),
-            drawn,
-            rows: html,
-        }
-        .html())
+        Some(
+            List {
+                empty: ids.is_empty(),
+                drawn,
+                rows: html,
+            }
+            .html(),
+        )
     })
     .await;
     match list {

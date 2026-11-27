@@ -1,0 +1,16 @@
+{#- The sign-in form, and where a passkey can sign in, the form for that. -#}
+{%- if let Some((username, password)) = demo %}
+{{ kit::Notice::new(format!("This is kōan's demo server. Sign in as {username}, password {password}, here or in the apps. Everyone shares the account, and everything resets at midnight UTC.")) }}
+{%- endif %}
+{%- let form = self.form() %}
+<form {{ form.attrs() }} class="grid gap-3.5">{{ kit::Input::hidden("next", next) }}
+{{ self.username() }}{{ self.password() }}
+{%- if let Some(e) = error %}{{ kit::Notice::bad(e) }}{% endif %}
+{{ form.submit(kit::Button::primary("Sign in")) }}</form>
+{%- if passkey %}
+{#- The browser offers the account's passkeys as soon as the page loads, in the username field's suggestions where it can; the button asks outright. Each asks the server for a challenge first. A passkey signs in on its own. #}
+{%- let pk = self.passkey_form() %}
+<form {{ pk.attrs() }} class="mt-3.5 grid gap-3.5" data-passkey-login data-challenge="{{ self.challenge() }}">{{ kit::Input::hidden("ticket", "") }}{{ kit::Input::hidden("next", next) }}{{ kit::Input::hidden("assertion", "") }}
+{{ pk.submit(kit::Button::standard("Sign in with a passkey")) }}
+<p class="notice bad m-0" role="alert" data-passkey-error hidden></p></form>
+{%- endif %}

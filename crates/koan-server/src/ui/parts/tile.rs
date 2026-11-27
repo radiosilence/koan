@@ -38,7 +38,11 @@ impl<'a> Tiles<'a> {
                 album: a,
                 href: paths::album(a.id),
                 src: versions.url(a.id, crate::covers::GRID),
-                artist: Credit::quiet(&credits.album(Some(a.id), &a.artist_name, Some(a.artist_id))),
+                artist: Credit::quiet(&credits.album(
+                    Some(a.id),
+                    &a.artist_name,
+                    Some(a.artist_id),
+                )),
                 heart: hearts.map(|h| h.tile(a.id)).unwrap_or_default(),
             })
             .collect();

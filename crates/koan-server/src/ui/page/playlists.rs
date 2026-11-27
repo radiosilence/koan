@@ -2,6 +2,7 @@
 
 use askama::Template;
 use koan_core::db::queries::{self, PlaylistRow};
+use koan_kit_web as kit;
 
 use super::{Body, Page, Refusal, Section};
 use crate::auth::AuthUser;

@@ -1,0 +1,6 @@
+<h1>Users</h1><p class="mt-0 mb-3.5 text-muted">Everyone who can sign in to this server. An invite is a link that sets kōan up with the account in one tap.</p>
+{%- if let Some(list) = list %}
+{{ self.new() }}{{ self.panel() }}{{ list }}
+{%- else %}
+{{ kit::Empty::new("This server runs without sign-in, so it has no accounts.") }}
+{%- endif %}

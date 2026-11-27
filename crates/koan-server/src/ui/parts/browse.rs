@@ -514,7 +514,10 @@ impl<'a> Toolbar<'a> {
 
     fn name(&self) -> kit::Input<'static> {
         let (hint, width) = match self.kind {
-            Kind::Albums => ("Album or artist", "w-[12em] max-wide:w-auto max-wide:flex-1"),
+            Kind::Albums => (
+                "Album or artist",
+                "w-[12em] max-wide:w-auto max-wide:flex-1",
+            ),
             Kind::Artists => ("Artist", "w-[12em] max-wide:w-auto max-wide:flex-1"),
             Kind::Tracks => (
                 "Title, artist or record",
@@ -552,7 +555,12 @@ impl<'a> Toolbar<'a> {
 
     /// "Any", then each value offered, then the current one if a link set one
     /// that is not offered, so it still shows.
-    fn choice(&self, name: &'static str, offered: &[String], current: &str) -> kit::Select<'static> {
+    fn choice(
+        &self,
+        name: &'static str,
+        offered: &[String],
+        current: &str,
+    ) -> kit::Select<'static> {
         let mut values: Vec<String> = offered.to_vec();
         if let Some(c) = set(current)
             && !values.iter().any(|v| v == c)
@@ -574,7 +582,12 @@ impl<'a> Toolbar<'a> {
         self.choice("genre", self.genres, &self.b.genre)
     }
 
-    fn year(&self, name: &'static str, value: Option<i32>, label: &'static str) -> kit::Input<'static> {
+    fn year(
+        &self,
+        name: &'static str,
+        value: Option<i32>,
+        label: &'static str,
+    ) -> kit::Input<'static> {
         kit::Input::text(name)
             .value(value.map(|y| y.to_string()).unwrap_or_default())
             .placeholder(if name == "from" { "From" } else { "To" })
@@ -604,9 +617,8 @@ mod tests {
 
     #[test]
     fn blank_fields_are_unset_and_the_query_round_trips() {
-        let b = browse(
-            "sort=year&q=+aphex+&fav=&lossless=1&codec=&from=1990&to=&genre=Drum+%26+Bass",
-        );
+        let b =
+            browse("sort=year&q=+aphex+&fav=&lossless=1&codec=&from=1990&to=&genre=Drum+%26+Bass");
         let q = b.albums(0, 0);
         assert_eq!(q.search, Some("aphex"));
         assert_eq!(b.artists(0, 0).search, Some("aphex"));
@@ -651,7 +663,10 @@ mod tests {
         for shelf in [Shelf::Favourites, Shelf::Recent, Shelf::Search("moss")] {
             let open = |kind: Kind| {
                 let link = shelf_browser(shelf, kind);
-                assert!(link.starts_with(kind.route().trim_start_matches('/')), "{link}");
+                assert!(
+                    link.starts_with(kind.route().trim_start_matches('/')),
+                    "{link}"
+                );
                 browse(link.split_once('?').unwrap().1)
             };
             let (want, got) = (shelf.albums(user, now), open(Kind::Albums));

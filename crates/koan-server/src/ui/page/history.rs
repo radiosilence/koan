@@ -22,7 +22,7 @@ use crate::ui::parts::covers::Versions;
 use crate::ui::parts::credit::Credits;
 use crate::ui::parts::heart::Hearts;
 use crate::ui::parts::track::{Lead, Row, Rows};
-use crate::ui::{Logged, Sent, UiState, flash_bad, open, paths, patch, signals};
+use crate::ui::{Logged, Sent, UiState, flash_bad, open, patch, paths, signals};
 
 /// Plays on one page.
 const PAGE: u32 = 300;
@@ -199,10 +199,9 @@ pub(in crate::ui) async fn forget(
     })
     .await;
     match found {
-        Some(list) => askama_datastar::events([
-            patch(&list),
-            signals(serde_json::json!({ "forget": [] })),
-        ]),
+        Some(list) => {
+            askama_datastar::events([patch(&list), signals(serde_json::json!({ "forget": [] }))])
+        }
         None => flash_bad("Those plays could not be forgotten."),
     }
 }
