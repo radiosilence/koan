@@ -1,0 +1,6 @@
+{#- What the current scan is doing, or the last did. -#}
+<div id="{{ self.id() }}" class="grid max-w-form gap-2">
+{%- if let Some(line) = line %}<p class="m-0" role="status">{{ line }}</p>{% endif -%}
+{%- if let Some(f) = failed %}{{ kit::Notice::bad(f) }}{% endif -%}
+{%- if let Some(bar) = bar %}{{ bar }}{% endif -%}
+</div>

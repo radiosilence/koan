@@ -1,0 +1,10 @@
+{#- A track's row. The player reads the track from its data attributes, and the track menu its addresses. -#}
+<li tabindex="0" data-id="{{ t.id }}" data-dur="{{ t.duration_ms.unwrap_or(0) / 1000 }}" data-title="{{ t.title }}" data-artist="{{ artist }}" data-album="{{ t.album_title }}" data-src="{{ self.src() }}" data-cover="{{ cover }}" data-album-href="{{ self.album_href() }}" data-properties="{{ self.properties() }}"
+{%- if let Some(c) = credit %} data-credit="{{ c }}"{% endif %}{% if let Some(q) = self.queued() %} data-q="{{ q }}"{% endif %}>
+{%- match lead %}
+{%- when Lead::Number(n) %}<span class="n">{{ n }}</span>
+{%- when Lead::Queued(q) %}<span class="n">{{ q + 1 }}</span>
+{%- when Lead::Played { time, play } %}<input type="checkbox" class="flex-none max-wide:hidden" value="{{ play }}" aria-label="Select this play"><span class="n w-auto max-wide:text-meta">{{ time }}</span>
+{%- endmatch -%}
+<span class="t">{{ t.title }}{{ sub }}</span><span class="d">{{ self.duration() }}</span>
+<span class="contents max-wide:hidden">{{ heart }}{% if let Some(b) = self.share_button() %}{{ b }}{% endif %}{{ self.add() }}</span>{{ self.mark_html() }}{{ self.menu() }}</li>

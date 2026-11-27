@@ -1,0 +1,18 @@
+{#- What the server keeps beside the library, redrawn as the warm, a sweep or a scan moves. -#}
+<div id="{{ self.id() }}">
+{%- if let Some(c) = covers %}
+<h3>Covers</h3><p class="mt-0 mb-3.5 text-muted">{{ c.used }} of {{ c.budget }}, in {{ c.count }} covers{% if c.misses > 0 %}, {{ c.misses }} of them remembered as having no art{% endif %}.</p>
+{{ c.pairs }}
+{%- if let Some((done, total)) = c.progress %}{{ kit::Meter::new(done, total).label("Warm progress").class("mb-2 max-w-form") }}<p class="text-muted text-control" role="status">{{ done }} of {{ total }} records</p>{% endif %}
+<div class="mb-2 flex flex-wrap items-center gap-2">
+{%- if let Some(b) = c.warm %}{{ b }}{% endif -%}
+{%- if let Some(b) = c.clear %}{{ b }}{% endif -%}
+</div>
+{%- endif %}
+{%- if let Some(d) = downloads %}
+<h3>Downloads</h3><p class="mt-0 mb-3.5 text-muted">{{ d.used }}{% if let Some(limit) = d.limit %} of {{ limit }}{% endif %}, {{ d.tracks }} tracks from the server this one syncs from.</p>
+{%- endif %}
+{%- if let Some(l) = library %}
+<h3>Library</h3><p class="mt-0 mb-3.5 text-muted">{{ l.tracks }} tracks, {{ l.albums }} records, {{ l.artists }} artists.{% if let Some(scan) = l.scan %} Last scan {{ scan }}.{% endif %}</p>
+{%- endif %}
+</div>

@@ -1,0 +1,16 @@
+{#- The sort and filter controls: a row above the listing on a wide screen, one "sort · filter" disclosure on a phone, which the player's script opens on a wide screen. A form that reads its page in place as it changes; without script, an ordinary GET. -#}
+{%- let form = self.form() %}
+{%- let label = "inline-flex items-center gap-1.5 max-wide:justify-between" %}
+{% filter kit::wrap(kit::Disclosure::new(self.summary()).class("browse -mt-1 mb-5 wide:[&>summary]:hidden")) %}
+<form {{ form.attrs() }} class="flex flex-wrap items-center gap-x-3.5 gap-y-2 text-meta text-muted max-wide:mt-2.5 max-wide:flex-col max-wide:items-stretch max-wide:gap-3 max-wide:border max-wide:border-rule max-wide:p-3.5 max-wide:text-body">
+<label class="{{ label }}">name{{ self.name() }}</label>
+<label class="{{ label }}">sort{{ self.sort() }}</label>
+{%- if let Some(seed) = self.seed() %}{{ kit::Input::hidden("seed", seed) }}{% endif %}
+{%- if let Some(href) = self.reshuffle() %}{{ kit::Link::new("Reshuffle", href).class("text-muted lowercase") }}{% endif %}
+{%- for c in self.checks() %}{{ c }}{% endfor %}
+<label class="{{ label }}">codec{{ self.codec() }}</label>
+<label class="{{ label }}">years{{ self.from() }}<span>–</span>{{ self.to() }}</label>
+<label class="{{ label }}">genre{{ self.genre() }}</label>
+{{ kit::Link::new("Reset", self.reset()).class("text-muted lowercase") }}
+</form>
+{% endfilter %}

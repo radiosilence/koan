@@ -1,0 +1,6 @@
+{#- The Library page's rescan section, for an admin. -#}
+{%- let form = self.form() %}
+<h2>Rescan</h2><p class="mt-0 mb-3.5 text-muted">Look through the library folders for files added, changed or removed since the last scan. Reading every file again takes longer; it is for after an upgrade that reads more from tags.</p>
+<form {{ form.attrs() }} class="mb-2 flex max-w-form flex-wrap items-center gap-3">
+{{ kit::Check::new("reread", "read every file again").value("1") }}
+{{ form.submit(kit::Button::standard("Rescan")) }}</form>{{ status }}
