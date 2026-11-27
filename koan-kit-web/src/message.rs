@@ -176,15 +176,16 @@ impl<'a> Flash<'a> {
         self.bad || self.stays || self.link.is_some()
     }
 
-    /// For the region: says `message` as an error over the page whenever a request's answer is an error (a status of
-    /// 400 or more), whose body Datastar drops: "That did not work. Try again."
+    /// For the region: says `message` as an error over the page whenever a request the person started, an action or
+    /// a navigation in place, is answered with an error (a status of 400 or more), whose body Datastar drops: "That did
+    /// not work. Try again." A stream opened by `askama_datastar::reopen_on` says nothing, since it reopens by itself."
     pub fn failed(mut self, message: impl Into<Text<'a>>) -> Self {
         self.failed = message.into();
         self
     }
 
-    /// For the region: says `message` as an error over the page once Datastar has given up retrying a request it could
-    /// not send: "The server could not be reached."
+    /// For the region: says `message` as an error over the page once Datastar has given up retrying a request the
+    /// person started that it could not send: "The server could not be reached." A stream says nothing."
     pub fn unreachable(mut self, message: impl Into<Text<'a>>) -> Self {
         self.unreachable = message.into();
         self
@@ -306,6 +307,23 @@ mod tests {
         assert!(
             !Flash::region().to_string().contains("datastar-fetch"),
             "a region told nothing hears nothing"
+        );
+    }
+
+    #[test]
+    fn a_stream_failing_says_nothing() {
+        let region = Flash::region()
+            .failed("failed")
+            .unreachable("unreachable")
+            .to_string();
+        assert!(
+            region.contains("!d.el?.dataset?.reopenUrl &amp;&amp; dispatchEvent"),
+            "a stream reopens by itself, so only a request the person started may flash: {region}"
+        );
+        let live = askama_datastar::reopen("/stream").to_string();
+        assert!(
+            live.contains("data-reopen-url="),
+            "streams are told apart by the attribute reopen writes: {live}"
         );
     }
 
