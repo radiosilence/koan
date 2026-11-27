@@ -11,6 +11,9 @@ use super::auth::resolve_user;
 use super::json_list;
 use crate::db::connection::DbError;
 
+/// A row's MusicBrainz id and sort name, either absent.
+pub type MbidAndSortName = (Option<String>, Option<String>);
+
 /// Rows keyed by their first column, from a statement binding `params`.
 fn keyed<T>(
     conn: &Connection,
@@ -38,7 +41,7 @@ pub fn track_mbids(conn: &Connection, ids: &[i64]) -> Result<HashMap<i64, String
 pub fn album_mbids_and_sort_names(
     conn: &Connection,
     ids: &[i64],
-) -> Result<HashMap<i64, (Option<String>, Option<String>)>, DbError> {
+) -> Result<HashMap<i64, MbidAndSortName>, DbError> {
     keyed(
         conn,
         "SELECT id, mbid, sort_name FROM albums WHERE id IN (SELECT value FROM json_each(?1))",
@@ -51,7 +54,7 @@ pub fn album_mbids_and_sort_names(
 pub fn artist_mbids_and_sort_names(
     conn: &Connection,
     ids: &[i64],
-) -> Result<HashMap<i64, (Option<String>, Option<String>)>, DbError> {
+) -> Result<HashMap<i64, MbidAndSortName>, DbError> {
     keyed(
         conn,
         "SELECT id, mbid, sort_name FROM artists WHERE id IN (SELECT value FROM json_each(?1))",

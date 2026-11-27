@@ -358,7 +358,7 @@ pub(super) struct AlbumExtras {
     pub(super) uids: Uids,
     pub(super) credits: HashMap<i64, Vec<Credited>>,
     /// MusicBrainz release id and sort name.
-    pub(super) names: HashMap<i64, (Option<String>, Option<String>)>,
+    pub(super) names: HashMap<i64, queries::MbidAndSortName>,
     pub(super) genres: HashMap<i64, Vec<String>>,
     pub(super) stats: HashMap<i64, queries::AlbumStats>,
     pub(super) played: HashMap<i64, i64>,
@@ -442,7 +442,7 @@ pub(super) fn album_totals(
 pub(super) struct ArtistExtras {
     pub(super) uids: Uids,
     /// MusicBrainz artist id and sort name.
-    pub(super) names: HashMap<i64, (Option<String>, Option<String>)>,
+    pub(super) names: HashMap<i64, queries::MbidAndSortName>,
     pub(super) rating: HashMap<i64, u8>,
     pub(super) starred: HashMap<i64, i64>,
 }

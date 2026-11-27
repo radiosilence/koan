@@ -576,7 +576,7 @@ mod tests {
         };
         save_grant(&conn, &grant, 1).unwrap();
         save_grant(&conn, &grant, 2).unwrap();
-        assert_eq!(grants(&conn).unwrap(), [grant.clone()]);
+        assert_eq!(grants(&conn).unwrap(), std::slice::from_ref(&grant));
         drop_grant(&conn, &grant).unwrap();
         assert!(grants(&conn).unwrap().is_empty());
     }
