@@ -720,3 +720,104 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod page_tests {
+    use crate::ui::fixture::*;
+
+#[tokio::test]
+async fn sorting_and_filtering_live_in_the_query_string() {
+    let f = setup(true);
+    let page = |uri: &str| {
+        let req = authed(&f.state, uri).body(Body::empty()).unwrap();
+        let app = f.app.clone();
+        async move { send(&app, req).await }
+    };
+    let r = page("/albums?sort=title&lossless=1&genre=").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Hymn &#60;to&#62; Moisture"),
+        "FLAC is lossless"
+    );
+    assert!(r.body.contains("<option value=\"title\" selected>"));
+    assert!(r.body.contains("name=\"lossless\" value=\"1\" checked"));
+    assert!(r.body.contains(">1</span></summary>"));
+
+    let r = page("/albums?codec=MP3").await;
+    assert!(r.body.contains("No albums match."));
+    let r = page("/albums?from=2020").await;
+    assert!(r.body.contains("No albums match."), "released 2019");
+    let r = page("/albums?from=2015&to=2019").await;
+    assert!(r.body.contains("Hymn &#60;to&#62; Moisture"));
+
+    // A value from a link, not among those offered, is still shown and kept.
+    let r = page("/albums?genre=%22%3E%3Cscript%3E").await;
+    assert!(
+        r.body
+            .contains("<option value=\"&#34;&#62;&#60;script&#62;\" selected>")
+    );
+    assert!(!r.body.contains("\"><script>"));
+
+    for uri in [
+        "/artists?sort=albums&fav=1",
+        "/artists?sort=recent&lossless=1",
+        "/albums?sort=random",
+    ] {
+        assert_eq!(page(uri).await.status, StatusCode::OK, "{uri}");
+    }
+    let r = page("/albums?sort=random").await;
+    assert!(
+        r.body
+            .contains("<input type=\"hidden\" name=\"seed\" value=\""),
+        "the shuffle is pinned"
+    );
+}
+
+#[tokio::test]
+async fn a_shelf_heading_opens_the_browser_its_preview_is_the_head_of() {
+    let f = setup(true);
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        queries::add_favourite(&db.conn, 1, f.track_id).unwrap();
+        for n in 2..=12 {
+            let path = f.dir.path().join(format!("{n}.flac"));
+            std::fs::write(&path, b"x").unwrap();
+            let id =
+                queries::upsert_track(&db.conn, &meta(&path, &format!("Track {n:02}"), n)).unwrap();
+            queries::add_favourite(&db.conn, 1, id).unwrap();
+        }
+    }
+    let get = |uri: &str| authed(&f.state, uri).body(Body::empty()).unwrap();
+    let shelf = send(&f.app, get("/favourites")).await.body;
+    let preview = row_ids(&shelf);
+    assert_eq!(preview.len(), 10, "ten in the preview");
+    // The Tracks heading: a link, with the shelf's whole count in it.
+    let heading = shelf
+        .split("<h2>")
+        .skip(1)
+        .find(|h| h.contains(">Tracks<"))
+        .expect("a Tracks heading");
+    assert!(heading.contains(">12</span>"), "{heading}");
+    let link = heading
+        .split("href=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .replace("&#38;", "&");
+    assert!(link.starts_with("tracks?"), "{link}");
+
+    let browser = send(&f.app, get(&format!("/{link}"))).await.body;
+    assert!(browser.contains("12 tracks"), "the count the heading gave");
+    assert_eq!(
+        row_ids(&browser)[..10],
+        preview[..],
+        "the same tracks, in the same order"
+    );
+    assert!(
+        browser.contains("name=\"fav\" value=\"1\" checked"),
+        "the filter shows, to be cleared"
+    );
+}
+}

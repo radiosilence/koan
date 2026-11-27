@@ -211,3 +211,127 @@ pub(in crate::ui) async fn create(
         Ok(SignedIn::NeedsSecond { .. }) | Err(_) => see_other(paths::LOGIN),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::fixture::*;
+
+#[tokio::test]
+async fn an_empty_server_sends_sign_in_to_setup_which_makes_the_admin_once() {
+    let (_dir, app, code) = unset(true);
+    let code = code.unwrap();
+    let r = send(&app, get("/login").body(Body::empty()).unwrap()).await;
+    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/setup"));
+    let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("action=\"setup\""));
+    assert!(r.body.contains("name=\"code\""));
+
+    let mismatch = send(
+        &app,
+        form(
+            "/setup",
+            &format!("code={code}&username=ada&password=longenough&confirm=different"),
+        ),
+    )
+    .await;
+    assert_eq!(mismatch.status, StatusCode::BAD_REQUEST);
+    assert!(mismatch.body.contains("do not match"));
+    let short = send(
+        &app,
+        form(
+            "/setup",
+            &format!("code={code}&username=ada&password=short&confirm=short"),
+        ),
+    )
+    .await;
+    assert_eq!(short.status, StatusCode::BAD_REQUEST);
+    assert!(short.body.contains("at least 8"));
+
+    let cross = Request::post("/setup")
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, "https://evil.test")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!(
+            "code={code}&username=eve&password=longenough&confirm=longenough"
+        )))
+        .unwrap();
+    assert_eq!(send(&app, cross).await.status, StatusCode::FORBIDDEN);
+
+    // Reaching the page first is not enough: without the code from the log,
+    // nobody is made admin.
+    for guess in [
+        "username=eve&password=longenough&confirm=longenough",
+        "code=&username=eve&password=longenough&confirm=longenough",
+        "code=aaaa-bbbb-cccc-dddd&username=eve&password=longenough&confirm=longenough",
+    ] {
+        let r = send(&app, form("/setup", guess)).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{guess}");
+        assert!(r.body.contains("not the setup code"), "{guess}");
+        assert!(r.cookies().is_empty(), "{guess}");
+    }
+    let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+
+    // However it is typed back.
+    let typed = code.to_uppercase().replace('-', "+");
+    let made = send(
+        &app,
+        form(
+            "/setup",
+            &format!("code={typed}&username=ada&password=longenough&confirm=longenough"),
+        ),
+    )
+    .await;
+    assert_eq!((made.status, made.location()), (StatusCode::SEE_OTHER, "/"));
+    let access = made.cookie("koan_access");
+    let home = send(
+        &app,
+        get("/")
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(home.status, StatusCode::OK);
+
+    // Closed for good: the page, a second admin, and sign-in is sign-in again.
+    let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;
+    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/login"));
+    let again = send(
+        &app,
+        form(
+            "/setup",
+            &format!("code={code}&username=eve&password=longenough&confirm=longenough"),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (again.status, again.location()),
+        (StatusCode::SEE_OTHER, "/login")
+    );
+    assert!(again.cookies().is_empty());
+    let r = send(&app, get("/login").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn setup_turned_off_leaves_an_empty_server_to_the_cli() {
+    let (_dir, app, code) = unset(false);
+    assert_eq!(code, None);
+    let r = send(&app, get("/login").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;
+    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/login"));
+    let r = send(
+        &app,
+        form(
+            "/setup",
+            "username=ada&password=longenough&confirm=longenough",
+        ),
+    )
+    .await;
+    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/login"));
+    assert!(r.cookies().is_empty());
+}
+}

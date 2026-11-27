@@ -44,3 +44,42 @@ impl Page for Playlists {
         Ok(Body::of("Playlists", &PlaylistsPage { lists }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::fixture::*;
+
+#[tokio::test]
+async fn playlists_list_the_callers_own_and_play_like_albums() {
+    let f = setup(true);
+    let (mine, theirs) = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        let mine = queries::create_playlist(&db.conn, 1, "Damp <Mix>", None).unwrap();
+        queries::add_tracks(&db.conn, mine, &[f.track_id]).unwrap();
+        let theirs = queries::create_playlist(&db.conn, bob, "Bob's Secret", None).unwrap();
+        (mine, theirs)
+    };
+    let r = send(
+        &f.app,
+        authed(&f.state, "/playlists").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("Damp &#60;Mix&#62;") && r.body.contains("1 track"));
+    assert!(
+        !r.body.contains("Bob"),
+        "another account's private playlist is not listed"
+    );
+
+    let uri = format!("/playlist/{mine}");
+    let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("data-act=\"queue\"") && r.body.contains("data-context=\"album\""));
+    assert!(r.body.contains(&format!("data-id=\"{}\"", f.track_id)));
+
+    let uri = format!("/playlist/{theirs}");
+    let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+}

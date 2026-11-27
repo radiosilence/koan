@@ -260,3 +260,335 @@ fn whole(
     };
     document(body.status, &layout.html())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::fixture::*;
+
+#[tokio::test]
+async fn scripts_are_compressed_for_a_browser_that_accepts_it() {
+    let f = setup(true);
+    let r = send(
+        &f.app,
+        get("/ui/assets/datastar.js")
+            .header(header::ACCEPT_ENCODING, "br, gzip")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.headers[header::CONTENT_ENCODING], "br");
+}
+
+#[tokio::test]
+async fn streams_serve_ranges_to_a_signed_in_user() {
+    let f = setup(true);
+    let uri = format!("/ui/stream/{}", f.track_id);
+    let r = send(
+        &f.app,
+        authed(&f.state, &uri)
+            .header(header::RANGE, "bytes=2-4")
+            .header(header::ACCEPT_ENCODING, "br")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        (r.status, r.body.as_str()),
+        (StatusCode::PARTIAL_CONTENT, "234")
+    );
+    assert!(!r.headers.contains_key(header::CONTENT_ENCODING));
+    let r = send(&f.app, get(&uri).body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let r = send(
+        &f.app,
+        authed(&f.state, "/ui/stream/999")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn every_class_on_every_page_has_a_rule() {
+    let f = setup(true);
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+    let artist = queries::tracks_by_ids(&db.conn, &[f.track_id]).unwrap()[0]
+        .artist_id
+        .unwrap();
+    let access =
+        auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+    let page = |uri: &str| {
+        get(uri)
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let post = |uri: &str, body: &str| {
+        Request::post(uri)
+            .header(header::HOST, HOST)
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("datastar-request", "true")
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    };
+    let mut rendered = Vec::new();
+    for uri in [
+        "/albums".to_owned(),
+        "/albums?lossless=1&codec=MP3".to_owned(),
+        format!("/album/{}", f.album_id),
+        "/artists".to_owned(),
+        format!("/artist/{artist}"),
+        "/playlists".to_owned(),
+        "/search?q=Wet".to_owned(),
+        "/search?q=nothing-here".to_owned(),
+        "/queue".to_owned(),
+        "/library".to_owned(),
+        "/favourites".to_owned(),
+        "/history".to_owned(),
+        "/recent".to_owned(),
+        "/tracks".to_owned(),
+        "/tracks?fav=1&recent=1&sort=played".to_owned(),
+        "/albums?recent=1".to_owned(),
+        "/account".to_owned(),
+        "/scrobbling".to_owned(),
+        "/users".to_owned(),
+        "/connect".to_owned(),
+        format!("/track/{}/properties", f.track_id),
+    ] {
+        let r = send(&f.app, page(&uri)).await;
+        assert_eq!(r.status, StatusCode::OK, "{uri}");
+        rendered.push((uri, r.body));
+    }
+    for (uri, body) in [
+        ("/account/keys", r#"{"keyname":"phone"}"#),
+        ("/account/app-passwords", r#"{"appname":"Arpeggi"}"#),
+        ("/users/1/password/form", "{}"),
+    ] {
+        let r = send(&f.app, post(uri, body)).await;
+        assert_eq!(r.status, StatusCode::OK, "{uri}");
+        rendered.push((uri.to_owned(), r.body));
+    }
+    let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
+    rendered.push(("/login".into(), r.body));
+    for (uri, html) in rendered {
+        let missing = crate::share::unstyled_classes(
+            &html,
+            super::UI_CSS,
+            &["page", "browse", "toolbar", "search", "group"],
+        );
+        assert!(
+            missing.is_empty(),
+            "{uri}: no rule in ui.css for {missing:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
+    let f = setup(true);
+    let uri = format!("/album/{}", f.album_id);
+    let full = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+    assert_eq!(full.status, StatusCode::OK);
+    assert!(full.body.starts_with("<!doctype html>"));
+    assert!(
+        full.body.contains("rel=\"icon\""),
+        "pages carry the favicon"
+    );
+    assert!(full.body.contains("aria-label=\"Library\">"));
+    assert!(full.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
+    assert!(full.body.contains("Hymn &#60;to&#62; Moisture"));
+    assert!(!full.body.contains("<Moss>") && !full.body.contains("<to>"));
+    // kit: raw, the assertion that no page carries a style attribute names one.
+    assert!(!full.body.contains("<script>") && !full.body.contains(" style="));
+    let csp = full.headers[header::CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap();
+    assert!(
+        csp.contains("script-src 'self' 'unsafe-eval' 'sha256-") && !csp.contains("unsafe-inline")
+    );
+    assert!(crate::share::import_map_allowed(&full.body, csp), "{csp}");
+    // The stylesheet's URL changes with its contents, so an upgrade never pairs
+    // new markup with a cached stylesheet.
+    let css = &super::ASSETS.css;
+    assert!(css.starts_with("./ui/assets/ui.css?v=") && full.body.contains(css.as_str()));
+    let served = send(&f.app, get(&css[1..]).body(Body::empty()).unwrap()).await;
+    assert_eq!(served.status, StatusCode::OK);
+    assert!(
+        served.headers[header::CACHE_CONTROL]
+            .to_str()
+            .unwrap()
+            .contains("immutable")
+    );
+    // Every page and patch names it too, so an open tab can catch up.
+    assert_eq!(full.headers["x-koan-css"], super::ASSETS.css_hash.as_str());
+
+    let partial = send(
+        &f.app,
+        authed(&f.state, &uri)
+            .header("x-koan-partial", "1")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(partial.body.starts_with("<section class=\"page\" "));
+    assert!(
+        partial
+            .body
+            .contains("data-title=\"Hymn &#60;to&#62; Moisture\"")
+    );
+    assert!(!partial.body.contains("<nav"));
+
+    for page in [
+        "/",
+        "/albums",
+        "/artists",
+        "/search?q=moss",
+        "/queue",
+        "/artist/1",
+    ] {
+        let r = send(&f.app, authed(&f.state, page).body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::OK, "{page}");
+    }
+    let r = send(
+        &f.app,
+        authed(&f.state, "/search?q=moss")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(r.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
+}
+
+#[tokio::test]
+async fn live_fragments_are_datastar_events_and_posts_need_datastar() {
+    let f = setup(true);
+    let r = send(
+        &f.app,
+        authed(
+            &f.state,
+            "/search/results?datastar=%7B%22q%22%3A%22moss%22%7D",
+        )
+        .header("datastar-request", "true")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.starts_with("event: datastar-patch-elements\n"));
+    assert!(r.body.contains("data: elements <div id=\"results\">"));
+
+    let share = format!("/album/{}/share", f.album_id);
+    let bare = Request::post(&share)
+        .header(header::HOST, HOST)
+        .header(
+            header::COOKIE,
+            format!("koan_access={}", access_token(&f.state)),
+        )
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&f.app, bare).await.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn() {
+    let f = setup(true);
+    let page = send(
+        &f.app,
+        authed(&f.state, "/albums").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let src = format!("src=\"ui/cover/{}?size=600&#38;v=", f.album_id);
+    let src_raw = format!("src=\"ui/cover/{}?size=600&v=", f.album_id);
+    assert!(
+        page.body.contains(&src) || page.body.contains(&src_raw),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body
+            .contains("loading=\"lazy\" decoding=\"async\" width=\"600\" height=\"600\"")
+    );
+
+    let uri = format!("/ui/cover/{}?size=300&v=1", f.album_id);
+    for _ in 0..2 {
+        let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::OK, "the fake file has no art");
+        assert_eq!(r.headers[header::CONTENT_TYPE], "image/svg+xml");
+        assert!(r.body.contains("<svg"), "the apps' placeholder, drawn");
+        assert!(
+            !r.headers[header::CACHE_CONTROL]
+                .to_str()
+                .unwrap()
+                .contains("immutable"),
+            "art added later must replace it"
+        );
+    }
+    let r = send(
+        &f.app,
+        authed(&f.state, "/ui/cover/999999?size=300")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "no such album");
+    let kept: Vec<_> = std::fs::read_dir(f.dir.path().join("covers"))
+        .unwrap()
+        .map(|e| e.unwrap())
+        .collect();
+    assert_eq!(kept.len(), 1, "one remembered miss");
+    assert_eq!(kept[0].metadata().unwrap().len(), 0);
+    assert!(kept[0].file_name().to_string_lossy().ends_with("-300.jpg"));
+}
+
+#[tokio::test]
+async fn with_auth_off_everything_is_open() {
+    let f = setup(false);
+    let r = send(&f.app, get("/albums").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(!r.body.contains("Sign out"));
+    assert!(
+        r.body
+            .contains(concat!("kōan ", env!("CARGO_PKG_VERSION"), "</a>")),
+        "the version shows without an account too"
+    );
+    let r = send(
+        &f.app,
+        get("/login?next=%2Fqueue").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.location(), "/queue");
+}
+
+#[tokio::test]
+async fn under_a_path_pages_resolve_their_links_from_it() {
+    let f = setup_at(true, Some("https://koan.test/koan/"));
+    let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
+    assert!(r.body.contains("<base href=\"/koan/\">"), "{}", r.body);
+    let r = send(
+        &f.app,
+        authed(&f.state, "/albums").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains("<base href=\"/koan/\">"));
+    assert!(
+        r.body.contains("href=\"albums\""),
+        "links are relative to it"
+    );
+    let r = send(&setup(true).app, get("/login").body(Body::empty()).unwrap()).await;
+    assert!(r.body.contains("<base href=\"/\">"));
+}
+
+#[tokio::test]
+async fn the_icon_is_where_favicon_fetchers_look() {
+    let f = setup(true);
+    for uri in ["/favicon.ico", "/apple-touch-icon.png"] {
+        let r = send(&f.app, get(uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::OK, "{uri}");
+        assert_eq!(r.headers[header::CONTENT_TYPE], "image/png");
+    }
+}
+}
