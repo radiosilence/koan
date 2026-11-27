@@ -1,0 +1,1 @@
+- **Linked devices sync after a rescan that rewrites tags.** A scan that edits tags in place now tells devices the library changed, and an album queued by a standing order keeps its file order when its tracks have no numbers.
