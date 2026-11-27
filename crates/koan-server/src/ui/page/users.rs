@@ -511,7 +511,7 @@ pub(in crate::ui) async fn set_role(
         let done = on_account(&s, id, |conn, row| {
             invite::set_role(conn, &row.username, role)
         });
-        (done, listing(&s))
+        Some((done, listing(&s)))
     })
     .await
     .unwrap_or((Account::Unavailable, None));
@@ -543,7 +543,7 @@ pub(in crate::ui) async fn delete(
             }
             done
         });
-        (done, listing(&s))
+        Some((done, listing(&s)))
     })
     .await
     .unwrap_or((Account::Unavailable, None));
@@ -571,9 +571,9 @@ pub(in crate::ui) async fn remove_second_factor(
         let done = on_account(&s, id, |conn, row| {
             koan_auth::second_factor::turn_off(conn, row.id)
                 .logged()
-                .map(|()| row.username.clone())
+                .map(|_| row.username.clone())
         });
-        (done, listing(&s))
+        Some((done, listing(&s)))
     })
     .await
     .unwrap_or((Account::Unavailable, None));
