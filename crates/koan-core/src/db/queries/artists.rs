@@ -413,6 +413,17 @@ pub fn enrich_remote_artist(
     Ok(())
 }
 
+/// An artist's MusicBrainz id: `None` when there is no such artist, `Some(None)`
+/// when it has none.
+pub fn artist_mbid(conn: &Connection, id: i64) -> Result<Option<Option<String>>, DbError> {
+    Ok(conn
+        .query_row("SELECT mbid FROM artists WHERE id = ?1", [id], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .optional()?
+        .map(|mbid| mbid.filter(|m| !m.is_empty())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -731,5 +742,20 @@ mod tests {
 
         let id3 = get_or_create_artist(&db.conn, "Squarepusher", None).unwrap();
         assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn an_artists_mbid_tells_a_missing_artist_from_one_without() {
+        let db = test_db();
+        let id = get_or_create_artist(&db.conn, "Arca", None).unwrap();
+        assert_eq!(artist_mbid(&db.conn, id).unwrap(), Some(None));
+        db.conn
+            .execute("UPDATE artists SET mbid = 'mb-1' WHERE id = ?1", [id])
+            .unwrap();
+        assert_eq!(
+            artist_mbid(&db.conn, id).unwrap(),
+            Some(Some("mb-1".into()))
+        );
+        assert_eq!(artist_mbid(&db.conn, id + 1).unwrap(), None);
     }
 }

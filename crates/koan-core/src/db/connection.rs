@@ -43,6 +43,9 @@ pub enum DbError {
     /// nobody chose.
     #[error("the playlist has changed: the place to put them is gone")]
     MissingEntry(i64),
+    /// A value kept as JSON did not encode.
+    #[error("json: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 /// Wrapper around a SQLite connection with koan's schema applied.

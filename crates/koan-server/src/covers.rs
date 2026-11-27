@@ -255,17 +255,11 @@ impl Covers {
             }
         }
         let all = (1u8 << WARMED.len()) - 1;
-        let unwarmed = conn
-            .prepare(
-                "SELECT DISTINCT album_id FROM tracks
-                  WHERE path IS NOT NULL AND album_id IS NOT NULL",
-            )
-            .and_then(|mut stmt| {
-                stmt.query_map([], |r| r.get::<_, i64>(0)).map(|ids| {
-                    ids.flatten()
-                        .filter(|id| warmed.get(id) != Some(&all))
-                        .count()
-                })
+        let unwarmed = koan_core::db::queries::albums_with_files(conn)
+            .map(|ids| {
+                ids.into_iter()
+                    .filter(|id| warmed.get(id) != Some(&all))
+                    .count()
             })
             .unwrap_or(0);
         Usage {
@@ -433,16 +427,7 @@ impl Covers {
         let albums: Vec<i64> = {
             let Ok(db) = pool.get() else { return };
             self.forget_evicted(&db.conn);
-            let Ok(mut stmt) = db.conn.prepare(
-                "SELECT album_id FROM tracks
-                  WHERE path IS NOT NULL AND album_id IS NOT NULL
-                  GROUP BY album_id ORDER BY MIN(path)",
-            ) else {
-                return;
-            };
-            stmt.query_map([], |r| r.get(0))
-                .map(|rows| rows.flatten().collect())
-                .unwrap_or_default()
+            koan_core::db::queries::albums_with_files(&db.conn).unwrap_or_default()
         };
         let total = albums.len();
         self.set_warm(|w| {
