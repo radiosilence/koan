@@ -76,13 +76,13 @@ impl<'a> Link<'a> {
 
     /// Its classes: a card's, then the app's.
     fn classes(&self) -> Option<String> {
-        let class = format!(
-            "{}{}",
-            if self.card { "card" } else { "" },
-            self.attrs.classes()
-        );
-        let class = class.trim_start();
-        (!class.is_empty()).then(|| class.to_owned())
+        let classes: Vec<&str> = self
+            .card
+            .then_some("card")
+            .into_iter()
+            .chain(self.attrs.class_list())
+            .collect();
+        (!classes.is_empty()).then(|| classes.join(" "))
     }
 
     /// The attributes that load it in place, when it does.
@@ -98,13 +98,11 @@ impl fmt::Display for InPlace<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let link = self.0;
         if link.in_place {
-            let label = link.label.to_string();
             let own = Busy::own(&[
                 "link",
                 link.href.as_str(),
                 link.busy_key.as_str(),
                 link.attrs.id(),
-                &label,
             ]);
             in_place_attributes(f, own, &link.busy_key)?;
         }

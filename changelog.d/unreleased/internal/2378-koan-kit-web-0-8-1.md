@@ -1,0 +1,1 @@
+- **koan-kit-web 0.8.1.** Fixes from the review of 0.8: in-place navigation has one owner of the history and pushes only what an answer drew, busy signals are named by the request alone, app classes are escaped once, and loading fields are inert.

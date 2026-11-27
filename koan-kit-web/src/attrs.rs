@@ -120,6 +120,16 @@ impl<'a> Attrs<'a> {
         self.datastar.push((name, expression));
     }
 
+    /// The app's classes, as given, for a `class` attribute a template writes, which escapes them once.
+    pub(crate) fn class_list(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.classes.iter().copied()
+    }
+
+    /// The app's classes as one value, for a template's `class="{{ … }}"`, which escapes it once.
+    pub(crate) fn class_names(&self) -> String {
+        self.classes.join(" ")
+    }
+
     /// The classes, each after a space, to follow the component's own in its `class` attribute.
     pub(crate) fn classes(&self) -> Classes<'_> {
         Classes(&self.classes)
