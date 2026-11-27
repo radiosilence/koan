@@ -6,7 +6,7 @@
     be seen. A question asked by a button that sends a form posts that form's fields. Once a handler closes the sheet
     with `done`, the button that asked hears `kit-confirmed`. Busy is written as a string, since Datastar writes a bare
     `true` as an empty attribute. -#}
-<dialog class="sheet{{ attrs.classes() }}" closedby="any" data-attr:closedby="$_kitconfirmbusy ? 'none' : 'any'" aria-labelledby="kit-confirm-question"{{ attrs }} data-init="{{ self.keyboard() }}"
+<dialog class="sheet{{ attrs.classes() }}" closedby="any" data-attr:closedby="$_kitconfirmbusy ? 'none' : 'any'" aria-labelledby="kit-confirm-question"{{ attrs }} data-init="{{ crate::sheet::KEYBOARD_INSET }}"
   data-signals__ifmissing="{_kitconfirm: {ask: '', detail: '', yes: '', url: '', preview: '', form: '', bad: false, ready: false, open: false, done: false, n: 0}}">
   <header data-effect="!$_kitconfirm.open &amp;&amp; el.closest('dialog').open &amp;&amp; (el.closest('dialog').close(), $_kitconfirm.done &amp;&amp; (el.closest('dialog')._kitopener?.isConnected ? el.closest('dialog')._kitopener : document).dispatchEvent(new CustomEvent('kit-confirmed', {bubbles: true, detail: {url: $_kitconfirm.url}})))">
     <h2 id="kit-confirm-question" data-text="$_kitconfirm.ask"></h2>

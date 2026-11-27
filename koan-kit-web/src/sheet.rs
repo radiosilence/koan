@@ -123,10 +123,6 @@ impl Sheet<'_> {
             .selector(format!("#{} > section", css_ident(id)))
             .mode(ElementPatchMode::Replace)
     }
-
-    fn keyboard(&self) -> &'static str {
-        KEYBOARD_INSET
-    }
 }
 
 /// A sheet's body alone, as [`Sheet::fill`] and [`Sheet::dismiss`] send it.
@@ -170,10 +166,6 @@ impl<'a> Confirm<'a> {
             cancel: cancel.into(),
             attrs,
         }
-    }
-
-    fn keyboard(&self) -> &'static str {
-        KEYBOARD_INSET
     }
 }
 
