@@ -325,6 +325,13 @@ impl From<&Markup> for Markup {
     }
 }
 
+/// What a template's loop over markup hands over.
+impl From<&&Markup> for Markup {
+    fn from(markup: &&Markup) -> Self {
+        (*markup).clone()
+    }
+}
+
 impl From<Markup> for Html {
     fn from(markup: Markup) -> Self {
         Html::trusted(markup.0)
@@ -421,6 +428,12 @@ impl From<&Markup> for Content<'_> {
     }
 }
 
+impl From<&&Markup> for Content<'_> {
+    fn from(markup: &&Markup) -> Self {
+        Self::Markup((*markup).clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,6 +496,26 @@ mod tests {
     #[template(ext = "html", source = "<b>{{ name }}</b>")]
     struct Bold<'a> {
         name: &'a str,
+    }
+
+    #[derive(askama::Template)]
+    #[template(
+        ext = "html",
+        source = "{% for row in rows %}{{ crate::Notice::new(row) }}{{ crate::Pairs::new().wrap(row.into()) }}{% endfor %}"
+    )]
+    struct Rows {
+        rows: Vec<Markup>,
+    }
+
+    #[test]
+    fn a_loop_over_markup_hands_each_to_a_slot() {
+        use crate::Wrap as _;
+        let rows = Rows {
+            rows: vec![Markup::kit("<b>a</b>".into())],
+        };
+        let html = askama::Template::render(&rows).expect("renders");
+        assert!(html.contains("<b>a</b>"), "{html}");
+        assert_eq!(Markup::from(&&rows.rows[0]), rows.rows[0]);
     }
 
     #[test]

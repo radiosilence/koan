@@ -468,16 +468,22 @@ impl<'a> Button<'a> {
 }
 
 impl Button<'_> {
-    /// Its own busy signal, named by what it is: how it goes and where, the form it sends, its group, its id and its
-    /// label. Two buttons alike in all of these are told apart by an [`id`](Self::id).
+    /// Its own busy signal, named by the request it sends: how it goes and where, the form it sends, the name and value
+    /// it submits, its group and its id. Not by its label, which may change between draws (a count, a playing mark)
+    /// while the request runs. Two buttons sending the same request share it; an [`id`](Self::id) tells them apart.
     fn own_busy(&self, method: &str, url: &str) -> Busy {
+        let (name, value) = self
+            .named
+            .as_ref()
+            .map_or(("", ""), |(name, value)| (*name, value.as_str()));
         Busy::own(&[
             method,
             url,
             self.form.as_str(),
+            name,
+            value,
             self.busy_key.as_str(),
             self.attrs.id(),
-            self.label.as_str(),
         ])
     }
 
@@ -532,7 +538,9 @@ pub(crate) const FOLLOW_HISTORY: &str = "history.state?.kit || history.replaceSt
 history.pushState({kit: 1}, '', el.href), \
 window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)";
 
-/// Writes the attributes that make a link load in place, busy by its own signal and ignored while its group's runs.
+/// Writes the attributes that make a link load in place, busy by its own signal and ignored while its group's runs. On
+/// a page with a [`Navigation`](crate::Navigation) the link leaves the click to it, marked `data-in-place`, so one
+/// listener owns the history and knows what the page shows.
 pub(crate) fn in_place_attributes(
     f: &mut fmt::Formatter<'_>,
     own: Busy,
@@ -541,7 +549,7 @@ pub(crate) fn in_place_attributes(
     let (own, group) = indicators(f, own, key)?;
     write!(
         f,
-        " data-class:busy=\"${own}\" data-on:click=\"{FOLLOW_GUARD}${group} || (@get(el.getAttribute('href'){}), {FOLLOW_HISTORY}))\"",
+        " data-in-place data-class:busy=\"${own}\" data-on:click=\"document.getElementById('kit-navigation') || {FOLLOW_GUARD}${group} || (@get(el.getAttribute('href'){}), {FOLLOW_HISTORY}))\"",
         request_options(false, group)
     )
 }
@@ -568,13 +576,9 @@ impl<'a> Button<'a> {
 
     /// Its `class`: the kit's, then the app's.
     fn class_attr(&self) -> Option<String> {
-        let class = format!(
-            "{}{}",
-            self.classes(self.is_link()).join(" "),
-            self.attrs.classes()
-        );
-        let class = class.trim_start();
-        (!class.is_empty()).then(|| class.to_owned())
+        let mut classes = self.classes(self.is_link());
+        classes.extend(self.attrs.class_list());
+        (!classes.is_empty()).then(|| classes.join(" "))
     }
 
     /// The size its glyphs are drawn at.
@@ -797,6 +801,55 @@ mod tests {
             .id("scan-2")
             .to_string();
         assert_ne!(busy, signal(&twin), "an id tells two alike apart");
+    }
+
+    #[test]
+    fn rows_posting_one_url_with_their_own_values_are_busy_apart() {
+        let row = |id: &'static str| {
+            Button::quiet("remove")
+                .post("/rows/remove")
+                .named("id", id)
+                .to_string()
+        };
+        assert_ne!(
+            signal(&row("1")),
+            signal(&row("2")),
+            "one press would spin every row, and a patch clear the running one"
+        );
+    }
+
+    #[test]
+    fn a_label_that_changes_keeps_the_signal() {
+        let retry = |n: u32| {
+            Button::bordered(format!("retry ({n})"))
+                .post("/jobs/1/retry")
+                .to_string()
+        };
+        assert_eq!(
+            signal(&retry(2)),
+            signal(&retry(3)),
+            "a redraw mid-request would drop the spinner"
+        );
+        let link = |label: &'static str| Link::new(label, "/p/2").in_place().to_string();
+        assert_eq!(signal(&link("next")), signal(&link("next ▶")));
+    }
+
+    #[test]
+    fn an_app_class_is_escaped_once() {
+        let button = Button::quiet("x").class("[&>svg]:size-4").to_string();
+        assert!(
+            button.contains("class=\"quiet [&#38;&#62;svg]:size-4\""),
+            "{button}"
+        );
+        let link = Link::new("x", "/x").class("[&>svg]:size-4").to_string();
+        assert!(link.contains("class=\"[&#38;&#62;svg]:size-4\""), "{link}");
+        let nav = crate::Navigation::new().class("[&>svg]:size-4").to_string();
+        assert!(nav.contains("class=\"[&#38;&#62;svg]:size-4\""), "{nav}");
+        let tick = crate::Check::new("a", "a")
+            .bare()
+            .class("[&>svg]:size-4")
+            .to_string();
+        assert!(tick.contains("class=\"[&#38;&#62;svg]:size-4\""), "{tick}");
     }
 
     #[test]

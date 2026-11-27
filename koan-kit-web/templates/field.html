@@ -9,7 +9,7 @@
 {%- if let Some(url) = loads.present() %} data-url="{{ url }}" data-init="@get(el.dataset.url)" aria-busy="true"{% endif %}
 {%- if self.is_custom() %} role="group"{% if let Some(id) = label_id %} aria-labelledby="{{ id }}"{% endif %}{% if note.is_some() %} aria-describedby="{{ self.note_id() }}"{% endif %}{% endif %}{{ attrs }}>
   <span{% if let Some(id) = label_id %} id="{{ id }}"{% endif %}>{{ label }}</span>
-  {% if loads.is_empty() %}{{ self.control() }}{% else %}<span class="skeleton">{{ self.control() }}</span>{% endif %}
+  {% if loads.is_empty() %}{{ self.control() }}{% else %}<span class="skeleton" inert>{{ self.control() }}</span>{% endif %}
   {%- if let Some((_, text)) = note %}
   <small id="{{ self.note_id() }}">{{ text }}</small>
   {%- endif %}
