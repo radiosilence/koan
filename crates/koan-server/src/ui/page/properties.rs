@@ -187,13 +187,7 @@ mod tests {
         assert!(r.body.contains(&path), "{}", r.body);
         assert!(r.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
 
-        let r = send(
-            &f.app,
-            authed(&f.state, &uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
+        let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
         assert_eq!(r.status, StatusCode::OK);
         assert!(!r.body.contains(&path), "{}", r.body);
         assert!(!r.body.contains("a.flac"));
