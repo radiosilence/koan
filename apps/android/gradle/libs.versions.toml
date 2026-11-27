@@ -14,6 +14,12 @@ coil = "3.6.3"
 jna = "5.19.1"
 junit = "4.13.2"
 robolectric = "4.17"
+# The Android framework jars Robolectric runs each SDK level on, as its
+# DefaultSdkProvider names them for the version above: change them with it.
+# Tests run offline, so a level with no jar here fails rather than downloading.
+robolectric-sdk33 = "13-robolectric-9030017-i7"
+robolectric-sdk34 = "14-robolectric-10818077-i7"
+robolectric-sdk35 = "15-robolectric-13954326-i7"
 reorderable = "3.1.0"
 androidx-test-runner = "1.7.0"
 androidx-test-junit = "1.3.0"
@@ -39,6 +45,9 @@ coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" 
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+robolectric-sdk33 = { module = "org.robolectric:android-all-instrumented", version.ref = "robolectric-sdk33" }
+robolectric-sdk34 = { module = "org.robolectric:android-all-instrumented", version.ref = "robolectric-sdk34" }
+robolectric-sdk35 = { module = "org.robolectric:android-all-instrumented", version.ref = "robolectric-sdk35" }
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
