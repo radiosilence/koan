@@ -6,9 +6,6 @@
 
 pub(crate) use askama_datastar::Html;
 
-/// No markup, for a borrowed [`Html`] that is absent.
-pub(crate) static NOTHING: Html = Html::new();
-
 /// Rendering a template. askama fails only when a value's `Display` does,
 /// which for the text, numbers and [`Html`] these templates hold is a bug, so
 /// it panics. The web UI and share routes sit behind `CatchPanicLayer`, which

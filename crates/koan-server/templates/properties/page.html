@@ -1,14 +1,9 @@
-{%- import "copy.html" as copy -%}
 {#- A track's properties: its tags as the library holds them, the file on the server for an admin, and what each source says. -#}
-{%- let section = crate::ui::properties::SECTION -%}
-<p class="{{ crate::ui::pages::KICKER }}">Properties</p><h2 class="my-1 normal-case">{{ title }}</h2><p class="{{ crate::ui::pages::SUB }}">{{ artist }}</p>
+{%- import "parts/macros.html" as m -%}
+{% call m::kicker("Properties") %}{% endcall %}<h1 class="my-1 normal-case">{{ title }}</h1><p class="mt-0 mb-3.5 text-muted wrap-anywhere">{{ artist }}</p>
 {%- if let Some(path) = path %}
-<p class="{{ section }}">File on the server</p><div class="flex gap-2">
-{% call copy::field("track-path", path, "File on the server", "Copy") %}{% endcall %}</div>
+<h2 class="mt-5 mb-2 text-meta">File on the server</h2>{{ kit::CopyField::new("File on the server", path, "Copy").copied("Copied") }}
 {%- endif %}
-{%- for (heading, fields) in lists %}
-<p class="{{ section }}">{{ heading }}</p>
-<dl class="m-0 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-control [&_dd]:m-0 [&_dd]:wrap-anywhere [&_dd]:select-text [&_dt]:text-muted">
-{%- for f in fields %}<dt>{{ f.name }}</dt><dd>{% match f.value %}{% when Value::Text(t) %}{{ t }}{% when Value::Links(h) %}{{ h }}{% endmatch %}</dd>{% endfor -%}
-</dl>
+{%- for (heading, pairs) in lists %}
+<h2 class="mt-5 mb-2 text-meta">{{ heading }}</h2>{{ pairs }}
 {%- endfor %}

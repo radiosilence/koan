@@ -1,0 +1,16 @@
+{#- The frame every page outside the shell is drawn in: sign-in, its second step, setup, pairing a device and consent. -#}
+<!doctype html>
+<html lang="en">
+<head>
+<base href="{{ base }}">
+{{ self.head() }}
+{{ self.icons() }}
+{%- if passkey %}
+<script type="module" src="{{ self.passkey_js() }}"></script>
+{%- endif %}
+</head>
+<body class="pb-0"><main class="mx-auto max-w-[360px] px-4 py-16">
+<h1 class="text-brand">kōan</h1>
+{{ body }}
+</main></body>
+</html>

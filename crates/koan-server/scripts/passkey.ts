@@ -173,20 +173,19 @@ async function register(form: HTMLFormElement) {
   if (!(credential instanceof PublicKeyCredential)) throw new Error("No key answered.");
   const response = credential.response;
   if (!(response instanceof AuthenticatorAttestationResponse)) throw new Error("The key's answer could not be read.");
-  const html = await (
-    await send(form.action, {
+  // The form sends what the key made through Datastar, whose answer draws the
+  // section again, with the key listed and, for the first factor, the
+  // recovery codes to keep.
+  form.dispatchEvent(new CustomEvent("koan-key", {
+    detail: {
       ticket,
       name,
       registration: {
         clientDataJson: toB64(response.clientDataJSON),
         attestationObject: toB64(response.attestationObject),
       },
-    })
-  ).text();
-  // The section again, with the key listed and, for the first factor, the
-  // recovery codes to keep.
-  const section = document.getElementById("second-factor");
-  if (section) section.outerHTML = html;
+    },
+  }));
 }
 
 document.addEventListener(

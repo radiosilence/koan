@@ -1,0 +1,16 @@
+{#- A row of the artist and playlist lists: the link, its name and, where given, its count. No rules between rows, as in every list of the theme. -#}
+{% macro list_row(href, name, count) %}
+<li><a class="flex min-w-0 items-baseline gap-3 px-2 py-2.5 text-ink hover:bg-hover/30 hover:no-underline max-wide:px-0" href="{{ href }}"><span class="min-w-0 flex-1 truncate">{{ name }}</span>{% if !count.is_empty() %}<span class="text-meta text-muted">{{ count }}</span>{% endif %}</a></li>
+{% endmacro %}
+
+{#- The play, shuffle and queue buttons over a list of tracks, which the player's script answers. `primary`: the page's main action, in a hero. -#}
+{% macro play_buttons(primary) %}
+{%- if primary %}{{ kit::Button::primary("Play").data("act", "play") }}{% else %}{{ kit::Button::standard("Play").data("act", "play") }}{% endif -%}
+{{ kit::Button::standard("Shuffle").data("act", "shuffle") }}{{ kit::Button::standard("Add to queue").data("act", "queue") }}
+{%- endmacro %}
+
+{#- A heading with its buttons, above a track list. The row keeps the space a heading would, above and below, since buttons beside it are taller than it and would otherwise sit on the list. -#}
+{% macro list_head() %}mt-6 mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 [&>h1]:my-0 [&>h2]:my-0{% endmacro %}
+
+{#- A page's heading over a record, artist or playlist: what it is, its name, and a line under it. -#}
+{% macro kicker(what) %}<p class="m-0 text-fine text-muted lowercase">{{ what }}</p>{% endmacro %}

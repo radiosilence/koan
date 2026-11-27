@@ -1,0 +1,9 @@
+{#- What plays now and next. The player's script fills Now playing and asks for the list's rows. -#}
+{%- import "parts/macros.html" as m -%}
+<header class="hero"><img class="hero-cover max-wide:max-w-[360px] max-wide:self-center" data-np="cover" alt="" hidden><div class="min-w-0 flex-1">{% call m::kicker("Now playing") %}{% endcall %}
+<h1 class="mb-1 normal-case" data-np="title">Nothing playing</h1>
+<p class="mt-0 mb-3.5 text-muted wrap-anywhere"><span data-np="artist"></span><span data-np="sep" hidden> · </span><a data-np="album"></a></p>
+{{ self.transport() }}{{ self.scrub() }}</div></header>
+<div class="{% call m::list_head() %}{% endcall %}"><h2>Up next</h2>
+{{- kit::Button::quiet("Clear").compact().data("act", "clear") -}}</div>
+{{ list }}

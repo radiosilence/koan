@@ -1,0 +1,2 @@
+{#- A credit as it reads, each credited artist's name a link to their page and the text joining them plain. -#}
+{% for p in parts %}{% if let Some(id) = p.artist_id %}<a href="{{ self.href(id) }}"{% if quiet %} tabindex="-1"{% endif %}>{{ p.text }}</a>{% else %}{{ p.text }}{% endif %}{% endfor %}

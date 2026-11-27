@@ -1,0 +1,27 @@
+<h1>Account</h1>
+{%- match credentials %}
+{%- when None %}
+{{ kit::Empty::new("This server runs without sign-in, so there are no accounts, keys or app passwords.") }}
+{%- when Some((keys, passwords)) %}
+{%- let form = self.sign_out() %}
+<form {{ form.attrs() }} class="mt-0 mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted"><span>Signed in as <strong class="text-ink">{{ username }}</strong></span>
+{{ form.submit(kit::Button::quiet("Sign out").compact()) }}</form>
+{%- if let Some((_, true)) = two_step %}
+{{ kit::Notice::warn("Your account signs in with a password alone. Turn on two-step sign-in below, so that a stolen password is not enough.").class("mt-4 max-w-4xl") }}
+{%- endif %}
+{%- if let Some(link) = link %}
+<section class="panel mt-6 mb-8 flex max-w-4xl flex-wrap items-center gap-x-8 gap-y-4">
+{%- if let Some(qr) = link.qr %}{{ qr }}{% endif %}
+<div class="min-w-0 flex-1 basis-64"><h2 class="mt-0">Link a device</h2><p class="text-body text-ink">Scan this with your phone's camera to sign it in as <strong>{{ username }}</strong>.</p><p class="mt-0 mb-3.5 text-muted">kōan opens and loads the library, or the page offers the download first. The code works for ten minutes; reload the page for a fresh one. On this device, open the link instead.</p>
+{{ kit::CopyField::new("Sign-in link", link.link, "Copy link").copied("Copied") }}</div>
+</section>
+{%- endif %}
+{%- if let Some((section, _)) = two_step %}{{ section }}{% endif %}
+{{ keys }}
+{{ passwords }}
+{%- endmatch %}
+<h2>More</h2><ul class="my-2 flex flex-col gap-1.5">
+{%- for (href, name, what) in self.more() %}
+<li><a href="{{ href }}">{{ name }}</a>{{ what }}</li>
+{%- endfor %}
+<li><a data-whole href="https://github.com/radiosilence/koan/releases/tag/v{{ self.version() }}">kōan {{ self.version() }}</a></li></ul>

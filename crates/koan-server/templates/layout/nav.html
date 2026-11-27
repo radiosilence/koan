@@ -1,0 +1,17 @@
+{#- The nav: the sidebar on a wide screen, the tab bar on a phone. Every link inside it loads its page in place. -#}
+{%- let account = "px-1.5 py-1 text-meta whitespace-nowrap text-muted lowercase hover:text-ink hover:no-underline aria-[current=page]:text-brand" -%}
+<nav id="nav" data-kit-in-place class="fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r border-rule bg-bg px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto max-wide:flex-row max-wide:gap-0 max-wide:border-t max-wide:border-r-0 max-wide:p-0 max-wide:pb-[env(safe-area-inset-bottom)]" aria-label="Library">
+<a class="mb-3 px-3 py-2 text-title-sm font-extralight text-brand hover:text-ink hover:no-underline max-wide:hidden" href="{{ crate::ui::paths::home() }}">kōan</a>
+{%- for e in self.entries() %}
+<a class="{{ self.entry() }} {{ e.place }}" href="{{ e.href }}"{% if self.current(e) %} aria-current="page"{% endif %}>{{ e.label }}</a>
+{%- endfor %}
+{#- On a wide screen the sidebar ends with who is signed in and the version; the account page has everything else. A phone has an Account tab instead. #}
+<div class="mt-auto flex min-w-0 flex-col gap-1 max-wide:hidden">
+{%- if auth_enabled %}
+<form class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted" method="post" action="{{ crate::ui::paths::sign_out() }}"><span class="min-w-0 flex-[1_0_100%] truncate px-1.5 pb-0.5 text-ink">{{ username }}</span>
+<a class="{{ account }}" href="{{ crate::ui::paths::account() }}"{% if self.on_account() %} aria-current="page"{% endif %}>Account</a>
+{{ kit::Button::quiet("Sign out").submit().compact() }}</form>
+{%- else %}
+<a class="{{ account }} self-start" href="{{ crate::ui::paths::account() }}"{% if self.on_account() %} aria-current="page"{% endif %}>Account</a>
+{%- endif %}
+<a class="px-1.5 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline" data-whole href="https://github.com/radiosilence/koan/releases/tag/v{{ self.version() }}">kōan {{ self.version() }}</a></div></nav>

@@ -1,0 +1,2 @@
+{#- A track row's subtitle: its artist credit, where given, and its album, where asked for. -#}
+{% if artist.is_some() || album.is_some() %}<small>{% if let Some(a) = artist %}{{ a }}{% endif %}{% if artist.is_some() && album.is_some() %} · {% endif %}{% if let Some(album) = album %}{{ album }}{% endif %}</small>{% endif %}

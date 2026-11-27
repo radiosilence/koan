@@ -1,0 +1,32 @@
+{#- Approving a device waiting to sign in, laid out like the sign-in page. -#}
+{%- match view %}
+{%- when View::Code { error } %}
+<h2>Sign in a device</h2>
+<p>Type the code the device shows.</p>
+{%- let form = self.code_form() %}
+<form {{ form.attrs() }} class="grid gap-3.5">{{ self.code() }}
+{%- if let Some(e) = error %}{{ kit::Notice::bad(e) }}{% endif %}
+{{ form.submit(kit::Button::primary("Continue")) }}</form>
+{%- when View::NoAccounts %}
+<p>Devices sign in to accounts, and this server runs without sign-in.</p>
+{%- when View::Confirm { device, from, local, user, pair } %}
+<h2>Sign in <span class="normal-case">{{ device }}</span>?</h2>
+{#- A device in the room is on the approver's network, so a request from outside a private network is marked. #}
+{%- if local %}
+<p>Requested from {{ from }}, on your network.</p>
+{%- else %}
+{{ kit::Notice::warn(format!("Requested from {from}, from the internet. A device in the room with you is usually on your network.")) }}
+{%- endif %}
+<p>It will be signed in as <strong>{{ user }}</strong>, and can do anything your account can until you revoke its key.</p>
+<p><small>Approve only a device you are setting up yourself, just now. Anyone can give a device any name.</small></p>
+{%- let yes = self.approve(pair) %}{%- let no = self.decline(pair) %}{%- let out = self.sign_out() %}
+<form {{ yes.attrs() }} class="grid gap-3.5">{{ yes.submit(kit::Button::primary("Approve")) }}</form>
+<form {{ no.attrs() }} class="mt-3.5 grid gap-3.5">{{ no.submit(kit::Button::quiet("Decline")) }}</form>
+<form {{ out.attrs() }} class="mt-3.5 grid gap-3.5">{{ kit::Input::hidden("next", self.here(pair)) }}{{ self.not_me(user) }}</form>
+{%- when View::Declined { device } %}
+<h2>Declined</h2><p>{{ device }} was not signed in.</p>
+{%- when View::Approved { device, user } %}
+<h2>Signed in</h2><p>{{ device }} is signed in as <strong>{{ user }}</strong>. Its key is listed under API keys, where it can be revoked.</p>
+{%- when View::Message { heading, text } %}
+<h2>{{ heading }}</h2><p>{{ text }}</p>
+{%- endmatch %}

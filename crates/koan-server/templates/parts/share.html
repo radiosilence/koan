@@ -1,0 +1,8 @@
+{#- A page's share region: empty, the link made with a button copying it, or why it could not be made. -#}
+<div id="{{ self.id() }}" class="mt-3 max-w-form empty:hidden">
+{%- match result %}
+{%- when Some(Ok(url)) %}{{ kit::CopyField::new("Share link", url, "Copy").copied("Copied") }}
+{%- when Some(Err(e)) %}{{ kit::Notice::bad(e) }}
+{%- when None %}
+{%- endmatch -%}
+</div>

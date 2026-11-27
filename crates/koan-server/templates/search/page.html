@@ -1,0 +1,8 @@
+{#- Without script the form is an ordinary GET; with it, the page follows typing. -#}
+{%- let form = self.form() %}
+<h1>Search</h1><form {{ form.attrs() }} role="search">{{ self.field() }}</form>
+{%- match found %}
+{%- when Found::Blank %}
+{%- when Found::Nothing %}{{ kit::Empty::new(self.nothing()).compact() }}
+{%- when Found::Shelf(html) %}{{ html }}
+{%- endmatch %}

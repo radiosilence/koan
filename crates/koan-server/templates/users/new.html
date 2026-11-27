@@ -1,0 +1,3 @@
+{#- The form making an account and its invite. -#}
+{%- let form = self.form() %}
+<form id="{{ self.id() }}" {{ form.attrs() }} class="mb-2 flex max-w-form gap-2">{{ self.username() }}{{ self.role() }}{{ form.submit(kit::Button::primary("Create and invite")) }}</form>

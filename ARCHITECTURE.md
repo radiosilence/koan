@@ -494,6 +494,7 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 | `mcp.rs` | MCP server on stdio -- exposes `schema_sdl` and `graphql` tools for Claude Desktop integration. |
 | `clients/` | Linked apps by account. Sends each link that asks the account's other devices whenever one changes (`registry.rs`), relays commands between them and wakes the absent by push (`relay.rs`), pushes Live Activity updates for a device a phone is controlling (`activity.rs`), carries out standing orders (`orders.rs`) and tells devices the library moved (`notify.rs`). What it keeps across restarts is `koan_core::db::queries::link`. |
 | `auth/` | JWT middleware (cookie or bearer), password checks for transports that send credentials with every request, and the `/auth/login`, `/auth/refresh`, `/auth/logout` routes. |
+| `ui.rs`, `ui/` | The web UI: server-rendered pages patched by Datastar, every page loaded in place so the browser's player keeps playing, one live stream keyed on the page's address. See [docs/design/web-ui.md](docs/design/web-ui.md). |
 
 ## Picker actions
 

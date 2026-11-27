@@ -1,0 +1,28 @@
+{#- The document every page is drawn in: the nav, `main` (the page's own region, which a link or form loading in place replaces), the transport bar, the track menu, and the page's one confirmation and flash. -#}
+<!doctype html>
+<html lang="en">
+<head>
+<base href="{{ base }}">
+{{ self.head() }}
+{{ title }}
+{{ self.icons() }}
+<link rel="modulepreload" href="{{ self.assets().player_js }}">
+<script type="module" src="{{ self.assets().ui_js }}"></script>
+<script type="module" src="{{ self.assets().passkey_js }}"></script>
+</head>
+{%- let renew = self.renew() %}
+<body data-signals="{{ signals }}" data-renew="{{ renew[0] }}" data-renew-then="{{ renew[1] }}" data-stylesheet="{{ self.stylesheet() }}">
+{{ kit::SkipLink::new("Skip to content", "main") }}
+{{ kit::Navigation::new().follows("url") }}
+<div hidden{{ self.live() }}></div>
+{#- The player's way to load a page in place: an address from a row's data, which the page wrote. #}
+<div hidden data-on:koan-go__window="@get(evt.detail)"></div>
+{{ nav }}
+{{ main }}
+{% include "layout/player.html" %}
+{#- The menu every track row opens, filled for the row by the player's script. Beside the pointer on a wide screen, a sheet above the bar on a phone. #}
+<div id="track-menu" popover="manual" role="menu" class="fixed inset-auto m-0 hidden min-w-52 flex-col open:flex border border-rule bg-bg p-1 text-ink max-wide:inset-x-3 max-wide:w-auto max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]" aria-label="Track"></div>
+{{ kit::Confirm::new("Cancel") }}
+{{ kit::Flash::region() }}
+</body>
+</html>

@@ -1,0 +1,4 @@
+{#- The queue's rows, for the tracks the player holds. The player's script sends its queue to `data-rows` when it differs from the one `data-drawn` names. -#}
+<ol id="{{ self.id() }}" class="tracks" data-drawn="{{ drawn }}" data-rows="{{ self.rows_url() }}" data-on:koan-queue__window="@post(el.dataset.rows, {payload: {ids: evt.detail}})">
+{%- if empty %}<li class="disc">The queue is empty. Play an album to fill it.</li>{% endif -%}
+{{ rows }}</ol>

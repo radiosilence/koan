@@ -432,7 +432,7 @@ async fn bearer_gate(
             .and_then(|v| v.to_str().ok())
             .is_some_and(|a| a.contains("text/html"));
     if browser {
-        return axum::response::Redirect::to("/connect").into_response();
+        return axum::response::Redirect::to(crate::ui::paths::ASSISTANTS).into_response();
     }
     let user = if auth.auth_enabled {
         let token = req
@@ -596,7 +596,7 @@ mod tests {
                 .unwrap()
         };
         let r = app.clone().oneshot(req("text/html,*/*")).await.unwrap();
-        assert_eq!(r.headers()[axum::http::header::LOCATION], "/connect");
+        assert_eq!(r.headers()[axum::http::header::LOCATION], "/assistants");
         let r = app.oneshot(req("text/event-stream")).await.unwrap();
         assert_eq!(r.status(), axum::http::StatusCode::UNAUTHORIZED);
     }

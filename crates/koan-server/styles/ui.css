@@ -4,8 +4,8 @@
  *
  * The pages are drawn with the kōan web kit (koan-kit-web/, imported from the tree, so the web UI is always drawn with the
  * kit at the same commit as the components koan-server renders): its element defaults and classes, and utilities in the
- * askama templates (`templates/`) for layout. What is here is particular to koan: rules for markup that ui.js builds or
- * classes it toggles (`playing`, `missing`).
+ * askama templates (`templates/`) for layout. What is here is particular to koan: rules for classes ui.js toggles (`playing`,
+ * `missing`) and the few layouts several pages share (`tiles`, `hero`).
  */
 @import "tailwindcss" source(none);
 @source "../src/ui";
@@ -58,12 +58,32 @@
     @apply my-1 border-rule;
   }
 
+  /* The sort and filter row: open on a wide screen, where its disclosure's summary is not needed. */
+  .browse > summary {
+    @apply wide:hidden;
+  }
+
+  /* Record tiles: the album grid, an artist's records, a shelf's. */
+  .tiles {
+    @apply grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-x-4 gap-y-5 max-wide:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] max-wide:gap-x-3 max-wide:gap-y-4;
+  }
+
+  /* The head of a record, playlist or Now Playing: the cover beside the title, their tops level, stacked on a
+   * phone. */
+  .hero {
+    @apply mb-6 flex items-start gap-6 max-wide:flex-col max-wide:items-stretch max-wide:gap-4;
+  }
+
+  .hero-cover {
+    @apply size-[220px] flex-none bg-surface object-cover max-wide:aspect-square max-wide:h-auto max-wide:w-full;
+  }
+
   /* A cover that failed to load; ui.js marks it. */
   img.missing {
     @apply invisible;
   }
 
-  /* Track lists: the pages render them, and ui.js builds the queue's. */
+  /* Track lists: the library, the queue and history all draw the same row. */
   .tracks {
     @apply grid;
   }

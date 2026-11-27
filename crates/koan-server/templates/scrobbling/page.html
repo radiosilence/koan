@@ -1,0 +1,8 @@
+<h1>Scrobbling</h1><p class="mt-0 mb-3.5 text-muted">Send what you play to ListenBrainz or Last.fm: every play kōan's apps and other Subsonic clients signed in as you report to this server, as they report it.</p>
+{%- match sections %}
+{%- when None %}
+{{ kit::Empty::new(self.no_accounts()) }}
+{%- when Some((brainz, fm)) %}
+<h2>ListenBrainz</h2>{{ brainz }}
+<h2>Last.fm</h2>{{ fm }}
+{%- endmatch %}
