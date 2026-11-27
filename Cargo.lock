@@ -4608,7 +4608,7 @@ dependencies = [
 
 [[package]]
 name = "koan-kit-web"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "askama",
  "askama_datastar",
