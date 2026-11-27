@@ -323,7 +323,7 @@ macro_rules! component {
 
             /// The component's markup.
             pub fn html(&self) -> askama_datastar::Html {
-                askama_datastar::Html::trusted(self.to_string())
+                $crate::attrs::render(self)
             }
 
             /// The component as a Datastar patch, which morphs it into the page by its id.
