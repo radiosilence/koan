@@ -124,7 +124,12 @@ fn seeded(_: &str, _: &str) -> Vec<Envelope> {
 
 /// Mark `(device, username)` pairs seen now.
 pub fn touch(devices: &[(String, String)]) {
-    with("mark devices seen", |c| link::touch(c, devices, now()));
+    // At debug: this runs on every report a device sends, so a database that
+    // keeps failing would otherwise fill the log.
+    let Some(db) = db() else { return };
+    if let Err(e) = link::touch(&db.conn, devices, now()) {
+        log::debug!("link: could not mark devices seen: {e}");
+    }
 }
 
 /// Queue `cmd` for each known device in scope that is not in `live`.

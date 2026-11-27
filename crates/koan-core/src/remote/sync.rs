@@ -782,6 +782,9 @@ fn write_artists(db: &Database, artists: &[SubsonicArtist], result: &mut SyncRes
         let _ = db.conn.execute_batch("ROLLBACK");
         return;
     }
+    if enriched > 0 {
+        queries::library_written();
+    }
     result.artists_synced = enriched;
     log::info!("recorded metadata for {enriched} artists");
 }
@@ -882,6 +885,7 @@ fn write_albums(
     db.conn
         .execute_batch("COMMIT")
         .map_err(crate::db::connection::DbError::from)?;
+    queries::library_written();
 
     Ok(())
 }

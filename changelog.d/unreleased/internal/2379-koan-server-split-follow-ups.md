@@ -1,0 +1,1 @@
+- **Follow-ups to the koan-server split.** Remote sync and organize announce the rows they change, as scans do, so linked devices hear of edits in place from them too; stale devices are pruned even when marking the live ones seen fails; and a failure to mark a device seen is logged at debug, since it recurs on every report the device sends.

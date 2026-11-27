@@ -1497,6 +1497,33 @@ mod tests {
         Database { conn }
     }
 
+    /// Tracks with no number, or the same one, come back in the order they
+    /// were added.
+    #[test]
+    fn an_albums_tied_tracks_come_back_by_id() {
+        let db = test_db();
+        let ids: Vec<i64> = ["Cedar", "Alder", "Birch"]
+            .into_iter()
+            .map(|title| {
+                let mut meta = sample_meta(title, "Ayla", "Moss");
+                meta.track_number = None;
+                upsert_track(&db.conn, &meta).unwrap()
+            })
+            .collect();
+        let album: i64 = db
+            .conn
+            .query_row("SELECT album_id FROM tracks WHERE id = ?1", [ids[0]], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let got: Vec<i64> = tracks_for_album(&db.conn, album)
+            .unwrap()
+            .iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(got, ids);
+    }
+
     /// A download the person asked for is owed from the ask until its file
     /// is recorded, across any number of runs, in the record's running
     /// order; a cancel before then ends it, and a file already here is not

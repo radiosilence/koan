@@ -92,7 +92,11 @@ pub fn forget_stale(
     now: i64,
     keep_secs: i64,
 ) -> Result<bool, DbError> {
-    touch(conn, live, now)?;
+    // Pruning goes ahead without it: a live device then risks being dropped
+    // as stale, and links again when it next connects.
+    if let Err(e) = touch(conn, live, now) {
+        log::warn!("could not mark linked devices seen: {e}");
+    }
     let before = now - keep_secs;
     conn.execute("DELETE FROM link_outbox WHERE created_at < ?1", [before])?;
     conn.execute(
@@ -629,6 +633,42 @@ mod tests {
         );
         forget_push(&conn, "j", "new").unwrap();
         assert_eq!(push_targets(&conn, Some("j")).unwrap().len(), 1);
+    }
+
+    /// A device whose command cannot be written costs only its own: the
+    /// others are queued and returned, to be woken.
+    #[test]
+    fn a_failed_write_for_one_device_queues_the_rest() {
+        let conn = db();
+        for device in ["phone", "ipad", "mac"] {
+            record_device(&conn, device, "j", device, "ios", 1).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TRIGGER refuse BEFORE INSERT ON link_outbox WHEN NEW.device = 'ipad'
+             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .unwrap();
+        let queued = queue_for_absent(&conn, None, &[], &LinkCommand::Pause, 2).unwrap();
+        let mut queued: Vec<_> = queued.iter().map(|a| a.device.as_str()).collect();
+        queued.sort();
+        assert_eq!(queued, ["mac", "phone"]);
+        assert_eq!(devices(&conn, "link_outbox"), ["mac", "phone"]);
+    }
+
+    /// Stale devices are pruned even when the live ones cannot be marked seen.
+    #[test]
+    fn stale_devices_are_pruned_when_marking_the_live_ones_fails() {
+        let conn = db();
+        let now = 100 * DAY;
+        record_device(&conn, "mac", "j", "mac", "ios", now).unwrap();
+        record_device(&conn, "old-phone", "j", "old-phone", "ios", now - 40 * DAY).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER refuse BEFORE UPDATE OF last_seen ON link_devices
+             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .unwrap();
+        assert!(forget_stale(&conn, &[("mac".into(), "j".into())], now, 30 * DAY).unwrap());
+        assert_eq!(devices(&conn, "link_devices"), ["mac"]);
     }
 
     #[test]

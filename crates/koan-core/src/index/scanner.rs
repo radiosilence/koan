@@ -954,14 +954,18 @@ fn remove_stale(
             result.errors.push((path.to_path_buf(), e.to_string()));
             // The brake refuses before removing anything; the moves found
             // stand.
-            if matches!(e, crate::db::connection::DbError::UnsafeBulkDelete(_))
-                && let Err(e) = tx.commit()
-            {
-                log::error!("failed to commit moved files: {}", e);
-                result
-                    .errors
-                    .push((path.to_path_buf(), format!("db error: {}", e)));
-                result.moved -= moved;
+            if matches!(e, crate::db::connection::DbError::UnsafeBulkDelete(_)) {
+                match tx.commit() {
+                    Ok(()) if moved > 0 => queries::library_written(),
+                    Ok(()) => {}
+                    Err(e) => {
+                        log::error!("failed to commit moved files: {}", e);
+                        result
+                            .errors
+                            .push((path.to_path_buf(), format!("db error: {}", e)));
+                        result.moved -= moved;
+                    }
+                }
             }
         }
     }
@@ -1248,6 +1252,56 @@ mod tests {
                 .any(|p| p.ends_with("moved.wav")),
             "a rolled-back track was reported"
         );
+    }
+
+    /// A rescan that changes only a file's tags edits its rows in place,
+    /// which no count or highest id shows; the stamp still moves, so whatever
+    /// caches the library on it reads the new tags.
+    #[test]
+    fn a_retag_moves_the_library_stamp() {
+        use lofty::config::WriteOptions;
+        use lofty::prelude::*;
+        use lofty::tag::{Tag, TagType};
+
+        let retag = |path: &Path, genre: &str| {
+            let mut tag = Tag::new(TagType::Id3v2);
+            tag.set_title("Moss".into());
+            tag.set_artist("Ayla".into());
+            tag.set_album("Lichen".into());
+            tag.set_genre(genre.into());
+            tag.save_to_path(path, WriteOptions::default()).unwrap();
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        let file = music.join("moss.wav");
+        test_utils::generate_wav(&file, 44100, 1, 0.2, 16);
+        retag(&file, "Ambient");
+        let db = test_db(dir.path());
+        scan_folder(&db, &music, ScanOptions::default(), None);
+        let fingerprint = queries::library_fingerprint(&db.conn).unwrap();
+        let stamp = queries::library_stamp(&db.conn).unwrap().rows;
+
+        retag(&file, "Drum and Bass");
+        let result = scan_folder(&db, &music, ScanOptions::default(), None);
+
+        assert_eq!(
+            (result.added, result.updated),
+            (0, 1),
+            "{:?}",
+            result.errors
+        );
+        let genre: String = db
+            .conn
+            .query_row("SELECT genre FROM tracks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(genre, "Drum and Bass");
+        assert_eq!(
+            queries::library_fingerprint(&db.conn).unwrap(),
+            fingerprint,
+            "edited in place"
+        );
+        assert_ne!(queries::library_stamp(&db.conn).unwrap().rows, stamp);
     }
 
     /// A scan that lost a batch elsewhere still gives a moved file its track:
