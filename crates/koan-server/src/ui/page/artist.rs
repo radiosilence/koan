@@ -7,7 +7,6 @@ use axum::extract::{Path, State};
 use axum::response::Response;
 use koan_core::db::queries::{self, ArtistRow};
 use koan_core::helpers::ShareTarget;
-use koan_kit_web as kit;
 
 use super::{Body, Page, Refusal, Section};
 use crate::auth::AuthUser;

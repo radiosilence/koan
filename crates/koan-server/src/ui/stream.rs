@@ -226,7 +226,7 @@ pub(super) async fn serve(
 }
 
 fn run<L: Live>(s: UiState, mut page: L, shown: Shown) -> Response {
-    let mut sources = Sources::new(&s, shown.seen.as_ref());
+    let sources = Sources::new(&s, shown.seen.as_ref());
     let start = sources
         .first
         .as_ref()

@@ -12,5 +12,5 @@
 {%- let pk = self.passkey_form() %}
 <form {{ pk.attrs() }} class="mt-3.5 grid gap-3.5" data-passkey-login data-challenge="{{ self.challenge() }}">{{ kit::Input::hidden("ticket", "") }}{{ kit::Input::hidden("next", next) }}{{ kit::Input::hidden("assertion", "") }}
 {{ pk.submit(kit::Button::standard("Sign in with a passkey")) }}
-<p class="notice bad m-0" role="alert" data-passkey-error hidden></p></form>
+{{ kit::Notice::bad("").data("passkey-error", "shown").attr("hidden", "hidden") }}</form>
 {%- endif %}

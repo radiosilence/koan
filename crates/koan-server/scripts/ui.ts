@@ -1,35 +1,56 @@
-// The web UI's own script: navigation that swaps only the page content so the
-// player keeps playing, the transport and queue, and keeping the session alive.
+// The web UI's player: the transport and Now Playing, the queue it keeps in
+// the browser, the track menu, and keeping the session alive. Pages load in
+// place through Datastar and the kit's navigation, so this script never swaps
+// markup: it reads tracks from the rows the server drew, every address among
+// them written by the server, and asks the server for the queue's rows.
 import type { Track } from "koan/player";
 import { Player, clock, dragged, fill, fmt } from "koan/player";
+import * as z from "zod/mini";
+
+// A credit as the server writes it for the player (`parts::credit::for_player`):
+// each part's text and, for a credited artist, their page.
+const Credit = z.array(z.object({ text: z.string(), href: z.string() }));
+type Credit = z.infer<typeof Credit>;
+
 type UiTrack = Track & {
   id: number;
-  albumId: number;
-  artistId: number;
-  // An artist id of 0 is text between the names.
-  credit: Credit | null;
+  albumHref: string;
+  properties: string;
+  credit: Credit;
 };
-type Credit = [text: string, artistId: number][];
-// The queue, written when its tracks change; `start` is where it begins in the
-// queue played, when only the rest from the playing track fitted. Older pages
-// kept `cur` and `pos` here too.
-type Saved = { queue: UiTrack[]; start?: number; cur?: number; pos?: number };
-// Where in the queue, written as the music plays.
-type Place = { cur: number; pos: number };
 
-const main = document.getElementById("content")!;
+// The queue as stored, written when its tracks change; `start` is where it
+// begins in the queue played, when only the rest from the playing track
+// fitted. A queue an older page stored lacks the addresses; its tracks keep
+// what they have.
+const Stored = z.object({
+  id: z.number(),
+  src: z.string(),
+  dur: z.number(),
+  title: z.optional(z.nullable(z.string())),
+  artist: z.optional(z.nullable(z.string())),
+  album: z.optional(z.nullable(z.string())),
+  cover: z.optional(z.nullable(z.string())),
+  albumHref: z.optional(z.string()),
+  properties: z.optional(z.string()),
+  credit: z.optional(z.nullable(Credit)),
+});
+const Saved = z.object({ queue: z.array(z.unknown()), start: z.optional(z.number()), cur: z.optional(z.number()), pos: z.optional(z.number()) });
+// Where in the queue, written as the music plays.
+const Place = z.object({ cur: z.number(), pos: z.number() });
+
+const body = document.body;
 document.documentElement.classList.add("js");
 // The server groups history by day, and only the browser knows whose day.
 document.cookie = `koan_tz=${-new Date().getTimezoneOffset()}; path=/; max-age=31536000; samesite=lax`;
 const all = <E extends Element = HTMLElement>(sel: string, root: ParentNode = document) => [...root.querySelectorAll<E>(sel)];
+const main = () => document.getElementById("main") ?? body;
 
 // --- Session ---------------------------------------------------------------
 // The access cookie lasts minutes. Renewing spends the refresh cookie, which
 // only /auth routes receive, for fresh ones; no token is ever visible here.
-// Behind an authenticating proxy there is no refresh cookie: /ui/renew takes
-// the account from the proxy's header, and goes first, so a refresh cookie
-// left from before the proxy cannot keep a session the proxy did not vouch
-// for.
+// Behind an authenticating proxy there is no refresh cookie, so the page asks
+// the proxy's route first. The page names both.
 const rawFetch = window.fetch.bind(window);
 let renewing: Promise<boolean> | null = null;
 let renewedAt = Date.now();
@@ -44,9 +65,8 @@ function renewed() {
 }
 const post = (path: string) =>
   rawFetch(path, { method: "POST", credentials: "same-origin" }).then((r) => r.ok);
-const [first, then] = "proxied" in document.body.dataset
-  ? ["ui/renew", "auth/renew"]
-  : ["auth/renew", "ui/renew"];
+const first = body.dataset["renew"] ?? "";
+const then = body.dataset["renewThen"] ?? "";
 function renew() {
   renewing ??= post(first)
     .then((ok) => ok || post(then))
@@ -62,11 +82,14 @@ const sameOrigin = (input: RequestInfo | URL) =>
 // Responses name the stylesheet their markup was written for. A tab open
 // across an upgrade swaps it in rather than drawing new markup with the old
 // one, and keeps playing.
-const sheet = document.querySelector<HTMLLinkElement>('link[rel=stylesheet][href^="./ui/assets/ui.css"]');
+const stylesheet = body.dataset["stylesheet"] ?? "";
+const sheet = all<HTMLLinkElement>("link[rel=stylesheet]").find((l) => l.getAttribute("href")?.startsWith(stylesheet));
 function freshen(r: Response) {
   const v = r.headers.get("X-Koan-Css");
-  if (sheet && v && new URL(sheet.href).searchParams.get("v") !== v) {
-    sheet.href = `./ui/assets/ui.css?v=${v}`;
+  if (sheet && stylesheet && v && new URL(sheet.href).searchParams.get("v") !== v) {
+    const next = new URL(stylesheet, document.baseURI);
+    next.searchParams.set("v", v);
+    sheet.href = next.href;
   }
 }
 window.fetch = async (input, init) => {
@@ -96,7 +119,7 @@ let storedStart = 0;
 let storedEnd = Infinity;
 function storeQueue(queue: UiTrack[], cur: number) {
   try {
-    localStorage.setItem(STORE, JSON.stringify({ queue } satisfies Saved));
+    localStorage.setItem(STORE, JSON.stringify({ queue }));
     storedStart = 0;
     storedEnd = Infinity;
     return;
@@ -106,7 +129,7 @@ function storeQueue(queue: UiTrack[], cur: number) {
   const start = Math.max(cur, 0);
   try {
     const kept = queue.slice(start, start + KEPT);
-    localStorage.setItem(STORE, JSON.stringify({ queue: kept, start } satisfies Saved));
+    localStorage.setItem(STORE, JSON.stringify({ queue: kept, start }));
     storedStart = start;
     storedEnd = start + kept.length;
   } catch {
@@ -126,7 +149,7 @@ const save = (from?: number) => {
     // the part of a queue too large to store whole.
     const outside = cur >= 0 && (cur < storedStart || cur >= storedEnd);
     if (key !== storedKey || outside) { storedKey = key; storeQueue(queue, cur); }
-    localStorage.setItem(PLACE, JSON.stringify({ cur: cur - storedStart, pos: from ?? player.position } satisfies Place));
+    localStorage.setItem(PLACE, JSON.stringify({ cur: cur - storedStart, pos: from ?? player.position }));
   } catch {}
 };
 // Every change the player reports saves (a pause and a seek among them), and
@@ -134,42 +157,55 @@ const save = (from?: number) => {
 // so hiding it and closing it save where the music had got to.
 document.addEventListener("visibilitychange", () => { if (document.hidden) save(); });
 window.addEventListener("pagehide", () => save());
-// The queue's tracks as last drawn; see renderQueue.
-let queueKey = "";
-const player = new Player({ onChange: render, renew });
+const player = new Player<UiTrack>({ onChange: render, renew });
 
+function parseCredit(text: string | undefined): Credit {
+  if (!text) return [];
+  try {
+    return Credit.safeParse(JSON.parse(text)).data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// A track as its row carries it.
 function trackOf(li: HTMLElement): UiTrack {
   const d = li.dataset;
-  const albumId = Number(d.albumId) || 0;
   return {
-    id: Number(d.id), src: `ui/stream/${d.id}`, dur: Number(d.dur) || 0,
-    title: d.title, artist: d.artist, album: d.album, albumId,
-    artistId: Number(d.artistId) || 0, cover: d.cover || null,
-    credit: d.credit ? JSON.parse(d.credit) : null,
+    id: Number(d["id"]) || 0,
+    src: d["src"] ?? "",
+    dur: Number(d["dur"]) || 0,
+    title: d["title"],
+    artist: d["artist"],
+    album: d["album"],
+    cover: d["cover"] || null,
+    albumHref: d["albumHref"] ?? "",
+    properties: d["properties"] ?? "",
+    credit: parseCredit(d["credit"]),
   };
 }
 
 // A track's artist credit as it reads: each credited artist's name a link to
-// them, the text joining the names plain. A track whose credit is one name
-// carries no parts, only its artist.
-const creditOf = (t: UiTrack): Credit => t.credit ?? (t.artist ? [[t.artist, t.artistId]] : []);
-function linkNode(path: string, text: string) {
+// them, the text joining the names plain. A track with no parts is its artist.
+const creditOf = (t: UiTrack): Credit => (t.credit.length ? t.credit : t.artist ? [{ text: t.artist, href: "" }] : []);
+function linkNode(href: string, text: string) {
   const a = document.createElement("a");
-  a.href = path;
+  a.href = href;
   a.textContent = text;
   return a;
 }
 const creditNodes = (t: UiTrack) =>
-  creditOf(t).map(([text, id]) => (id ? linkNode(`artist/${id}`, text) : document.createTextNode(text)));
+  creditOf(t).map(({ text, href }) => (href ? linkNode(href, text) : document.createTextNode(text)));
 
 function render({ queue, cur, playing, track }: Player<UiTrack>) {
-  document.body.classList.toggle("playing", playing);
+  body.classList.toggle("playing", playing);
+  for (const el of all("[data-ctl=play]")) el.setAttribute("aria-pressed", String(playing));
   for (const el of all("[data-np=title]")) el.textContent = track ? track.title ?? "" : "Nothing playing";
   for (const el of all("[data-np=artist]")) el.replaceChildren(...(track ? creditNodes(track) : []));
   for (const el of all("[data-np=sep]")) el.hidden = !(track && creditOf(track).length && track.album);
   for (const el of all<HTMLAnchorElement>("a[data-np=album]")) {
     el.textContent = track?.album ?? "";
-    if (track && track.albumId) el.href = `album/${track.albumId}`;
+    if (track && track.albumHref) el.href = track.albumHref;
     else el.removeAttribute("href");
   }
   for (const el of all<HTMLImageElement>("img[data-np=cover]")) {
@@ -180,80 +216,48 @@ function render({ queue, cur, playing, track }: Player<UiTrack>) {
   for (const el of all("[data-np=len]")) el.textContent = fmt(track ? track.dur : 0);
   for (const el of all<HTMLInputElement>("input[data-ctl=seek]")) el.max = String(track ? track.dur : 0);
   for (const el of all<HTMLProgressElement>("progress[data-np=progress]")) el.max = track && track.dur ? track.dur : 1;
-  for (const li of all("li[data-id]", main)) li.classList.toggle("playing", !!track && Number(li.dataset.id) === track.id);
-  renderQueue(queue, cur);
+  mark();
+  askForQueue(queue);
   tick();
   ticking(playing);
   save();
-}
-
-function renderQueue(queue: UiTrack[], cur: number) {
-  const list = document.getElementById("queue-list");
-  if (!list) return;
   // A menu open on a queue row would act on the place it had, once the
   // queue itself changes.
   const key = queue.map((t) => t.id).join();
-  const open = document.getElementById("track-menu");
-  if (key !== queueKey && open && open.hasAttribute("data-queued") && open.matches(":popover-open")) open.hidePopover();
+  if (key !== queueKey && menu?.hasAttribute("data-queued") && menu.matches(":popover-open")) menu.hidePopover();
   queueKey = key;
-  // The same tracks in the same order: only the playing row moves.
-  if (list.dataset.drawn === key) {
-    for (const li of all("li[data-q]", list)) li.classList.toggle("playing", Number(li.dataset.q) === cur);
-    return;
-  }
-  list.dataset.drawn = key;
-  list.replaceChildren();
-  if (!queue.length) {
-    const p = document.createElement("li");
-    p.className = "disc";
-    p.textContent = "The queue is empty. Play an album to fill it.";
-    list.append(p);
-    return;
-  }
-  queue.forEach((t, i) => {
-    const li = document.createElement("li");
-    li.tabIndex = 0;
-    li.dataset.q = String(i);
-    Object.assign(li.dataset, {
-      id: t.id, dur: t.dur, title: t.title, artist: t.artist ?? "", album: t.album ?? "",
-      albumId: t.albumId || 0, artistId: t.artistId || 0, cover: t.cover ?? "",
-    });
-    if (t.credit) li.dataset.credit = JSON.stringify(t.credit);
-    li.classList.toggle("playing", i === cur);
-    const n = document.createElement("span");
-    n.className = "n";
-    n.textContent = String(i + 1);
-    const title = document.createElement("span");
-    title.className = "t";
-    title.textContent = t.title ?? "";
-    const small = document.createElement("small");
-    const credit = creditNodes(t);
-    small.append(...credit);
-    if (t.album) {
-      if (credit.length) small.append(" · ");
-      small.append(t.albumId ? linkNode(`album/${t.albumId}`, t.album) : t.album);
-    }
-    title.append(small);
-    const d = document.createElement("span");
-    d.className = "d";
-    d.textContent = fmt(t.dur);
-    const rm = document.createElement("button");
-    rm.className = "quiet";
-    rm.dataset.act = "remove";
-    rm.setAttribute("aria-label", "Remove from queue");
-    rm.title = "Remove from queue";
-    rm.textContent = "×";
-    const more = document.createElement("button");
-    more.className = "quiet wide:hidden";
-    more.dataset.act = "menu";
-    more.setAttribute("aria-haspopup", "menu");
-    more.setAttribute("aria-label", "More");
-    more.title = "More";
-    more.textContent = "⋯";
-    li.append(n, title, d, rm, more);
-    list.append(li);
-  });
+  void cur;
 }
+let queueKey = "";
+
+// The rows of the track playing marked, in the library and in the queue.
+function mark() {
+  const { track, cur } = player;
+  for (const li of all("li[data-id]", main())) {
+    const queued = li.dataset["q"];
+    const on = queued !== undefined ? Number(queued) === cur : !!track && Number(li.dataset["id"]) === track.id;
+    li.classList.toggle("playing", on);
+  }
+}
+
+// The queue page's list asks the server for the rows of the queue held here
+// whenever the two differ. The list names the queue it was drawn for.
+function askForQueue(queue: UiTrack[]) {
+  const list = document.getElementById("queue");
+  if (!list) return;
+  const key = queue.map((t) => t.id).join(",");
+  if (list.dataset["drawn"] === key || list.dataset["asked"] === key) return;
+  list.dataset["asked"] = key;
+  window.dispatchEvent(new CustomEvent("koan-queue", { detail: queue.map((t) => t.id) }));
+}
+
+// Pages arrive in place: mark what plays on each, ask for the queue's rows,
+// and open the sort and filter row on a wide screen.
+new MutationObserver(() => {
+  mark();
+  askForQueue(player.queue);
+  for (const d of all<HTMLDetailsElement>("details.browse", main())) if (wide.matches && !d.dataset["opened"]) { d.dataset["opened"] = "1"; d.open = true; }
+}).observe(body, { childList: true, subtree: true });
 
 const dragging = dragged("input[data-ctl=seek]");
 
@@ -274,15 +278,16 @@ const ticking = clock(tick);
 const shuffle = (a: UiTrack[]) => {
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
+    const t = a[i];
+    const u = a[j];
+    if (t && u) { a[i] = u; a[j] = t; }
   }
   return a;
 };
-const rowsOf = (el: Element) => all("li[data-id]", el.closest("ol") || el.closest(".page") || main);
+const rowsOf = (el: Element) => all("li[data-id]", el.closest("ol") ?? main());
 
 function act(name: string | undefined, el: Element) {
-  const page = el.closest(".page");
-  const albumRows = () => (page ? all("ol[data-context=album] li[data-id]", page) : []).map(trackOf);
+  const albumRows = () => all("ol[data-context=album] li[data-id]", main()).map(trackOf);
   const row = el.closest<HTMLElement>("li");
   switch (name) {
     case "play": return player.play(albumRows(), 0);
@@ -294,28 +299,33 @@ function act(name: string | undefined, el: Element) {
       const r = el.getBoundingClientRect();
       return openMenu(row, r.right, r.bottom);
     }
-    case "remove": return row && player.remove(Number(row.dataset.q));
+    case "remove": return row && player.remove(Number(row.dataset["q"]));
     case "clear": return player.clear();
   }
 }
 
 function pick(li: HTMLElement) {
-  if (li.dataset.q !== undefined) return player.playAt(Number(li.dataset.q));
+  const queued = li.dataset["q"];
+  if (queued !== undefined) return player.playAt(Number(queued));
   const ol = li.closest("ol");
-  if (ol && ol.dataset.context === "album") {
+  if (ol && ol.dataset["context"] === "album") {
     const rows = rowsOf(li);
     return player.play(rows.map(trackOf), rows.indexOf(li));
   }
   player.playNow([trackOf(li)]);
 }
 
+// Load a page in place, from an address the server wrote into a row.
+const go = (href: string) => { if (href) window.dispatchEvent(new CustomEvent("koan-go", { detail: href })); };
+
 // --- Track menu ------------------------------------------------------------
 // What the apps' context menu offers on a track, for any track row: opened by
-// right-click, a long press, or the row's ⋯ on a phone. Favourite and share
-// press the row's own buttons, so they behave as those do.
+// right-click, a long press, or the row's ⋯ on a phone. Favourite, share and
+// forget press the row's or the page's own buttons, so they behave as those do.
 const menu = document.getElementById("track-menu");
 function item(label: string, run: () => void) {
   const b = document.createElement("button");
+  b.type = "button";
   b.className = "quiet";
   b.setAttribute("role", "menuitem");
   b.textContent = label;
@@ -326,9 +336,8 @@ const group = (items: HTMLElement[]) => (items.length ? [document.createElement(
 function openMenu(li: HTMLElement, x: number, y: number) {
   if (!menu) return;
   const t = trackOf(li);
-  const d = li.dataset;
   const heart = li.querySelector<HTMLElement>("[data-fav]");
-  const share = li.querySelector<HTMLElement>("[data-act-share]");
+  const share = li.querySelector<HTMLElement>("[data-share]");
   const mine = [];
   if (heart) {
     const on = heart.getAttribute("aria-pressed") === "true";
@@ -343,20 +352,20 @@ function openMenu(li: HTMLElement, x: number, y: number) {
         for (const box of all<HTMLInputElement>("#history input:checked")) box.checked = false;
         play.checked = true;
         play.dispatchEvent(new Event("change", { bubbles: true }));
-        document.querySelector<HTMLElement>("[data-act-forget]")?.click();
+        document.querySelector<HTMLElement>("[data-forget]")?.click();
       })]
     : [];
-  const queued = li.dataset.q !== undefined
-    ? [item("Remove from Queue", () => player.remove(Number(li.dataset.q)))]
+  const queued = li.dataset["q"] !== undefined
+    ? [item("Remove from Queue", () => player.remove(Number(li.dataset["q"])))]
     : [];
-  const go = [];
-  if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`album/${d.albumId}`, true)));
+  const places = [];
+  if (t.albumHref) places.push(item("Go to Album", () => go(t.albumHref)));
   // Each artist a collaboration credits, by name where there are several.
-  const artists = creditOf(t).filter(([, id]) => id);
-  for (const [name, id] of artists) {
-    go.push(item(artists.length === 1 ? "Go to Artist" : `Go to ${name}`, () => navigate(`artist/${id}`, true)));
+  const artists = creditOf(t).filter(({ href }) => href);
+  for (const { text, href } of artists) {
+    places.push(item(artists.length === 1 ? "Go to Artist" : `Go to ${text}`, () => go(href)));
   }
-  const about = [item("Properties…", () => showProperties(d.id))];
+  const about = t.properties ? [item("Properties…", () => go(t.properties))] : [];
   const head = document.createElement("p");
   head.textContent = [t.title, t.artist].filter(Boolean).join(" · ");
   menu.replaceChildren(
@@ -365,13 +374,13 @@ function openMenu(li: HTMLElement, x: number, y: number) {
     item("Play Next", () => player.playNext([t])),
     item("Add to Queue", () => player.append([t])),
     ...group(mine),
-    ...group(go),
+    ...group(places),
     ...group(forget),
     ...group(queued),
     ...group(about),
   );
-  // A queue row's place moves when the queue does; see renderQueue.
-  menu.toggleAttribute("data-queued", li.dataset.q !== undefined);
+  // A queue row's place moves when the queue does; see render.
+  menu.toggleAttribute("data-queued", li.dataset["q"] !== undefined);
   if (!menu.matches(":popover-open")) menu.showPopover();
   if (wide.matches) {
     const r = menu.getBoundingClientRect();
@@ -382,53 +391,6 @@ function openMenu(li: HTMLElement, x: number, y: number) {
   }
   menu.querySelector("button")?.focus();
 }
-// Opened at once, filled when the server answers; only the latest request
-// may fill it.
-const dialog = document.getElementById("track-properties");
-const properties = dialog instanceof HTMLDialogElement ? dialog : null;
-const propertiesBody = document.getElementById("track-properties-body");
-let asked = 0;
-async function showProperties(id: string | undefined) {
-  if (!properties || !propertiesBody) return;
-  const mine = ++asked;
-  const say = (text: string) => {
-    const p = document.createElement("p");
-    p.className = "text-muted";
-    p.textContent = text;
-    propertiesBody.replaceChildren(p);
-  };
-  say("Loading…");
-  if (!properties.open) properties.showModal();
-  try {
-    const r = await fetch(`track/${id}/properties`, { headers: { "x-koan-partial": "1" } });
-    const html = r.ok ? await r.text() : null;
-    if (mine !== asked) return;
-    if (html === null) say(r.status === 404 ? "This track is no longer in the library." : "The server could not say.");
-    else {
-      // The page's content, without the section the UI's navigation swaps in.
-      const t = document.createElement("template");
-      t.innerHTML = html;
-      propertiesBody.replaceChildren(...(t.content.querySelector("section.page") ?? t.content).childNodes);
-    }
-  } catch {
-    if (mine === asked) say("The server could not be reached.");
-  }
-}
-// A click on the backdrop lands on the dialog itself, as does one in its
-// padding or a selection dragged out of it, so only a press and release
-// both outside its box close it.
-const outside = (e: MouseEvent) => {
-  if (!properties) return false;
-  const r = properties.getBoundingClientRect();
-  return e.target === properties &&
-    (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
-};
-let pressedOutside = false;
-properties?.addEventListener("pointerdown", (e) => { pressedOutside = outside(e); });
-properties?.addEventListener("click", (e) => {
-  if (pressedOutside && outside(e)) properties.close();
-  pressedOutside = false;
-});
 // A manual popover: the press that opens it ends on the row (a touch stays
 // captured by what it went down on), which a light-dismissing popover would
 // take for a click outside. It closes on the next press outside it, Escape,
@@ -482,7 +444,8 @@ document.addEventListener("click", (e) => {
 // The email goes out as rich text where the clipboard takes it, so pasting
 // into a mail client keeps the button. Datastar can write only plain text.
 async function copyEmail(button: Element) {
-  const html = document.getElementById("invite-html")?.innerHTML ?? "";
+  const email = document.getElementById("invite-email");
+  const html = email instanceof HTMLTemplateElement ? email.innerHTML : "";
   const invite = document.getElementById("invite-text");
   const text = invite instanceof HTMLTextAreaElement ? invite.value : "";
   try {
@@ -501,19 +464,20 @@ document.addEventListener("click", (e) => {
   if (email) { copyEmail(email); return; }
   const ctl = e.target.closest<HTMLElement>("[data-ctl]");
   if (ctl) {
-    if (ctl.dataset.ctl === "play") player.toggle();
-    else if (ctl.dataset.ctl === "prev") player.prev();
-    else if (ctl.dataset.ctl === "next") player.next();
+    const which = ctl.dataset["ctl"];
+    if (which === "play") player.toggle();
+    else if (which === "prev") player.prev();
+    else if (which === "next") player.next();
     return;
   }
   const a = e.target.closest<HTMLElement>("[data-act]");
-  if (a) { e.preventDefault(); act(a.dataset.act, a); return; }
-  const li = e.target.closest<HTMLElement>("li[data-id], li[data-q]");
+  if (a) { e.preventDefault(); act(a.dataset["act"], a); return; }
+  const li = e.target.closest<HTMLElement>("li[data-id]");
   if (li && !e.target.closest("a, button, input, label")) pick(li);
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;
-  const li = e.target instanceof Element && e.target.closest<HTMLElement>("li[data-id], li[data-q]");
+  const li = e.target instanceof Element && e.target.closest<HTMLElement>("li[data-id]");
   if (li && e.target === li) { e.preventDefault(); pick(li); }
 });
 document.addEventListener("input", (e) => {
@@ -533,134 +497,30 @@ document.addEventListener("error", (e) => {
   e.target.removeAttribute("src");
 }, true);
 
-// --- Navigation ------------------------------------------------------------
-// Where the UI is served: `/`, or a path such as `/koan/` behind a proxy.
-const BASE = new URL(document.baseURI).pathname;
-// A path in this UI as its routes name it, the base taken off.
-const route = (path: string) =>
-  path.startsWith(BASE) ? `/${path.slice(BASE.length)}` : `${path}/` === BASE ? "/" : path;
-const INTERNAL = /^\/(albums|tracks|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history|recent|scrobbling)?$/;
-let navigating = 0;
-
-async function navigate(url: string, push: boolean) {
-  const n = ++navigating;
-  let r;
-  try {
-    r = await fetch(url, { headers: { "X-Koan-Partial": "1" }, credentials: "same-origin" });
-  } catch {
-    location.href = url;
-    return;
-  }
-  if (n !== navigating) return;
-  if (!r.ok) { location.href = url; return; }
-  const html = await r.text();
-  if (n !== navigating) return;
-  closeMenu();
-  if (properties?.open) properties.close();
-  main.innerHTML = html;
-  if (push) history.pushState(null, "", url);
-  settle();
-  scrollTo(0, 0);
-}
-
-function settle() {
-  const page = main.firstElementChild;
-  const title = page instanceof HTMLElement && page.dataset.title;
-  document.title = title ? `${title} · koan` : "koan";
-  const section = { "": "albums", album: "albums", artist: "artists", playlist: "playlists" }[route(location.pathname).split("/")[1]]
-    ?? route(location.pathname).split("/")[1];
-  for (const a of all("a[data-nav]")) {
-    // A phone's Library tab stands for several of the sidebar's links.
-    if (a.dataset.nav?.split(" ").includes(section)) a.setAttribute("aria-current", "page");
-    else a.removeAttribute("aria-current");
-  }
-  const focus = main.querySelector<HTMLElement>("[autofocus]");
-  if (focus) focus.focus();
-  // The sort and filter row stands open on a wide screen; on a phone it is
-  // one button that opens as a sheet.
-  for (const d of all<HTMLDetailsElement>("details.browse", main)) d.open = wide.matches;
-  render(player);
-}
-
-// --- Sort and filter ---------------------------------------------------------
-// The toolbar is a GET form; its state is the URL. On a wide screen a change
-// applies at once, on a phone the sheet's Apply does.
+// The sort and filter row stands open on a wide screen; on a phone it is one
+// disclosure that opens as a sheet.
 const wide = matchMedia("(min-width: 721px)");
-function formUrl(form: HTMLFormElement) {
-  const params = new URLSearchParams();
-  for (const [k, v] of new FormData(form)) if (String(v).trim()) params.append(k, String(v));
-  const q = params.toString();
-  return form.getAttribute("action") + (q ? `?${q}` : "");
-}
-document.addEventListener("change", (e) => {
-  const form = e.target instanceof Element && e.target.closest<HTMLFormElement>("form.toolbar");
-  if (!form || !wide.matches || e.target.matches(TYPED)) return;
-  navigate(formUrl(form), true);
-});
-document.addEventListener("submit", (e) => {
-  if (!(e.target instanceof HTMLFormElement) || !e.target.matches("form.toolbar")) return;
-  e.preventDefault();
-  clearTimeout(typing);
-  navigate(formUrl(e.target), true);
-});
-// Typing filters as it goes, once the keys pause. Only the listing below the
-// toolbar is replaced, so the field keeps its focus and caret; the URL is
-// replaced rather than pushed, so back does not step through every keystroke.
-// A year applies only when it is whole, or cleared.
-const TYPED = "form.toolbar input[name=q], form.toolbar input[name=from], form.toolbar input[name=to]";
-let typing: number | undefined;
-document.addEventListener("input", (e) => {
-  if (!wide.matches || !(e.target instanceof HTMLInputElement) || !e.target.matches(TYPED)) return;
-  const v = e.target.value.trim();
-  if (e.target.name !== "q" && v && !/^\d{4}$/.test(v)) return;
-  clearTimeout(typing);
-  const form = e.target.form;
-  if (!form) return;
-  typing = setTimeout(() => refilter(formUrl(form)), 250);
-});
-async function refilter(url: string) {
-  const n = ++navigating;
-  let r;
-  try {
-    r = await fetch(url, { headers: { "X-Koan-Partial": "1" }, credentials: "same-origin" });
-  } catch {
-    return;
-  }
-  if (n !== navigating || !r.ok) return;
-  const html = await r.text();
-  if (n !== navigating) return;
-  const next = document.createElement("template");
-  next.innerHTML = html;
-  const bar = main.querySelector("details.browse");
-  const fresh = next.content.querySelector("details.browse");
-  if (!bar || !fresh || !bar.parentNode) return;
-  while (bar.nextSibling) bar.nextSibling.remove();
-  while (fresh.nextSibling) bar.parentNode.append(fresh.nextSibling);
-  history.replaceState(null, "", url);
-  render(player);
-}
-
-document.addEventListener("click", (e) => {
-  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  if (!(e.target instanceof Element)) return;
-  const a = e.target.closest<HTMLAnchorElement>("a[href]");
-  if (!a || a.target || a.hasAttribute("download")) return;
-  const url = new URL(a.href, location.href);
-  if (url.origin !== location.origin || !INTERNAL.test(route(url.pathname))) return;
-  e.preventDefault();
-  if (url.pathname + url.search !== location.pathname + location.search) navigate(url.pathname + url.search, true);
-  else if (properties?.open) properties.close();
-});
-addEventListener("popstate", () => navigate(location.pathname + location.search, false));
 
 // Pick up where the last visit left off, paused.
-try {
-  const saved: Saved | null = JSON.parse(localStorage.getItem(STORE) || "null");
-  const place: Place | null = JSON.parse(localStorage.getItem(PLACE) || "null");
-  if (saved && Array.isArray(saved.queue)) {
-    storedKey = saved.start ? null : saved.queue.map((t) => t.id).join();
+function restore() {
+  try {
+    const saved = Saved.safeParse(JSON.parse(localStorage.getItem(STORE) || "null")).data;
+    if (!saved) return;
+    const place = Place.safeParse(JSON.parse(localStorage.getItem(PLACE) || "null")).data;
+    const queue: UiTrack[] = saved.queue.flatMap((raw) => {
+      const t = Stored.safeParse(raw).data;
+      if (!t) return [];
+      return [{
+        id: t.id, src: t.src, dur: t.dur,
+        title: t.title ?? undefined, artist: t.artist ?? undefined, album: t.album ?? undefined, cover: t.cover ?? null,
+        albumHref: t.albumHref ?? "", properties: t.properties ?? "", credit: t.credit ?? [],
+      }];
+    });
+    storedKey = saved.start ? null : queue.map((t) => t.id).join();
     const cur = place ? place.cur : saved.cur ?? -1;
-    player.set(saved.queue, Math.max(cur, -1), (place ? place.pos : saved.pos) || 0);
-  }
-} catch {}
-settle();
+    player.set(queue, Math.max(cur, -1), (place ? place.pos : saved.pos) || 0);
+  } catch {}
+}
+restore();
+for (const d of all<HTMLDetailsElement>("details.browse")) if (wide.matches) { d.dataset["opened"] = "1"; d.open = true; }
+render(player);

@@ -3,7 +3,6 @@
 //! rescan and the caches, which the page's stream keeps current.
 
 use askama::Template;
-use koan_kit_web as kit;
 
 use super::{Body, Page, Refusal, Section};
 use crate::auth::AuthUser;

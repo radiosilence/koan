@@ -40,7 +40,8 @@
 <p class="mt-0 mb-3.5 text-muted">A passkey kept by this device or your password manager, or a hardware key such as a YubiKey. A passkey signs you in on its own, with no password, once it has checked it is you with Face ID, a fingerprint or the device's PIN. A key that cannot check who you are is the second step after your password.</p>
 {#- The page's passkey script asks the browser to make the key, then raises `koan-key` on the form with what it made, which the form sends here through Datastar. #}
 <form class="mb-2 flex max-w-form gap-2" action="{{ self.finish_key() }}" method="post" data-begin="{{ self.begin_key() }}" data-passkey-register data-on:koan-key="@post(el.getAttribute('action'), {payload: evt.detail})">
-{{ self.key_name() }}{{ kit::Button::standard("Add a passkey or key").submit() }}</form>
+{{ self.key_name() }}{{ kit::Button::standard("Add a passkey or key").submit() }}
+{{ kit::Notice::bad("").data("passkey-error", "shown").attr("hidden", "hidden") }}</form>
 {%- else %}
 {{ kit::Notice::new("Passkeys and security keys need the server's address, server.url, set to an https:// address: browsers allow them nowhere else.") }}
 {%- endif %}

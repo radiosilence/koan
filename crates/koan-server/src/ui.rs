@@ -57,7 +57,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{DefaultPredicate, Predicate};
 
 use crate::auth::AuthUser;
-use crate::auth::routes::{AuthRouteState, RateLimiter, login_rate_limit, rate_limit};
+use crate::auth::routes::AuthRouteState;
 use crate::covers::Covers;
 use crate::html::{Html, Render};
 use crate::share::{asset, blocking, not_found};
@@ -486,11 +486,6 @@ fn nothing() -> Response {
 /// What went wrong, as the flash over the page.
 fn flash_bad(message: &str) -> Response {
     answer([kit::Flash::bad(message).html()])
-}
-
-/// Done, as the flash over the page.
-fn flash_ok(message: &str) -> Response {
-    answer([kit::Flash::ok(message).html()])
 }
 
 /// Signals set from the server, as JSON: how a form is cleared once what it

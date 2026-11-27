@@ -63,10 +63,6 @@ impl Layout {
         }
     }
 
-    fn version(&self) -> &'static str {
-        env!("CARGO_PKG_VERSION")
-    }
-
     /// The stylesheet's address without its version, for the script to swap
     /// in the one a response names after an upgrade.
     fn stylesheet(&self) -> String {

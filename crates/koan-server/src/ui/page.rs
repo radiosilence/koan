@@ -17,7 +17,7 @@ use axum::response::{IntoResponse, Response};
 use koan_kit_web as kit;
 
 use super::layout::{Layout, Main, Nav, Title};
-use super::{UiState, document, patch, signals};
+use super::{UiState, document, patch};
 use crate::auth::AuthUser;
 use crate::html::{Html, Render};
 

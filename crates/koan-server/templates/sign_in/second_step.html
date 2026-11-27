@@ -4,7 +4,7 @@
 {%- let key = self.form() %}
 <form {{ key.attrs() }} class="mb-3.5 grid gap-3.5" data-passkey-sign-in data-options="{{ options }}">{{ kit::Input::hidden("ticket", ticket) }}{{ kit::Input::hidden("next", next) }}{{ kit::Input::hidden("assertion", "") }}
 {{ key.submit(self.key_button()) }}
-<p class="notice bad m-0" role="alert" data-passkey-error hidden></p></form>
+{{ kit::Notice::bad("").data("passkey-error", "shown").attr("hidden", "hidden") }}</form>
 {%- endif %}
 {%- let form = self.form() %}
 <form {{ form.attrs() }} class="grid gap-3.5">{{ kit::Input::hidden("ticket", ticket) }}{{ kit::Input::hidden("next", next) }}

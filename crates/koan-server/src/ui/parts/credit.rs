@@ -115,11 +115,17 @@ impl<'a> Link<'a> {
 }
 
 /// A row's credit for the player, which draws the queue's Now Playing from
-/// the row's data: `[text, address or ""]` for each part, as JSON.
+/// the row's data: each part's text and, for a credited artist, the address
+/// of their page, as JSON.
 pub(in crate::ui) fn for_player(parts: &[CreditPart]) -> String {
     let parts: Vec<_> = parts
         .iter()
-        .map(|p| serde_json::json!([p.text, p.artist_id.map(paths::artist).unwrap_or_default()]))
+        .map(|p| {
+            serde_json::json!({
+                "text": p.text,
+                "href": p.artist_id.map(paths::artist).unwrap_or_default(),
+            })
+        })
         .collect();
     serde_json::Value::Array(parts).to_string()
 }

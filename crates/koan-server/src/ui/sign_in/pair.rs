@@ -9,7 +9,7 @@
 use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 
 use askama::Template;
 use koan_kit_web as kit;
