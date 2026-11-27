@@ -1177,8 +1177,17 @@ mod tests {
         );
         assert!(field.contains("aria-busy=\"true\""), "{field}");
         assert!(
-            field.contains("<span class=\"skeleton\"><select"),
+            field.contains("<span class=\"skeleton\" inert><select"),
             "{field}"
+        );
+        let group = Field::custom("types")
+            .loads("/types")
+            .id("types")
+            .wrap(Markup::kit("<input name=\"t\">".into()))
+            .to_string();
+        assert!(
+            group.contains("<span class=\"skeleton\" inert><input"),
+            "a group's own controls cannot be reached or sent while it loads: {group}"
         );
         assert!(field.contains(" disabled"), "{field}");
         let settled = Field::select("model", "model", ["opus"])
