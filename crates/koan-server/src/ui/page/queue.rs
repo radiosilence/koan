@@ -20,9 +20,6 @@ use crate::ui::parts::track::{Lead, Row, Rows};
 use crate::ui::parts::{Scrub, Transport};
 use crate::ui::{Logged, Sent, UiState, answer, flash_bad, open, paths};
 
-/// The most rows the queue page draws: the player keeps no more.
-const MOST: usize = 5000;
-
 /// The id of the list the rows go in.
 const ID: &str = "queue";
 
@@ -87,13 +84,15 @@ pub(in crate::ui) struct Ids {
 }
 
 /// The rows for the tracks the player's script sends, in its order. A track
-/// gone from the library draws no row, and the rest keep their places.
+/// gone from the library draws no row, and the rest keep their places. The
+/// whole queue is drawn, however long: `drawn` names exactly the tracks asked
+/// for, so the player's script, which compares it with the queue it holds,
+/// never asks again for a queue already drawn.
 pub(in crate::ui) async fn rows(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
-    Sent(Ids { mut ids }): Sent<Ids>,
+    Sent(Ids { ids }): Sent<Ids>,
 ) -> Response {
-    ids.truncate(MOST);
     let drawn = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
     let list = blocking(move || {
         let db = open(&s.pool)?;
@@ -130,5 +129,43 @@ pub(in crate::ui) async fn rows(
     match list {
         Some(list) => answer([list]),
         None => flash_bad("The library is unavailable."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::fixture::*;
+
+    /// However long the player's queue, the rows drawn are named by all of
+    /// it, so the script, comparing that with the queue it holds, does not
+    /// ask again.
+    #[tokio::test]
+    async fn a_long_queue_is_drawn_whole_and_named_by_all_of_it() {
+        let f = setup(true);
+        let ids = vec![f.track_id; 6000];
+        let body = serde_json::json!({ "ids": ids }).to_string();
+        let r = send(
+            &f.app,
+            Request::post("/queue/rows")
+                .header(header::HOST, HOST)
+                .header(
+                    header::COOKIE,
+                    format!("koan_access={}", access_token(&f.state)),
+                )
+                .header("datastar-request", "true")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK);
+        let drawn = r
+            .body
+            .split("data-drawn=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap();
+        assert_eq!(drawn.split(',').count(), 6000);
+        assert_eq!(r.body.matches("data-q=\"").count(), 6000);
     }
 }

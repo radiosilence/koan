@@ -1,0 +1,1 @@
+- **The web UI's queue page no longer floods the server past 5,000 tracks.** The page draws the whole queue and asks again only after a failed answer, at most every five seconds; the Library page's caches redraw at most once a second again; and making, changing or deleting an account says what happened even when the list of accounts cannot be read back.

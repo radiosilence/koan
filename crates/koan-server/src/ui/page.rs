@@ -214,17 +214,20 @@ pub(super) async fn serve<P: Page>(
 
 /// A page drawn by a handler of its own rather than from its address alone,
 /// such as one carrying what an action just said: whole for a browser, in
-/// place for the page.
-pub(super) fn respond(
+/// place for the page. `body` is the drawing, not yet run: what the live
+/// stream carries on from is read first, as for every page, so nothing that
+/// moves while the body is drawn is missed.
+pub(super) async fn respond(
     s: &UiState,
     user: &AuthUser,
     headers: &HeaderMap,
     uri: &axum::http::Uri,
     section: Section,
-    mut body: Body,
+    body: impl Future<Output = Result<Body, Refusal>>,
 ) -> Response {
     let url = s.absolute(&askama_datastar::address(uri));
     let seen = super::stream::Seen::now(s);
+    let mut body = body.await.unwrap_or_else(Refusal::body);
     if askama_datastar::is_datastar(headers) {
         let signals = page_signals(&mut body, &url, &seen);
         return askama_datastar::events([

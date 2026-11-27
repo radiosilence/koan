@@ -56,7 +56,8 @@ fn listing(s: &UiState) -> Option<Listing> {
 #[derive(Template)]
 #[template(path = "users/list.html")]
 struct List<'a> {
-    listing: &'a Listing,
+    /// None when the accounts could not be read, which the list says.
+    listing: Option<&'a Listing>,
     me: i64,
 }
 
@@ -66,7 +67,7 @@ impl List<'_> {
     }
 
     fn two_step(&self, u: &UserRow) -> bool {
-        self.listing.two_step.contains(&u.id)
+        self.listing.is_some_and(|l| l.two_step.contains(&u.id))
     }
 
     fn role(&self, u: &UserRow) -> kit::Select<'static> {
@@ -116,7 +117,7 @@ impl List<'_> {
     }
 }
 
-fn list(listing: &Listing, me: i64) -> Html {
+fn list(listing: Option<&Listing>, me: i64) -> Html {
     List { listing, me }.html()
 }
 
@@ -271,7 +272,7 @@ impl Page for Users {
             let rows = blocking(move || listing(&st))
                 .await
                 .ok_or(Refusal::Unavailable)?;
-            Some(self::list(&rows, user.user_id))
+            Some(self::list(Some(&rows), user.user_id))
         } else {
             None
         };
@@ -303,12 +304,14 @@ pub(in crate::ui) async fn create(
     };
     let username = f.username.trim().to_owned();
     let me = user.user_id;
+    // The account made and its invite are the answer whatever reading the
+    // list back does: the invite holds the only copy of the password.
     let made = blocking(move || {
         let db = open(&s.pool)?;
         let made = invite::create_account(&db.conn, &username, role)
             .and_then(|made| token_invite(&s, &server, made.id, &username, Some(&made.password)));
         drop(db);
-        Some((made, listing(&s)?))
+        Some((made, listing(&s)))
     })
     .await;
     let Some((made, rows)) = made else {
@@ -317,7 +320,7 @@ pub(in crate::ui) async fn create(
     match made {
         Ok(i) => askama_datastar::events([
             panel(invite_panel(&i)),
-            patch(&list(&rows, me)),
+            patch(&list(rows.as_ref(), me)),
             New.html()
                 .patch()
                 .mode(askama_datastar::ElementPatchMode::Replace)
@@ -454,6 +457,41 @@ pub(in crate::ui) async fn set_password(
     }
 }
 
+/// What acting on one account came to: the library unreadable, no such
+/// account, or what the action did. Told apart, so a failure after the
+/// change is never reported as the account not being there.
+enum Account<T> {
+    Unavailable,
+    Missing,
+    Done(T),
+}
+
+impl<T> Account<T> {
+    /// The flash for an account that could not be acted on.
+    fn refused(self) -> Response {
+        match self {
+            Account::Missing => flash_bad("No such account."),
+            _ => flash_bad("The library is unavailable."),
+        }
+    }
+}
+
+/// `act` on account `id`. Blocking.
+fn on_account<T>(
+    s: &UiState,
+    id: i64,
+    act: impl FnOnce(&rusqlite::Connection, &UserRow) -> T,
+) -> Account<T> {
+    let Some(db) = open(&s.pool) else {
+        return Account::Unavailable;
+    };
+    match users::get_user_by_id(&db.conn, id).logged() {
+        None => Account::Unavailable,
+        Some(None) => Account::Missing,
+        Some(Some(row)) => Account::Done(act(&db.conn, &row)),
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub(in crate::ui) struct NewRole {
     role: String,
@@ -470,21 +508,21 @@ pub(in crate::ui) async fn set_role(
     };
     let me = user.user_id;
     let done = blocking(move || {
-        let db = open(&s.pool)?;
-        let row = users::get_user_by_id(&db.conn, id).logged()??;
-        let done = invite::set_role(&db.conn, &row.username, role);
-        drop(db);
-        Some((done, listing(&s)?))
+        let done = on_account(&s, id, |conn, row| {
+            invite::set_role(conn, &row.username, role)
+        });
+        Some((done, listing(&s)))
     })
-    .await;
+    .await
+    .unwrap_or((Account::Unavailable, None));
     match done {
-        Some((Ok(()), rows)) => askama_datastar::events([patch(&list(&rows, me))]),
+        (Account::Done(Ok(())), rows) => askama_datastar::events([patch(&list(rows.as_ref(), me))]),
         // The list drawn again too, so the select goes back to what is stored.
-        Some((Err(e), rows)) => askama_datastar::events([
-            patch(&list(&rows, me)),
+        (Account::Done(Err(e)), rows) => askama_datastar::events([
+            patch(&list(rows.as_ref(), me)),
             kit::Flash::bad(e.to_string()).html().patch().into(),
         ]),
-        None => flash_bad("No such account."),
+        (missing, _) => missing.refused(),
     }
 }
 
@@ -498,24 +536,25 @@ pub(in crate::ui) async fn delete(
     }
     let me = user.user_id;
     let done = blocking(move || {
-        let db = open(&s.pool)?;
-        let row = users::get_user_by_id(&db.conn, id).logged()??;
-        let done = invite::delete_account(&db.conn, &row.username);
-        if done.is_ok() {
-            crate::clients::registry().disconnect(&row.username);
-        }
-        drop(db);
-        Some((done, listing(&s)?))
+        let done = on_account(&s, id, |conn, row| {
+            let done = invite::delete_account(conn, &row.username);
+            if done.is_ok() {
+                crate::clients::registry().disconnect(&row.username);
+            }
+            done
+        });
+        Some((done, listing(&s)))
     })
-    .await;
+    .await
+    .unwrap_or((Account::Unavailable, None));
     match done {
-        Some((Ok(()), rows)) => askama_datastar::events([
-            patch(&list(&rows, me)),
+        (Account::Done(Ok(())), rows) => askama_datastar::events([
+            patch(&list(rows.as_ref(), me)),
             panel(Html::default()),
             kit::Confirm::close().into(),
         ]),
-        Some((Err(e), _)) => flash_bad(&e.to_string()),
-        None => flash_bad("No such account."),
+        (Account::Done(Err(e)), _) => flash_bad(&e.to_string()),
+        (missing, _) => missing.refused(),
     }
 }
 
@@ -529,26 +568,28 @@ pub(in crate::ui) async fn remove_second_factor(
 ) -> Response {
     let me = user.user_id;
     let done = blocking(move || {
-        let db = open(&s.pool)?;
-        let row = users::get_user_by_id(&db.conn, id).logged()??;
-        koan_auth::second_factor::turn_off(&db.conn, row.id).logged()?;
-        drop(db);
-        Some((row, listing(&s)?))
+        let done = on_account(&s, id, |conn, row| {
+            koan_auth::second_factor::turn_off(conn, row.id)
+                .logged()
+                .map(|_| row.username.clone())
+        });
+        Some((done, listing(&s)))
     })
-    .await;
+    .await
+    .unwrap_or((Account::Unavailable, None));
     match done {
-        Some((row, rows)) => askama_datastar::events([
-            patch(&list(&rows, me)),
+        (Account::Done(None), _) => flash_bad("Two-step sign-in could not be turned off."),
+        (Account::Done(Some(username)), rows) => askama_datastar::events([
+            patch(&list(rows.as_ref(), me)),
             kit::Confirm::close().into(),
             kit::Flash::ok(format!(
-                "{} signs in with a password alone again, and their browsers are signed out.",
-                row.username
+                "{username} signs in with a password alone again, and their browsers are signed out."
             ))
             .html()
             .patch()
             .into(),
         ]),
-        None => flash_bad("No such account."),
+        (missing, _) => missing.refused(),
     }
 }
 
@@ -763,5 +804,52 @@ mod tests {
         for expression in button.split("data-on:").skip(1) {
             assert!(!expression.contains("alert"), "{expression}");
         }
+    }
+
+    /// An account made whose list cannot be read back still answers with its
+    /// invite, which holds the only copy of its password; the list says it
+    /// could not be read. Acting on an account that is not there says so, and
+    /// a failure after finding it is never reported as its absence.
+    #[tokio::test]
+    async fn an_outcome_is_drawn_whatever_reading_the_list_back_does() {
+        let f = setup_at(true, Some(ORIGIN));
+        let db = Database::open(f.state.pool.path()).unwrap();
+        let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+        let admin =
+            auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+        let post = |uri: &str, body: &str| {
+            Request::post(uri)
+                .header(header::HOST, HOST)
+                .header(header::COOKIE, format!("koan_access={admin}"))
+                .header("datastar-request", "true")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(body.to_owned()))
+                .unwrap()
+        };
+        let r = send(&f.app, post("/users/999/delete", "")).await;
+        assert!(r.body.contains("No such account."), "{}", r.body);
+
+        // The list reads who has two-step sign-in; without that table it
+        // cannot be read, though accounts can still be made.
+        db.conn.execute_batch("DROP TABLE security_keys").unwrap();
+        let r = send(&f.app, post("/users", "username=sarita&role=readonly")).await;
+        assert!(copied(&r.body).is_some(), "the invite is drawn: {}", r.body);
+        assert!(r.body.contains("<dt>Password</dt>"), "{}", r.body);
+        assert!(
+            r.body.contains("The accounts could not be read."),
+            "{}",
+            r.body
+        );
+        assert!(!r.body.contains("could not be made"), "{}", r.body);
+
+        let sarita = queries::auth::get_user_by_username(&db.conn, "sarita")
+            .unwrap()
+            .unwrap()
+            .id;
+        // With the table gone the delete fails too: it says its own failure,
+        // never that the account is not there.
+        let r = send(&f.app, post(&format!("/users/{sarita}/delete"), "")).await;
+        assert!(r.body.contains("toast bad"), "{}", r.body);
+        assert!(!r.body.contains("No such account."), "{}", r.body);
     }
 }

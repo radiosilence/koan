@@ -1,9 +1,10 @@
 //! What the server keeps beside the library, for admins: the Library page's
 //! Caches section. The cover cache's size against its budget, by size, the
 //! warm's progress and the last sweep; the download cache where the server
-//! syncs from another; the library's counts and its last scan. The section
-//! opens a stream that patches it as the warm, a sweep or a scan moves, at
-//! most once a second, since a warm pass moves thousands of times.
+//! syncs from another; the library's counts and its last scan. The Library
+//! page's stream (`stream::library`) draws it again as the warm, a sweep or a
+//! scan moves, at most once a second, since a warm pass moves thousands of
+//! times.
 //!
 //! Transcodes are not listed: they are encoded as they stream and never kept.
 

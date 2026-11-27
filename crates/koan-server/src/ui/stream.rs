@@ -135,6 +135,9 @@ pub(super) enum Pass {
 
 /// A page's live parts.
 pub(super) trait Live: Sized + Send + 'static {
+    /// The least time between two passes. A page whose pass is costly, or
+    /// whose topic moves thousands of times a minute, draws less often.
+    const THROTTLE: std::time::Duration = std::time::Duration::from_millis(250);
     /// Ready to draw the page `shown` describes for `user`.
     fn open(s: &UiState, user: &AuthUser, shown: &Shown) -> Self;
     /// The regions `changed` touches.
@@ -239,7 +242,13 @@ fn run<L: Live>(s: UiState, mut page: L, shown: Shown) -> Response {
             Some((changed, (sources, seen)))
         });
     let events = async_stream::stream! {
-        let mut changes = std::pin::pin!(paced(changes, Pace::default()));
+        let mut changes = std::pin::pin!(paced(
+            changes,
+            Pace {
+                throttle: L::THROTTLE,
+                ..Pace::default()
+            },
+        ));
         while let Some(changed) = changes.next().await {
             match page.draw(&s, &changed).await {
                 Pass::Drew(events) => {
