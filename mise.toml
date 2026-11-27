@@ -17,3 +17,7 @@ xcodegen = "2.46.0"
 # The Android app: Gradle's JDK, and the Rust core cross-compiled against the NDK.
 java = "temurin-21.0.13+9.0.LTS"
 "cargo:cargo-ndk" = "4.1.2"
+# Formats the askama templates (`just fmt`) and checks them in CI, as the editor does.
+# Our own tool, so mise's wait before installing a new release is off: CI runs the
+# release the editor runs.
+"github:radiosilence/askama-analyzer" = { version = "latest", minimum_release_age = "0" }

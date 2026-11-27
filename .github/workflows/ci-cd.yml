@@ -320,6 +320,12 @@ jobs:
           toolchain: stable
           components: rustfmt
       - run: cargo fmt --all -- --check
+      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        with:
+          install_args: github:radiosilence/askama-analyzer
+      # Advisory until the templates are formatted; it becomes blocking then.
+      - run: askama-analyzer fmt --check
+        continue-on-error: true
 
   # CHANGELOG.md is generated from changelog.d/ (scripts/changelog.py). A pull
   # request adds fragments without regenerating it, so only its fragments and

@@ -1,0 +1,1 @@
+- **askama-analyzer formats the templates.** `just fmt` runs its formatter, and CI runs `askama-analyzer fmt --check` as an advisory step until a later change formats the templates and makes it blocking. mise installs the latest release with its release-age wait off for this tool alone, since it is maintained alongside these projects and CI should run the release the editor runs.
