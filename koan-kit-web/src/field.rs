@@ -655,6 +655,8 @@ pub struct Field<'a> {
     hint: Content<'a>,
     error: Text<'a>,
     warning: Text<'a>,
+    /// The id of the form it sits in, which its ids are built on.
+    scope: Text<'a>,
     attrs: Attrs<'a>,
 }
 
@@ -667,8 +669,16 @@ impl<'a> Field<'a> {
             hint: Content::default(),
             error: Text::default(),
             warning: Text::default(),
+            scope: Text::default(),
             attrs: Attrs::default(),
         }
+    }
+
+    /// Builds its label's and note's ids on `scope`, the id of the form it sits in, unless it has an
+    /// [`id`](Self::id) of its own: `{scope}-{name}-note`. [`Form::field`](crate::Form::field) gives it the form's.
+    pub fn scope(mut self, scope: impl Into<Text<'a>>) -> Self {
+        self.scope = scope.into();
+        self
     }
 
     /// A field whose control is the markup of a `{% filter kit::wrap(field) %}` block: one the kit lacks, or a group
@@ -907,12 +917,22 @@ impl<'a> Field<'a> {
     }
 
     /// What the label's and the note's ids are built from: the field's id, or its control's name, or for a group with
-    /// neither its label, so the same field renders the same ids and a patch morphs it in place. Two groups with one
-    /// label on a page are told apart by [`id`](Self::id).
+    /// neither its label, each after the form's id when it is [`scope`](Self::scope)d, so the same field renders the
+    /// same ids and a patch morphs it in place. Two fields alike on a page are told apart by their forms' ids, or by
+    /// [`id`](Self::id).
     fn base(&self) -> String {
         if !self.attrs.id().is_empty() {
             return self.attrs.id().to_owned();
         }
+        let own = self.unscoped();
+        match self.scope.present() {
+            Some(scope) if !own.is_empty() => format!("{scope}-{own}"),
+            _ => own,
+        }
+    }
+
+    /// The base without a form's id.
+    fn unscoped(&self) -> String {
         let name = self.control.name();
         if !name.is_empty() || !self.is_custom() {
             return name.to_owned();
