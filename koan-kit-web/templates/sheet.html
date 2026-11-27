@@ -1,8 +1,9 @@
 {#- A sheet: named by its title, closed by its header's button through commandfor, a press outside it or Escape, and kept
     above an on-screen keyboard. One that loads empties its body, shows the ensō and reads it again each time a button
-    opens it. -#}
+    opens it; its actions are hidden until the body arrives, and it closes if the read fails, leaving the failure to
+    the flash region. -#}
 <dialog class="sheet{{ attrs.classes() }}" closedby="any" aria-labelledby="{{ attrs.id() }}-title"{{ attrs }} data-init="{{ crate::sheet::KEYBOARD_INSET }}"
-{%- if let Some(url) = loads.present() %} data-url="{{ url }}" data-on:command="evt.command == 'show-modal' &amp;&amp; (s => (s.replaceChildren(), s.ariaBusy = 'true', @get(el.dataset.url)))(el.querySelector(':scope > section'))"{% endif %}>
+{%- if let Some(url) = loads.present() %} data-url="{{ url }}" data-on:command="evt.command == 'show-modal' &amp;&amp; (s => (s.replaceChildren(), s.ariaBusy = 'true', @get(el.dataset.url)))(el.querySelector(':scope > section'))" data-on:datastar-fetch="evt.detail.el === el &amp;&amp; ['error', 'retries-failed'].includes(evt.detail.type) &amp;&amp; el.close()"{% endif %}>
   <header>
     <h2 id="{{ attrs.id() }}-title">{{ title }}</h2>
     {%- if !close.is_empty() %}

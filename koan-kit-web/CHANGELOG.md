@@ -5,6 +5,7 @@
 ### Fixed
 
 - **A `Time` keeps its localised reading when a stream sends its region again.** A morph keeps the `<time>` but sets its text back to the server's UTC reading and does not start it again, so every older row in a feed or log read in UTC. One localiser per page, installed by the first time to start, now watches the document and rewrites a time whose text or instant a morph changed. Relative times share its one minute timer and formatters made once, where each carried a timer of its own and built a formatter on every tick.
+- **A sheet that loads hides its actions until its body arrives, and closes if the read fails.** `Sheet::loads` left the footer's actions live over the ensō, so a press, or Tab and Return, could act on a body not yet there, and a read answered with an error left the ensō turning. The actions are now hidden, out of Tab's reach as well, until `Sheet::fill` replaces the body; a read that fails or cannot be sent closes the sheet, and a `Flash::region().failed(…)` says that it did not work. Apps that hid the actions or closed the sheet themselves can stop.
 - **The failure flash no longer fires for streams.** `Flash::region().failed(…)` and `unreachable(…)` heard every request, so a stream refused during a deploy or reconnecting as a phone woke said "That did not work" while the person had pressed nothing, and said it again at each reopening. A request from an element `reopen_on` marks now raises no flash; a 401 from one still goes to the sign-in page.
 
 ## 0.9.0

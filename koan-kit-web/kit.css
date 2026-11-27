@@ -851,6 +851,11 @@
     @apply px-5 pb-5;
   }
 
+  /* A sheet that loads keeps its actions out of sight and out of reach, Tab included, until its body arrives. */
+  dialog.sheet[data-url]:has(> section[aria-busy="true"]) > footer {
+    visibility: hidden;
+  }
+
   /* Tabs: a row of addresses over a hairline, the one shown underlined in the accent and the rest muted until hovered.
      A tab's count and its actions (pin, close) follow its words; the row wraps when it runs out of room. */
   .tabs {
