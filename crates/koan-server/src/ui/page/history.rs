@@ -289,9 +289,9 @@ mod page_tests {
                 .unwrap()
         };
         // Another account's play, named by id, is left alone.
-        let r = send(&f.app, forget(&format!("[\"{theirs}\"]"))).await;
+        let r = send(&f.app, forget(&format!("[{theirs}]"))).await;
         assert_eq!(r.status, StatusCode::OK);
-        let r = send(&f.app, forget(&format!("[\"{mine}\"]"))).await;
+        let r = send(&f.app, forget(&format!("[{mine}]"))).await;
         assert!(r.body.contains("datastar-patch-elements") && r.body.contains("\"forget\":[]"));
         let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
         let left: Vec<i64> = db

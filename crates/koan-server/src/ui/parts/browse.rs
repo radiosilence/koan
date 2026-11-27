@@ -741,7 +741,7 @@ mod page_tests {
         );
         assert!(r.body.contains("<option value=\"title\" selected>"));
         assert!(r.body.contains("name=\"lossless\" value=\"1\" checked"));
-        assert!(r.body.contains(">1</span></summary>"));
+        assert!(r.body.contains("sort · filter · 1"), "{}", r.body);
 
         let r = page("/albums?codec=MP3").await;
         assert!(r.body.contains("No albums match."));

@@ -229,7 +229,7 @@ mod tests {
             .unwrap_or_else(|| panic!("a track row: {search}"));
         split(row);
         assert!(
-            search.contains("data-credit=\"[[&#34;Rrose&#34;,"),
+            search.contains("data-credit=\"[{&#34;text&#34;:&#34;Rrose&#34;,"),
             "the queue is drawn from the row's parts: {search}"
         );
 

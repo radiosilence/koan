@@ -567,7 +567,7 @@ mod tests {
             let f = setup_at(true, Some(ORIGIN));
             let r = send(
                 &f.app,
-                authed(&f.state, "/connect").body(Body::empty()).unwrap(),
+                authed(&f.state, "/assistants").body(Body::empty()).unwrap(),
             )
             .await;
             assert_eq!(r.status, StatusCode::OK);
@@ -579,7 +579,7 @@ mod tests {
             let f = setup(true);
             let r = send(
                 &f.app,
-                authed(&f.state, "/connect").body(Body::empty()).unwrap(),
+                authed(&f.state, "/assistants").body(Body::empty()).unwrap(),
             )
             .await;
             assert!(

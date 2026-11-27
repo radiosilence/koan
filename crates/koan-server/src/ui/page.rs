@@ -327,10 +327,15 @@ mod tests {
                 .unwrap()
         };
         let post = |uri: &str, body: &str| {
+            let kind = if body.starts_with('{') {
+                "application/json"
+            } else {
+                "application/x-www-form-urlencoded"
+            };
             Request::post(uri)
                 .header(header::HOST, HOST)
                 .header(header::COOKIE, format!("koan_access={access}"))
-                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CONTENT_TYPE, kind)
                 .header("datastar-request", "true")
                 .body(Body::from(body.to_owned()))
                 .unwrap()
@@ -356,7 +361,7 @@ mod tests {
             "/account".to_owned(),
             "/scrobbling".to_owned(),
             "/users".to_owned(),
-            "/connect".to_owned(),
+            "/assistants".to_owned(),
             format!("/track/{}/properties", f.track_id),
         ] {
             let r = send(&f.app, page(&uri)).await;
@@ -364,8 +369,8 @@ mod tests {
             rendered.push((uri, r.body));
         }
         for (uri, body) in [
-            ("/account/keys", r#"{"keyname":"phone"}"#),
-            ("/account/app-passwords", r#"{"appname":"Arpeggi"}"#),
+            ("/account/keys", "name=phone"),
+            ("/account/app-passwords", "name=Arpeggi"),
             ("/users/1/password/form", "{}"),
         ] {
             let r = send(&f.app, post(uri, body)).await;
@@ -415,8 +420,8 @@ mod tests {
         // The stylesheet's URL changes with its contents, so an upgrade never pairs
         // new markup with a cached stylesheet.
         let css = &crate::ui::ASSETS.css;
-        assert!(css.starts_with("./ui/assets/ui.css?v=") && full.body.contains(css.as_str()));
-        let served = send(&f.app, get(&css[1..]).body(Body::empty()).unwrap()).await;
+        assert!(css.starts_with("ui/assets/ui.css?v=") && full.body.contains(css.as_str()));
+        let served = send(&f.app, get(&format!("/{css}")).body(Body::empty()).unwrap()).await;
         assert_eq!(served.status, StatusCode::OK);
         assert!(
             served.headers[header::CACHE_CONTROL]
@@ -430,21 +435,26 @@ mod tests {
             crate::ui::ASSETS.css_hash.as_str()
         );
 
-        let partial = send(
+        // In place: the page's regions as a patch, never the document.
+        let in_place = send(
             &f.app,
             authed(&f.state, &uri)
-                .header("x-koan-partial", "1")
+                .header("datastar-request", "true")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await;
-        assert!(partial.body.starts_with("<section class=\"page\" "));
         assert!(
-            partial
+            in_place
                 .body
-                .contains("data-title=\"Hymn &#60;to&#62; Moisture\"")
+                .starts_with("event: datastar-patch-elements\n")
         );
-        assert!(!partial.body.contains("<nav"));
+        assert!(
+            in_place
+                .body
+                .contains("<title id=\"title\">Hymn &#60;to&#62; Moisture · kōan</title>")
+        );
+        assert!(!in_place.body.contains("<!doctype"));
 
         for page in [
             "/",
@@ -468,22 +478,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_fragments_are_datastar_events_and_posts_need_datastar() {
+    async fn pages_load_in_place_as_datastar_events_and_posts_need_datastar() {
         let f = setup(true);
         let r = send(
             &f.app,
-            authed(
-                &f.state,
-                "/search/results?datastar=%7B%22q%22%3A%22moss%22%7D",
-            )
-            .header("datastar-request", "true")
-            .body(Body::empty())
-            .unwrap(),
+            authed(&f.state, "/search?q=moss&datastar=%7B%7D")
+                .header("datastar-request", "true")
+                .body(Body::empty())
+                .unwrap(),
         )
         .await;
         assert_eq!(r.status, StatusCode::OK);
-        assert!(r.body.starts_with("event: datastar-patch-elements\n"));
-        assert!(r.body.contains("data: elements <div id=\"results\">"));
+        assert!(
+            r.body.starts_with("event: datastar-patch-elements\n"),
+            "{}",
+            r.body
+        );
+        assert!(
+            r.body.contains("data: elements <main id=\"main\""),
+            "{}",
+            r.body
+        );
+        assert!(
+            r.body.contains("<title id=\"title\">Search · kōan</title>"),
+            "{}",
+            r.body
+        );
+        assert!(
+            r.body.contains(r#""url":"/search?q=moss""#),
+            "the address, without Datastar's own parameter: {}",
+            r.body
+        );
 
         let share = format!("/album/{}/share", f.album_id);
         let bare = Request::post(&share)

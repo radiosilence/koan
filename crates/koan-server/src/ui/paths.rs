@@ -118,7 +118,9 @@ fn fill(route: &str, value: impl std::fmt::Display) -> String {
 fn fill2(route: &str, a: impl std::fmt::Display, b: impl std::fmt::Display) -> String {
     let (head, rest) = route.split_once('{').expect("a first parameter");
     let (_, rest) = rest.split_once('}').expect("a closed parameter");
-    format!("{}{a}{}", rel(head), fill(rest, b).trim_start_matches("./"))
+    let (middle, rest) = rest.split_once('{').expect("a second parameter");
+    let (_, tail) = rest.split_once('}').expect("a closed parameter");
+    format!("{}{a}{middle}{b}{tail}", rel(head))
 }
 
 /// `route`, relative, with `query` after it where it has anything.

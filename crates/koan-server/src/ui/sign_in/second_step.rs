@@ -211,13 +211,7 @@ mod tests {
         assert_eq!(r.status, StatusCode::OK);
         assert!(r.body.contains("two-step sign-in"), "{}", r.body);
         assert!(r.cookies().is_empty());
-        let ticket = r
-            .body
-            .split("name=\"ticket\" value=\"")
-            .nth(1)
-            .and_then(|rest| rest.split('"').next())
-            .unwrap()
-            .to_owned();
+        let ticket = input_value(&r.body, "ticket").unwrap();
 
         let r = send(
             &f.app,
@@ -231,13 +225,7 @@ mod tests {
         assert!(r.cookies().is_empty());
         // The same ticket again, its tries running on.
         assert!(r.body.contains(&format!("value=\"{ticket}\"")));
-        let ticket = r
-            .body
-            .split("name=\"ticket\" value=\"")
-            .nth(1)
-            .and_then(|rest| rest.split('"').next())
-            .unwrap()
-            .to_owned();
+        let ticket = input_value(&r.body, "ticket").unwrap();
 
         let r = send(
             &f.app,

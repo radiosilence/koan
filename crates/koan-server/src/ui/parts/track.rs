@@ -188,10 +188,17 @@ mod tests {
             .nth(1)
             .expect("a track row");
         let row = &row[..row.find("</li>").unwrap()];
-        assert!(row.contains(&format!("data-album-id=\"{}\"", f.album_id)));
-        assert!(row.contains("data-artist-id="), "for Go to Artist");
+        assert!(
+            row.contains(&format!("data-album-href=\"album/{}\"", f.album_id)),
+            "for Go to Album"
+        );
+        assert!(row.contains(&format!(
+            "data-properties=\"track/{}/properties\"",
+            f.track_id
+        )));
+        assert!(row.contains(&format!("data-src=\"ui/stream/{}\"", f.track_id)));
         assert!(row.contains("data-act=\"menu\""), "the phone's way in");
         assert!(row.contains("data-fav="), "the heart the menu presses");
-        assert!(row.contains("data-act-share"), "the share the menu presses");
+        assert!(row.contains("data-share="), "the share the menu presses");
     }
 }

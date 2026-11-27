@@ -136,14 +136,10 @@ mod tests {
 
         let r = send(
             &f.app,
-            post("/account/app-passwords", r#"{"appname":"Arpeggi"}"#),
+            post_form(&f.state, "/account/app-passwords", "name=Arpeggi"),
         )
         .await;
-        let password = r
-            .body
-            .split("id=\"app-password-result-value\" readonly value=\"")
-            .nth(1)
-            .and_then(|rest| rest.split('"').next())
+        let password = copied(r.body.as_str())
             .unwrap_or_else(|| panic!("no app password in {}", r.body))
             .to_owned();
 

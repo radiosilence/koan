@@ -136,14 +136,28 @@ mod tests {
         let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
         let admin =
             auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
-        let scan = |access: &str, signals: &'static str| {
+        let scan = |access: &str, form: &'static str| {
             Request::post("/library/scan")
                 .header(header::HOST, HOST)
                 .header(header::COOKIE, format!("koan_access={access}"))
-                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header("datastar-request", "true")
-                .body(Body::from(signals))
+                .body(Body::from(form))
                 .unwrap()
+        };
+        // The scan runs on a thread of its own; the page's stream draws it.
+        let settled = || async {
+            for _ in 0..200 {
+                let running = f
+                    .jobs
+                    .current(&[crate::graphql::jobs::SCAN, crate::graphql::jobs::REREAD])
+                    .is_some_and(|j| j.state == crate::graphql::jobs::JobState::Running);
+                if !running {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            panic!("the scan did not end");
         };
         let library = |access: &str| {
             get("/library")
@@ -153,7 +167,7 @@ mod tests {
         };
 
         // A wide screen's sidebar links the Library page for an admin only.
-        let wide_link = "href=\"library\" data-nav=\"library\"";
+        let wide_link = "max-wide:hidden\" href=\"library\"";
         let r = send(&f.app, library(&access_token(&f.state))).await;
         assert_eq!(r.status, StatusCode::OK);
         assert!(!r.body.contains("/library/scan"), "{}", r.body);
@@ -164,11 +178,11 @@ mod tests {
             "the lists are all a listener's page has: {}",
             r.body
         );
-        let r = send(&f.app, scan(&access_token(&f.state), "{}")).await;
+        let r = send(&f.app, scan(&access_token(&f.state), "")).await;
         assert_eq!(r.status, StatusCode::FORBIDDEN);
 
         let r = send(&f.app, library(&admin)).await;
-        assert!(r.body.contains("@post('library/scan')"), "{}", r.body);
+        assert!(r.body.contains("action=\"library/scan\""), "{}", r.body);
         assert!(r.body.contains(wide_link), "{}", r.body);
         assert!(r.body.contains(hidden_lists), "{}", r.body);
         assert!(
@@ -176,30 +190,22 @@ mod tests {
             "no bar while idle: {}",
             r.body
         );
-        // The stream follows the scan to its end, so the whole body is its story.
-        let r = send(&f.app, scan(&admin, r#"{"reread":false}"#)).await;
+        let r = send(&f.app, scan(&admin, "")).await;
         assert_eq!(r.status, StatusCode::OK);
+        settled().await;
+        let r = send(&f.app, library(&admin)).await;
         assert!(
             r.body
                 .contains("Last scan: 0 added, 0 updated, 0 removed, 0 unchanged"),
             "{}",
             r.body
         );
-        let r = send(&f.app, scan(&admin, r#"{"reread":true}"#)).await;
-        assert!(
-            r.body.contains("Last re-read: 0 added"),
-            "the box asks for a re-read: {}",
-            r.body
-        );
+        send(&f.app, scan(&admin, "reread=1")).await;
+        settled().await;
         let r = send(&f.app, library(&admin)).await;
         assert!(
             r.body.contains("Last re-read:"),
             "the page remembers it: {}",
-            r.body
-        );
-        assert!(
-            r.body.contains("data-init=\"@get('library/scan')\""),
-            "the page follows scans still to come: {}",
             r.body
         );
 

@@ -569,11 +569,17 @@ mod tests {
             auth::mint_access_token(&f.state.private_pem, id, name, role, 900).unwrap()
         };
         let admin = token(boss, "boss", Role::Admin);
+        // A form's fields, or signals as JSON where the body is an object.
         let post = |uri: &str, body: &str, access: &str| {
+            let kind = if body.starts_with('{') {
+                "application/json"
+            } else {
+                "application/x-www-form-urlencoded"
+            };
             Request::post(uri)
                 .header(header::HOST, HOST)
                 .header(header::COOKIE, format!("koan_access={access}"))
-                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CONTENT_TYPE, kind)
                 .header("datastar-request", "true")
                 .body(Body::from(body.to_owned()))
                 .unwrap()
@@ -589,7 +595,11 @@ mod tests {
         assert_eq!(r.status, StatusCode::FORBIDDEN);
         let r = send(
             &f.app,
-            post("/users", r#"{"newuser":"x"}"#, &access_token(&f.state)),
+            post(
+                "/users",
+                "username=x&role=readonly",
+                &access_token(&f.state),
+            ),
         )
         .await;
         assert_eq!(r.status, StatusCode::FORBIDDEN);
@@ -607,18 +617,10 @@ mod tests {
 
         let r = send(
             &f.app,
-            post(
-                "/users",
-                r#"{"newuser":"sarita","newrole":"readonly"}"#,
-                &admin,
-            ),
+            post("/users", "username=sarita&role=readonly", &admin),
         )
         .await;
-        let link = r
-            .body
-            .split("id=\"invite-link\" readonly value=\"")
-            .nth(1)
-            .and_then(|rest| rest.split('"').next())
+        let link = copied(&r.body)
             .unwrap_or_else(|| panic!("no link in {}", r.body))
             .replace("&#38;", "&");
         let invite = koan_core::invite::Invite::parse(&link).unwrap();
@@ -627,7 +629,7 @@ mod tests {
         assert_eq!(invite.password, None);
         let password = r
             .body
-            .split("<dt>Password</dt><dd><code>")
+            .split("<dt>Password</dt><dd>")
             .nth(1)
             .and_then(|rest| rest.split('<').next())
             .unwrap_or_else(|| panic!("no password in {}", r.body))
@@ -654,13 +656,8 @@ mod tests {
             post(&format!("/users/{}/invite", row.id), "{}", &admin),
         )
         .await;
-        assert!(r.body.contains("id=\"invite-link\""), "{}", r.body);
-        assert!(
-            r.body
-                .contains("aria-label=\"Invite link as a QR code\"><svg"),
-            "{}",
-            r.body
-        );
+        assert!(copied(&r.body).is_some(), "{}", r.body);
+        assert!(r.body.contains("Invite link as a QR code"), "{}", r.body);
         assert!(!r.body.contains("<dt>Password</dt>"), "{}", r.body);
 
         // A reset does show one, and signs the account's devices out.
@@ -670,41 +667,24 @@ mod tests {
         assert_closed(alice_link);
 
         // So does a password the admin chooses. The row's button asks for the
-        // form, and a value typed into another account's form and never
-        // submitted, which Datastar posts along with it, changes nothing.
+        // form, which is the account's own: nothing typed elsewhere reaches it.
         let before = queries::auth::get_user_by_id(&db.conn, 1)
             .unwrap()
             .unwrap()
             .password_hash;
-        let r = send(
-            &f.app,
-            post(
-                "/users/1/password/form",
-                r#"{"setpassword":"typed for someone else"}"#,
-                &admin,
-            ),
-        )
-        .await;
-        assert!(r.body.contains("data-bind:setpassword"), "{}", r.body);
-        assert!(r.body.contains(r#"{"setpassword":""}"#), "{}", r.body);
+        let r = send(&f.app, post("/users/1/password/form", "{}", &admin)).await;
+        assert!(r.body.contains("name=\"password\""), "{}", r.body);
+        assert!(r.body.contains("id=\"user-panel\""), "{}", r.body);
         let after = queries::auth::get_user_by_id(&db.conn, 1)
             .unwrap()
             .unwrap()
             .password_hash;
         assert_eq!(before, after);
-        let r = send(
-            &f.app,
-            post("/users/1/password", r#"{"setpassword":"short"}"#, &admin),
-        )
-        .await;
+        let r = send(&f.app, post("/users/1/password", "password=short", &admin)).await;
         assert!(r.body.contains("at least 8"), "{}", r.body);
         let r = send(
             &f.app,
-            post(
-                "/users/1/password",
-                r#"{"setpassword":"correct horse"}"#,
-                &admin,
-            ),
+            post("/users/1/password", "password=correct+horse", &admin),
         )
         .await;
         assert!(r.body.contains("password is changed"), "{}", r.body);
@@ -718,13 +698,17 @@ mod tests {
 
         let r = send(
             &f.app,
-            post(&format!("/users/{}/role?role=user", row.id), "{}", &admin),
+            post(
+                &format!("/users/{}/role", row.id),
+                r#"{"role":"user"}"#,
+                &admin,
+            ),
         )
         .await;
         assert_eq!(r.status, StatusCode::OK);
         let r = send(
             &f.app,
-            post(&format!("/users/{boss}/role?role=user",), "{}", &admin),
+            post(&format!("/users/{boss}/role"), r#"{"role":"user"}"#, &admin),
         )
         .await;
         assert!(r.body.contains("last admin"), "{}", r.body);
@@ -769,17 +753,15 @@ mod tests {
         )
         .await;
         assert_eq!(r.status, StatusCode::OK);
+        // The question names the account in an attribute the kit's
+        // expression reads, never in the expression itself.
         let button = r
             .body
             .split("<button")
-            .find(|b| b.contains("data-username=\"x&#39;);alert(1)//\""))
+            .find(|b| b.contains("data-ask=\"Delete x&#39;);alert(1)//?"))
             .unwrap_or_else(|| panic!("{}", r.body));
-        let expression = button
-            .split("data-on:click=\"")
-            .nth(1)
-            .and_then(|rest| rest.split('"').next())
-            .unwrap();
-        assert!(expression.contains("/delete')"), "{expression}");
-        assert!(!expression.contains("alert"), "{expression}");
+        for expression in button.split("data-on:").skip(1) {
+            assert!(!expression.contains("alert"), "{expression}");
+        }
     }
 }

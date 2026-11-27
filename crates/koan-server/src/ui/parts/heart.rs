@@ -219,7 +219,7 @@ mod tests {
             authed(&f.state, &album_page).body(Body::empty()).unwrap(),
         )
         .await;
-        assert!(r.body.contains(&format!("{song} aria-pressed=\"false\"")));
+        assert!(pressed(&r.body, &song) == Some(false));
 
         let r = send(
             &f.app,
@@ -231,7 +231,7 @@ mod tests {
         .await;
         assert_eq!(r.status, StatusCode::OK);
         assert!(r.body.contains("datastar-patch-elements"));
-        assert!(r.body.contains(&format!("{song} aria-pressed=\"true\"")));
+        assert!(pressed(&r.body, &song) == Some(true));
         let r = send(
             &f.app,
             toggle(
@@ -240,10 +240,7 @@ mod tests {
             ),
         )
         .await;
-        assert!(r.body.contains(&format!(
-            "data-fav=\"album-{}\" aria-pressed=\"true\"",
-            f.album_id
-        )));
+        assert!(pressed(&r.body, &format!("data-fav=\"album-{}\"", f.album_id)) == Some(true));
 
         let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
         assert!(
@@ -266,10 +263,7 @@ mod tests {
             authed(&f.state, &album_page).body(Body::empty()).unwrap(),
         )
         .await;
-        assert!(
-            r.body.contains(&format!("{song} aria-pressed=\"true\"")),
-            "drawn on reload"
-        );
+        assert!(pressed(&r.body, &song) == Some(true), "drawn on reload");
         let r = send(
             &f.app,
             get(&album_page)
@@ -278,10 +272,7 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        assert!(
-            r.body.contains(&format!("{song} aria-pressed=\"false\"")),
-            "bob's are his own"
-        );
+        assert!(pressed(&r.body, &song) == Some(false), "bob's are his own");
 
         // A read-only account is drawn no hearts, and its toggles change nothing.
         let r = send(
@@ -315,7 +306,7 @@ mod tests {
             ),
         )
         .await;
-        assert!(r.body.contains(&format!("{song} aria-pressed=\"false\"")));
+        assert!(pressed(&r.body, &song) == Some(false));
         assert!(queries::load_favourites(&db.conn, 1).unwrap().is_empty());
     }
 }

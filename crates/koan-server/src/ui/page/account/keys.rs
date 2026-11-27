@@ -129,23 +129,11 @@ mod tests {
         assert_eq!(r.status, StatusCode::OK);
         assert!(r.body.contains("No keys yet."), "{}", r.body);
 
-        let r = send(
-            &f.app,
-            post("/account/keys", r#"{"keyname":"phone"}"#, false),
-        )
-        .await;
+        let r = send(&f.app, post("/account/keys", "name=phone", false)).await;
         assert_eq!(r.status, StatusCode::FORBIDDEN);
 
-        let r = send(
-            &f.app,
-            post("/account/keys", r#"{"keyname":"phone"}"#, true),
-        )
-        .await;
-        let key = r
-            .body
-            .split("id=\"key-result-value\" readonly value=\"")
-            .nth(1)
-            .and_then(|rest| rest.split('"').next())
+        let r = send(&f.app, post_form(&f.state, "/account/keys", "name=phone")).await;
+        let key = copied(r.body.as_str())
             .unwrap_or_else(|| panic!("no key in {}", r.body))
             .to_owned();
         let db = Database::open(f.state.pool.path()).unwrap();

@@ -311,3 +311,51 @@ pub(in crate::ui) fn fake_lastfm() {
         });
     });
 }
+
+/// A Datastar request posting `body` as a form, signed in as alice.
+pub(in crate::ui) fn post_form(state: &AuthRouteState, uri: &str, body: &str) -> Request<Body> {
+    Request::post(uri)
+        .header(header::HOST, HOST)
+        .header(
+            header::COOKIE,
+            format!("koan_access={}", access_token(state)),
+        )
+        .header("datastar-request", "true")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(body.to_owned()))
+        .unwrap()
+}
+
+/// The value a kit `CopyField` in `body` holds: a secret shown once.
+pub(in crate::ui) fn copied(body: &str) -> Option<String> {
+    body.split("readonly value=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .map(str::to_owned)
+}
+
+/// Whether the first button in `body` carrying `key` (an attribute, as
+/// written) is pressed.
+pub(in crate::ui) fn pressed(body: &str, key: &str) -> Option<bool> {
+    let tag = body
+        .split("<button")
+        .skip(1)
+        .map(|b| &b[..b.find('>').unwrap_or(b.len())])
+        .find(|tag| tag.contains(key))?;
+    Some(tag.contains("aria-pressed=\"true\""))
+}
+
+/// The value of the first `<input>` in `body` named `name`.
+pub(in crate::ui) fn input_value(body: &str, name: &str) -> Option<String> {
+    let named = format!("name=\"{name}\"");
+    let tag = body
+        .split("<input")
+        .skip(1)
+        .map(|b| &b[..b.find('>').unwrap_or(b.len())])
+        .find(|tag| tag.contains(&named))?;
+    tag.split("value=\"")
+        .nth(1)?
+        .split('"')
+        .next()
+        .map(str::to_owned)
+}

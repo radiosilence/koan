@@ -388,8 +388,8 @@ mod tests {
         assert_eq!(r.location(), "/auth/resume?next=%2Falbum%2F1%3Fx%3Dy");
 
         for req in [
-            get("/albums").header("x-koan-partial", "1"),
-            get("/search/results").header("datastar-request", "true"),
+            get("/albums").header("datastar-request", "true"),
+            get("/ui/live").header("datastar-request", "true"),
             get(&format!("/ui/stream/{}", f.track_id)),
             get("/albums").header(header::COOKIE, "koan_access=forged"),
         ] {
@@ -1034,7 +1034,7 @@ mod tests {
         )
         .await;
         assert_eq!(r.status, StatusCode::OK);
-        assert!(r.body.contains("<body data-proxied>"));
+        assert!(r.body.contains("data-renew=\"ui/renew\""), "{}", r.body);
 
         let f = setup(true);
         let r = send(
@@ -1043,7 +1043,7 @@ mod tests {
         )
         .await;
         assert_eq!(r.status, StatusCode::OK);
-        assert!(!r.body.contains("data-proxied"));
+        assert!(r.body.contains("data-renew=\"auth/renew\""), "{}", r.body);
     }
 
     /// Off the proxy, a password sign-in keeps its refresh cookie.

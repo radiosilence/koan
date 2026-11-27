@@ -344,7 +344,8 @@ mod page_tests {
                 .body(Body::empty())
                 .unwrap()
         };
-        let follows = "data-init=\"@get('library/caches')\"";
+        // The section, which the page's stream keeps current.
+        let follows = "id=\"caches\"";
 
         let listener = access_token(&f.state);
         let r = send(&f.app, library(&listener)).await;
