@@ -310,6 +310,32 @@ mod tests {
     }
 
     #[test]
+    fn a_flash_leaves_the_regions_failure_handlers_alone() {
+        let region = Flash::region()
+            .failed("failed")
+            .sign_in("/login")
+            .to_string();
+        let (handlers, rest) = region
+            .split_once("</div>")
+            .expect("the handlers stand beside the region");
+        assert!(
+            handlers.starts_with("<div id=\"flash-failures\" hidden"),
+            "{region}"
+        );
+        assert!(
+            handlers.contains("data-on:datastar-fetch__document"),
+            "{region}"
+        );
+        assert!(rest.contains("id=\"flash\""), "{region}");
+        let ok = Flash::ok("Saved.").to_string();
+        assert!(ok.starts_with("<div id=\"flash\""), "{ok}");
+        assert!(
+            !ok.contains("flash-failures"),
+            "a flash patch must not touch the handlers: {ok}"
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "is not a path on this origin")]
     fn sign_in_is_a_path_here() {
         let _ = Flash::region().sign_in("javascript:alert(1)");
