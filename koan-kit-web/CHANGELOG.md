@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.1
+
+### Fixed
+
+- **`Navigation` is the one owner of the history.** An in-place `Link` or `Button` on a page with a `Navigation` hands its click to it rather than pushing an entry of its own, so Back after such a load no longer leaves one page's address over another's content. Nothing is pushed until an answer has set the followed signal to the address it drew, and only once the load has settled, so a load that fails leaves the address and the page as they were; a Back or Forward load that fails replaces its entry with the address the page shows. `Navigation` now always follows a signal, `url` unless `follows` names another, which every page placing it declares; the mode that pushed the link's address before the answer is gone.
+- **A request's busy signal is named by the request alone:** method, URL, form, the `named` name and value, group and id. Rows posting one URL with `.named("id", row)` are busy apart, and a label that changes while the request runs (a count, a playing mark) keeps its signal. A `Form` is named by its method, action and id, since its fields are not known as its tag is drawn: forms posting one action row by row, told apart only by a hidden field, give each form an `id` (which `Form::field` builds on) or a `busy_key`.
+- **An app's classes are escaped once.** `Button`, `Link`, `Navigation` and a bare `Check` escaped them twice, so `[&>svg]:size-4` reached the page as `[&amp;>svg]:size-4`.
+- **A loop over `Vec<Markup>` hands each to a slot,** through `From<&&Markup>` for `Markup` and `Content`, as the README promises of every prop.
+- **A loading field's skeleton is inert,** so a custom group's controls can be neither reached nor sent before its settled self arrives.
+- **A QR code draws each row's runs as one rectangle,** about a fifth of the markup it drew per module.
+
 ## 0.8.0
 
 ### Breaking

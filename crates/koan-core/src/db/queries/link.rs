@@ -84,7 +84,8 @@ pub fn take_waiting(
 /// `keep_secs`, after marking the devices in `live` seen: a link held open
 /// that long is seen, not stale. A paired Apple TV is kept however long it
 /// sleeps, since the pairing was a deliberate act and waking it is what links
-/// it again. Whether any device was dropped.
+/// it again. Whether any device was dropped. A failure leaves the rest for the
+/// next link to prune.
 pub fn forget_stale(
     conn: &Connection,
     live: &[(String, String)],
@@ -136,9 +137,10 @@ impl Absent {
 }
 
 /// Queue `cmd` for each device in scope (`username`'s, or everyone's for
-/// `None`) that has linked before and is not in `live`, as one transaction. A
+/// `None`) that has linked before and is not in `live`, in one transaction. A
 /// sync replaces one already waiting, since a full one covers an incremental.
-/// The devices it was queued for.
+/// A device whose row cannot be written is logged and left out, so the others
+/// still get the command. The devices it was queued for.
 pub fn queue_for_absent(
     conn: &Connection,
     username: Option<&str>,
@@ -169,7 +171,7 @@ pub fn queue_for_absent(
     let text = serde_json::to_string(cmd)?;
     let is_sync = matches!(cmd, LinkCommand::Sync { .. });
     super::atomically(conn, || {
-        for a in &absent {
+        let queue = |a: &Absent| -> rusqlite::Result<()> {
             if is_sync {
                 conn.execute(
                     "DELETE FROM link_outbox WHERE device = ?1 AND username = ?2
@@ -182,10 +184,19 @@ pub fn queue_for_absent(
                  VALUES (?1, ?2, ?3, ?4)",
                 params![a.device, a.username, text, now],
             )?;
-        }
-        Ok::<_, DbError>(())
-    })?;
-    Ok(absent)
+            Ok(())
+        };
+        Ok::<_, DbError>(
+            absent
+                .into_iter()
+                .filter(|a| {
+                    queue(a)
+                        .inspect_err(|e| log::warn!("link: could not queue for {}: {e}", a.name))
+                        .is_ok()
+                })
+                .collect(),
+        )
+    })
 }
 
 /// Keep `envelope` for `username`'s `device` until it next links, under the id

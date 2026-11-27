@@ -18,7 +18,7 @@ use crate::attrs::{Attrs, component};
 pub struct Qr<'a> {
     /// The modules a side, the quiet zone included.
     side: usize,
-    /// Each dark module as a unit square, in SVG path data: figures and path commands alone.
+    /// Each row's runs of dark modules as one rectangle each, in SVG path data: figures and path commands alone.
     modules: String,
     label: Text<'a>,
     attrs: Attrs<'a>,
@@ -33,15 +33,21 @@ impl Qr<'_> {
     pub fn new(data: impl AsRef<[u8]>) -> Option<Self> {
         let code = qrcode::QrCode::new(data).ok()?;
         let width = code.width();
+        let colours = code.to_colors();
         let mut modules = String::new();
-        for (at, colour) in code.to_colors().into_iter().enumerate() {
-            if colour == qrcode::Color::Dark {
-                let _ = write!(
-                    modules,
-                    "M{} {}h1v1h-1z",
-                    at % width + QUIET,
-                    at / width + QUIET
-                );
+        for (y, row) in colours.chunks(width).enumerate() {
+            let mut x = 0;
+            while x < width {
+                let run = row[x..]
+                    .iter()
+                    .take_while(|colour| **colour == qrcode::Color::Dark)
+                    .count();
+                if run == 0 {
+                    x += 1;
+                } else {
+                    let _ = write!(modules, "M{} {}h{run}v1h-{run}z", x + QUIET, y + QUIET);
+                    x += run;
+                }
             }
         }
         Some(Self {
@@ -80,8 +86,13 @@ mod tests {
             "{html}"
         );
         assert!(
-            html.contains("<path d=\"M4 4h1v1h-1z"),
-            "the finder starts in the corner: {html}"
+            html.contains("<path d=\"M4 4h7v1h-7z"),
+            "the finder's top edge is one run of seven: {html}"
+        );
+        assert!(
+            html.len() < 8000,
+            "a rectangle per run, not per module: {} bytes",
+            html.len()
         );
         assert!(!html.contains("<script"), "{html}");
     }

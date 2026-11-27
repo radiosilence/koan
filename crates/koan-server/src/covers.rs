@@ -427,7 +427,7 @@ impl Covers {
         let albums: Vec<i64> = {
             let Ok(db) = pool.get() else { return };
             self.forget_evicted(&db.conn);
-            koan_core::db::queries::albums_with_files(&db.conn).unwrap_or_default()
+            koan_core::db::queries::albums_with_files_by_path(&db.conn).unwrap_or_default()
         };
         let total = albums.len();
         self.set_warm(|w| {

@@ -2,7 +2,7 @@
     its label. -#}
 {%- let bare = self.is_bare() -%}
 <input type="{% if tick.radio %}radio{% else %}checkbox{% endif %}"
-{%- if bare && !attrs.classes().is_empty() %} class="{{ attrs.classes().to_string().trim_start() }}"{% endif %} name="{{ tick.name }}"
+{%- if bare && !attrs.classes().is_empty() %} class="{{ attrs.class_names() }}"{% endif %} name="{{ tick.name }}"
 {%- if let Some(value) = tick.value %} value="{{ value }}"{% endif %}
 {%- if tick.checked %} checked{% endif %}
 {%- if tick.disabled %} disabled{% endif %}
