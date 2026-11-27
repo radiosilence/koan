@@ -1,0 +1,8 @@
+{%- import "parts/macros.html" as m -%}
+<header class="hero">
+{%- if let Some(cover) = cover %}<img class="hero-cover" src="{{ cover }}" width="{{ self.size() }}" height="{{ self.size() }}" alt="">{% endif %}
+<div class="min-w-0 flex-1">{% call m::kicker("Playlist") %}{% endcall %}
+<h1 class="mb-1 normal-case">{{ list.name }}</h1><p class="mt-0 mb-3.5 text-muted">{{ sub }}</p>
+{%- if let Some(comment) = self.comment() %}<p class="mt-0 mb-3.5 text-muted wrap-anywhere">{{ comment }}</p>{% endif %}
+<div class="flex flex-wrap items-center gap-2">{% call m::play_buttons(true) %}{% endcall %}</div></div></header>
+<ol class="tracks" data-context="album">{{ rows }}</ol>

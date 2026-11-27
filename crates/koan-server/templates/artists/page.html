@@ -1,0 +1,9 @@
+{%- import "parts/macros.html" as m -%}
+<h1>Artists</h1>{% if filtered %}<p class="mt-0 mb-3.5 text-muted">{{ artists.len() }} {% if artists.len() == 1 %}artist{% else %}artists{% endif %}</p>{% endif %}{{ toolbar }}
+{%- if artists.is_empty() %}
+{{ kit::Empty::new("No artists match.").icon(crate::icon::ARTIST) }}
+{%- else %}
+<ul>
+{%- for a in artists %}{% call m::list_row(self.href(a), a.name, self.albums(a)) %}{% endcall %}{% endfor %}
+</ul>
+{%- endif %}

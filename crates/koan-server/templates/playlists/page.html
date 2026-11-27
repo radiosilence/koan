@@ -1,0 +1,9 @@
+{%- import "parts/macros.html" as m -%}
+<h1>Playlists</h1>
+{%- if lists.is_empty() %}
+{{ kit::Empty::new("No playlists yet.").detail("Playlists made in the kōan apps, or in any Subsonic app signed in as you, are listed here.").icon(crate::icon::PLAYLIST) }}
+{%- else %}
+<ul>
+{%- for p in lists %}{% call m::list_row(self.href(p), p.name, self.detail(p)) %}{% endcall %}{% endfor %}
+</ul>
+{%- endif %}

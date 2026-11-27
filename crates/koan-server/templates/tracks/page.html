@@ -1,0 +1,9 @@
+<h1>Tracks</h1><p class="mt-0 mb-3.5 text-muted">{{ total }}</p>{{ toolbar }}
+{%- if empty %}
+{{ kit::Empty::new("No tracks match.") }}
+{%- else %}
+<ol class="tracks" data-context="album">{{ rows }}</ol>
+{%- endif %}
+{%- if previous.is_some() || next.is_some() %}
+<p class="mt-5 flex gap-4">{% if let Some(href) = previous %}<a class="lowercase" href="{{ href }}">Previous</a>{% endif %}{% if let Some(href) = next %}<a class="lowercase" href="{{ href }}">Next</a>{% endif %}</p>
+{%- endif %}

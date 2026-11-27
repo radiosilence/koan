@@ -1,0 +1,6 @@
+{%- import "parts/macros.html" as m -%}
+<header class="hero"><img class="hero-cover" src="{{ cover }}" width="{{ self.size() }}" height="{{ self.size() }}" alt="">
+<div class="min-w-0 flex-1">{% call m::kicker("Album") %}{% endcall %}<h1 class="mb-1 normal-case">{{ album.title }}</h1><p class="mt-0 mb-3.5 text-muted wrap-anywhere">{{ credit }}{% for part in sub %} · {{ part }}{% endfor %}</p>
+<div class="flex flex-wrap items-center gap-2">{% call m::play_buttons(true) %}{% endcall %}
+{%- if share.is_some() %}{{ self.share_button() }}{% endif %}{{ heart }}</div>{% if let Some(region) = share %}{{ region }}{% endif %}</div></header>
+<ol class="tracks" data-context="album">{% for (disc, row) in rows %}{% if let Some(disc) = disc %}<li class="disc">Disc {{ disc }}</li>{% endif %}{{ row }}{% endfor %}</ol>

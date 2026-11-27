@@ -49,12 +49,6 @@ impl Layout {
         .html()
     }
 
-    /// The address bar following `$url`, the address a page loaded in place
-    /// shows.
-    fn history(&self) -> Html {
-        askama_datastar::history("url")
-    }
-
     /// The live stream, opened again whenever it ends or goes quiet, and
     /// afresh when the page moves.
     fn live(&self) -> Html {
@@ -71,6 +65,12 @@ impl Layout {
 
     fn version(&self) -> &'static str {
         env!("CARGO_PKG_VERSION")
+    }
+
+    /// The stylesheet's address without its version, for the script to swap
+    /// in the one a response names after an upgrade.
+    fn stylesheet(&self) -> String {
+        paths::asset("ui.css")
     }
 }
 

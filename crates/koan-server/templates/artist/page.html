@@ -1,0 +1,14 @@
+{%- import "parts/macros.html" as m -%}
+{% call m::kicker("Artist") %}{% endcall %}<h1 class="normal-case">{{ artist.name }}</h1><p class="mt-0 mb-3.5 text-muted">{{ self.sub() }}</p>
+{%- if let Some(heart) = heart %}
+{#- Sharing and favouriting are the same accounts' to do. #}
+<div class="mb-5 flex flex-wrap items-center gap-2">{{ self.share_button() }}{{ heart }}</div>
+{%- endif %}
+{%- if let Some(region) = share %}{{ region }}{% endif %}
+{%- if let Some(tiles) = tiles %}
+<div class="tiles">{{ tiles }}</div>
+{%- endif %}
+{%- if let Some(features) = features %}
+<div class="{% call m::list_head() %}{% endcall %}"><h2>Features on</h2></div>
+<div class="tiles">{{ features }}</div>
+{%- endif %}

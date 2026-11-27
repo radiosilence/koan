@@ -1,0 +1,6 @@
+<h1>Albums</h1>{% if filtered %}<p class="mt-0 mb-3.5 text-muted">{{ count }} {% if count == 1 %}album{% else %}albums{% endif %}</p>{% endif %}{{ toolbar }}
+{%- if count == 0 %}
+{{ kit::Empty::new("No albums match.").icon(crate::icon::ALBUM) }}
+{%- else %}
+<div class="tiles">{{ tiles }}</div>
+{%- endif %}

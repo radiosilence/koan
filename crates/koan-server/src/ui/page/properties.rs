@@ -4,80 +4,55 @@
 //!
 //! Paths describe the server's filesystem, so only an admin is shown them.
 //!
-//! A page like any other; the UI's script shows its content in the shell's
-//! dialog.
+//! A page like any other, reached from a track row's menu.
 
 use askama::Template;
-use axum::Extension;
-use axum::extract::{Path, State};
-use axum::http::HeaderMap;
-use axum::response::Response;
-use koan_core::auth::Role;
+use axum::extract::Path;
 use koan_core::db::queries::{self, UidKind};
+use koan_kit_web as kit;
 
-use super::pages::{Credits, credit_links, link, respond, unavailable};
-use super::{Logged, UiState, open};
+use super::{Body, Page, Refusal, Section};
 use crate::auth::AuthUser;
-use crate::html::{Html, Render};
-use crate::share::{blocking, duration, not_found};
+use crate::html::Html;
+use crate::share::{blocking, duration};
+use crate::ui::parts::credit::{Credit, Credits, Link};
+use crate::ui::{Logged, UiState, is_admin, open};
 
-pub(super) const SECTION: &str = "mt-5 mb-2 text-meta";
+pub(in crate::ui) struct Properties;
 
-/// One row of a definition list: text, or links to the artist and album
-/// pages.
-struct Field {
-    name: &'static str,
-    value: Value,
+#[derive(Template)]
+#[template(path = "properties/page.html")]
+struct PropertiesPage<'a> {
+    title: &'a str,
+    artist: &'a Html,
+    path: Option<&'a str>,
+    lists: Vec<(&'static str, kit::Pairs<'static>)>,
 }
 
+impl Page for Properties {
+    const SECTION: Section = Section::Tracks;
+    type Args = Path<i64>;
+
+    async fn body(s: &UiState, user: &AuthUser, Path(id): Path<i64>) -> Result<Body, Refusal> {
+        let admin = is_admin(user);
+        let state = s.clone();
+        blocking(move || read(&state, id, admin))
+            .await
+            .ok_or(Refusal::Unavailable)?
+    }
+}
+
+/// A field's value: text, or names linked to their pages.
 enum Value {
     Text(String),
     Links(Html),
 }
 
-impl Value {
-    fn is_empty(&self) -> bool {
-        match self {
-            Value::Text(t) => t.is_empty(),
-            Value::Links(h) => h.is_empty(),
-        }
-    }
-}
-
-#[derive(Template)]
-#[template(path = "properties/page.html")]
-struct Properties<'a> {
-    title: &'a str,
-    /// The artist credit, as links.
-    artist: &'a Html,
-    /// The file on the server, for an admin.
-    path: Option<&'a str>,
-    /// Each list under its heading: the track's, then each source's.
-    lists: Vec<(&'static str, Vec<Field>)>,
-}
-
-pub(super) async fn page(
-    State(s): State<UiState>,
-    Extension(user): Extension<AuthUser>,
-    Path(id): Path<i64>,
-    headers: HeaderMap,
-) -> Response {
-    let admin = user.role == Role::Admin;
-    let state = s.clone();
-    match blocking(move || render(&state, id, admin)).await {
-        Some(Some(body)) => respond(&s, &headers, &user, "Properties", &body),
-        Some(None) => not_found(),
-        None => unavailable(),
-    }
-}
-
-/// `None` when the library cannot be read, `Some(None)` for a track it does
-/// not have.
-fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<Html>> {
+fn read(s: &UiState, id: i64, admin: bool) -> Option<Result<Body, Refusal>> {
     let db = open(&s.pool)?;
     let conn = &db.conn;
     let Some(t) = queries::tracks_by_ids(conn, &[id]).logged()?.pop() else {
-        return Some(None);
+        return Some(Err(Refusal::NotFound));
     };
     let album = t
         .album_id
@@ -97,23 +72,18 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<Html>> {
     };
     let sources = queries::sources_of_track(conn, id).logged()?;
     let credits = Credits::load(conn, std::slice::from_ref(&t), t.album_id.as_slice());
-    let artist = credit_links(&credits.track(&t), false);
-    let album_artist = credit_links(
-        &credits.album(
-            t.album_id,
-            &t.album_artist_name,
-            album.as_ref().map(|a| a.artist_id),
-        ),
-        false,
-    );
-    // Facts only a source holds, from the first that has them: the file's.
+    let artist = Credit::links(&credits.track(&t));
+    let album_artist = Credit::links(&credits.album(
+        t.album_id,
+        &t.album_artist_name,
+        album.as_ref().map(|a| a.artist_id),
+    ));
     let first = |f: fn(&queries::TrackMeta) -> Option<String>| sources.iter().find_map(f);
     let size = first(|m| m.size_bytes.map(|b| format!("{b} bytes")));
     let date = album
         .as_ref()
         .and_then(|a| a.date.clone())
         .or_else(|| first(|m| m.date.clone()));
-
     let path = if admin {
         crate::subsonic::track_file_path(&t)
     } else {
@@ -122,13 +92,14 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<Html>> {
     let number = |v: Option<i32>| v.map(|v| v.to_string());
     let text = |name, value: Option<String>| (name, value.map(Value::Text));
     let html = |name, value: Option<Html>| (name, value.map(Value::Links));
-    // Names that have a page are linked to it.
-    let linked = |kind, id, name: &str| (!name.is_empty()).then(|| link(kind, id, name));
     let track = [
         text("Title", Some(t.title.clone())),
         html("Artist", Some(artist.clone())),
         html("Album artist", Some(album_artist)),
-        html("Album", linked("album", t.album_id, &t.album_title)),
+        html(
+            "Album",
+            (!t.album_title.is_empty()).then(|| Link::album(t.album_id, &t.album_title)),
+        ),
         text("Disc", number(t.disc)),
         text("Track", number(t.track_number)),
         text("Discs", album.as_ref().and_then(|a| number(a.total_discs))),
@@ -144,16 +115,20 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<Html>> {
         text("MusicBrainz recording", first(|m| m.mbid.clone())),
         text("MusicBrainz release", first(|m| m.album_mbid.clone())),
     ];
-    let mut lists = vec![(
-        "Track",
-        track
-            .into_iter()
-            .filter_map(|(name, value)| {
-                let value = value.filter(|v| !v.is_empty())?;
-                Some(Field { name, value })
-            })
-            .collect(),
-    )];
+    let mut pairs = kit::Pairs::new();
+    for (name, value) in track {
+        pairs = match value {
+            Some(Value::Text(t)) if !t.is_empty() => pairs.pair(name, t),
+            Some(Value::Links(h)) if !h.is_empty() => {
+                match kit::Markup::render(&Linked { html: h }) {
+                    Ok(m) => pairs.pair(name, m),
+                    Err(_) => pairs,
+                }
+            }
+            _ => pairs,
+        };
+    }
+    let mut lists = vec![("Track", pairs)];
     for mut source in sources {
         if !admin {
             source.path = None;
@@ -164,21 +139,24 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<Html>> {
         } else {
             "From the file"
         };
-        let fields = source
-            .info_fields()
-            .into_iter()
-            .map(|(name, value)| Field {
-                name,
-                value: Value::Text(value),
-            })
-            .collect();
-        lists.push((heading, fields));
+        let mut pairs = kit::Pairs::new();
+        for (name, value) in source.info_fields() {
+            pairs = pairs.pair(name, value);
+        }
+        lists.push((heading, pairs));
     }
-    let page = Properties {
+    let page = PropertiesPage {
         title: &t.title,
         artist: &artist,
-        path,
+        path: path.as_deref(),
         lists,
     };
-    Some(Some(page.html()))
+    Some(Ok(Body::of(format!("{} · Properties", t.title), &page)))
+}
+
+/// Linked names as a value of the list.
+#[derive(Template)]
+#[template(source = "{{ html }}", ext = "html")]
+struct Linked {
+    html: Html,
 }

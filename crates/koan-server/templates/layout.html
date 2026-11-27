@@ -11,8 +11,9 @@
 <script type="module" src="{{ self.assets().passkey_js }}"></script>
 </head>
 {%- let renew = self.renew() %}
-<body data-signals="{{ signals }}" data-renew="{{ renew[0] }}" data-renew-then="{{ renew[1] }}" data-assets="{{ self.assets().css }}"{{ self.history() }}>
+<body data-signals="{{ signals }}" data-renew="{{ renew[0] }}" data-renew-then="{{ renew[1] }}" data-stylesheet="{{ self.stylesheet() }}">
 {{ kit::SkipLink::new("Skip to content", "main") }}
+{{ kit::Navigation::new().follows("url") }}
 <div hidden{{ self.live() }}></div>
 {#- The player's way to load a page in place: an address from a row's data, which the page wrote. #}
 <div hidden data-on:koan-go__window="@get(evt.detail)"></div>

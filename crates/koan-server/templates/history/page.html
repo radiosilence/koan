@@ -1,0 +1,7 @@
+{#- Picked plays collect in `$forget`, read off the boxes ticked whenever one changes; the bar to forget them shows once there is one. -#}
+<div data-on:change="$forget = [...el.querySelectorAll('#history input:checked')].map(i => +i.value)">
+<div class="flex flex-wrap items-baseline justify-between gap-2">
+<h1>History</h1><div class="flex items-center gap-2" data-show="$forget.length > 0">
+<span class="text-meta text-muted" data-text="$forget.length + ' selected'"></span>
+{{ self.deselect() }}{{ self.forget() }}</div></div>
+{{ list }}</div>
