@@ -425,7 +425,10 @@ mod tests {
                 .contains("immutable")
         );
         // Every page and patch names it too, so an open tab can catch up.
-        assert_eq!(full.headers["x-koan-css"], crate::ui::ASSETS.css_hash.as_str());
+        assert_eq!(
+            full.headers["x-koan-css"],
+            crate::ui::ASSETS.css_hash.as_str()
+        );
 
         let partial = send(
             &f.app,
