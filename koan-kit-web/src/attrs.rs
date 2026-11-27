@@ -200,6 +200,50 @@ pub(crate) fn attribute(f: &mut fmt::Formatter<'_>, name: &str, value: &str) -> 
     f.write_str("\"")
 }
 
+/// `id` as a CSS identifier, as the browser's `CSS.escape` writes it, for a selector the kit builds from an id: a
+/// quote, a comma or a space in the id cannot retarget it.
+pub(crate) fn css_ident(id: &str) -> String {
+    use std::fmt::Write as _;
+
+    let chars: Vec<char> = id.chars().collect();
+    let mut out = String::with_capacity(id.len());
+    for (at, &c) in chars.iter().enumerate() {
+        let code = u32::from(c);
+        let leading_digit = c.is_ascii_digit() && (at == 0 || (at == 1 && chars[0] == '-'));
+        if c == '\0' {
+            out.push('\u{fffd}');
+        } else if c.is_ascii_control() || leading_digit {
+            let _ = write!(out, "\\{code:x} ");
+        } else if c == '-' && chars.len() == 1 {
+            out.push_str("\\-");
+        } else if c.is_ascii_alphanumeric() || c == '-' || c == '_' || code >= 0x80 {
+            out.push(c);
+        } else {
+            out.push('\\');
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Refuses a path that is not on this origin: it must start with `/`, not with `//` or `/\\`, which a browser reads as
+/// another host, and hold no whitespace or control character, which a browser strips before reading it.
+pub(crate) fn assert_on_origin(path: &str) {
+    assert!(
+        path.starts_with('/')
+            && !path.starts_with("//")
+            && !path.starts_with("/\\")
+            && !path.chars().any(|c| c.is_control() || c.is_whitespace()),
+        "{path:?} is not a path on this origin"
+    );
+}
+
+/// A kit template rendered as markup. The kit's templates hold its own values, whose `Display` cannot fail.
+pub(crate) fn render(template: &impl askama::Template) -> askama_datastar::Html {
+    askama_datastar::Html::render(template)
+        .expect("a kit template holds the kit's own values, whose Display cannot fail")
+}
+
 /// Text as HTML writes it: `&`, `<`, `>`, `"` and `'` escaped, as askama escapes a template's values.
 pub(crate) fn escape(f: &mut fmt::Formatter<'_>, text: &str) -> fmt::Result {
     askama::filters::Html.write_escaped_str(f, text)
@@ -359,6 +403,17 @@ mod tests {
             " id=\"row-1\" data-url=\"/x?a=1&#38;b=&#34;2&#34;\" title=\"&#60;b&#62;\" \
              data-on:click=\"@post(el.dataset.url)\""
         );
+    }
+
+    #[test]
+    fn an_id_in_a_selector_is_escaped_as_css_escapes_it() {
+        assert_eq!(css_ident("files-1"), "files-1");
+        assert_eq!(css_ident("a, b"), "a\\,\\ b");
+        assert_eq!(css_ident("x\"]"), "x\\\"\\]");
+        assert_eq!(css_ident("1st"), "\\31 st");
+        assert_eq!(css_ident("-2"), "-\\32 ");
+        assert_eq!(css_ident("-"), "\\-");
+        assert_eq!(css_ident("ünï"), "ünï");
     }
 
     #[test]

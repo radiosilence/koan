@@ -657,6 +657,8 @@ pub struct Field<'a> {
     warning: Text<'a>,
     /// The id of the form it sits in, which its ids are built on.
     scope: Text<'a>,
+    /// Where it fetches itself from as the page starts.
+    loads: Text<'a>,
     attrs: Attrs<'a>,
 }
 
@@ -670,8 +672,24 @@ impl<'a> Field<'a> {
             error: Text::default(),
             warning: Text::default(),
             scope: Text::default(),
+            loads: Text::default(),
             attrs: Attrs::default(),
         }
+    }
+
+    /// Fetches itself from `url` as the page starts, for a control whose choices or value the server takes a moment to
+    /// learn, such as a select filled from another service: until then the label shows and the control stands as a
+    /// skeleton holding the ensō, disabled. The handler answers with this field, settled and without `loads`, under the
+    /// same [`id`](Self::id), which it needs for the answer to find it.
+    pub fn loads(mut self, url: impl Into<Text<'a>>) -> Self {
+        self.loads = url.into();
+        self.control = match self.control {
+            Control::Input(control) => Control::Input(control.disabled(true)),
+            Control::Select(control) => Control::Select(control.disabled(true)),
+            Control::Textarea(control) => Control::Textarea(control.disabled(true)),
+            custom @ Control::Custom(_) => custom,
+        };
+        self
     }
 
     /// Builds its label's and note's ids on `scope`, the id of the form it sits in, unless it has an
@@ -1108,6 +1126,32 @@ mod tests {
         assert!(
             first.contains("aria-describedby=\"rename-name-note\""),
             "{first}"
+        );
+    }
+
+    #[test]
+    fn a_field_that_loads_stands_as_a_skeleton_until_answered() {
+        let field = Field::select("model", "model", ["…"])
+            .loads("/settings/model")
+            .id("model")
+            .to_string();
+        assert!(field.contains("data-url=\"/settings/model\""), "{field}");
+        assert!(
+            field.contains("data-init=\"@get(el.dataset.url)\""),
+            "{field}"
+        );
+        assert!(field.contains("aria-busy=\"true\""), "{field}");
+        assert!(
+            field.contains("<span class=\"skeleton\"><select"),
+            "{field}"
+        );
+        assert!(field.contains(" disabled"), "{field}");
+        let settled = Field::select("model", "model", ["opus"])
+            .id("model")
+            .to_string();
+        assert!(
+            !settled.contains("data-init"),
+            "the answer stops fetching: {settled}"
         );
     }
 

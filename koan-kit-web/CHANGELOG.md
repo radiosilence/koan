@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.8.0
+
+### Breaking
+
+- **Markup cannot be made from a string.** `Markup` and `Content` no longer convert from `askama_datastar::Html`, since `Html::trusted` makes one of any string. A view's markup reaches a slot as a component, a `wrap` block, or `kit::Markup::render(&template)`; several pieces collect into one. `Confirm::preview` takes the same. Every element the kit sends is drawn by one of its templates: `Confirm::error`, `Disclosure::fill` and `Spinner` were written by hand, and `Confirm::go` is now `askama_datastar::go`.
+- **A request's busy signal is named by what the control is.** A button's, an in-place link's and a form's own signal is a hash of its method, URL, form, group, id and label rather than a per-thread serial, so the same fragment drawn twice is byte for byte the same, and a live stream redrawing a region while its request runs leaves the spinner turning. Two controls alike in all of these on one page share a signal, which a patch adding or removing either would clear mid-request; give each an `id`. A `Form` without a `busy_key` is named by its method, action and id.
+- **`Link::in_place`'s reload on Back stands down** while the page has a `Navigation`, which loads the entry in place.
+
+### Added
+
+- **`Navigation`, for a page that loads in place.** Placed once in the shell, it loads every same-origin link inside an element marked `data-kit-in-place` in place on a plain click, with one listener for the page, so a grid of thousands of links carries no listener each. A modified or middle click, a `target`, a `download`, a `data-whole` link and a link to a fragment of the page are the browser's. Back and Forward load the entry in place rather than reloading, so a page holding a player keeps playing. `follows(signal)` keeps the address bar on the signal the answer sets, in place of `askama_datastar::history`.
+- **`Tabs` and `Tab`.** A row of addresses over a hairline, the one shown marked `aria-current="page"`, each a link that can load in place, with a count and actions (pin, close) after it.
+- **`Form::field` and `Field::scope`.** A field placed through its form builds its label's and note's ids on the form's id, so a form repeated per row needs an id on the form alone.
+- **`Field::loads(url)`.** A field whose control the server takes a moment to fill stands as a skeleton holding the ensō, disabled, and fetches its settled self as the page starts.
+- **A failed request is said over the page.** `Flash::region().failed(words)` raises an error flash when a request's answer is an error, whose body Datastar drops; `unreachable(words)` when Datastar has given up retrying; `sign_in(path)` sends a 401 to the sign-in page.
+- **`Cover::with(key)`.** A region faded, inert and under the ensō while any request of a busy group runs, such as a folder listing being left.
+- **`Link::to(href)`, a card.** A link holding the markup of a `wrap` block, such as a cover over a title, drawn in the text's colour; it loads in place like any link.
+- **`Qr`.** A QR code drawn by the kit from the code's modules, so an app splices no SVG of its own.
+- **A `Disclosure` with an id keeps its open state across a morph,** so a live stream sending it again leaves it as the reader left it.
+
+### Changed
+
+- **askama_datastar 0.3.2.**
+- **`Disclosure::fill` escapes its id as a CSS identifier** in the selector it builds, so an id holding a quote, a comma or a space cannot retarget the patch.
+- **The storybook's examples are templates,** each shown as the file that drew it.
+
 ## 0.7.0
 
 - **askama_datastar 0.3.** The kit's markup is askama_datastar 0.3's `Html`, so an app on 0.3 hands its own rendered markup to the kit's slots with one `Html` type. 0.3 refuses a `reopen` address holding control or space characters, which a browser would strip into another host.

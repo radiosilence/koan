@@ -467,6 +467,11 @@
     @apply absolute inset-0 m-auto size-4 bg-muted;
   }
 
+  /* What a skeleton holds keeps the room it will take and is not seen: a field's control on its way. */
+  .skeleton > * {
+    @apply invisible;
+  }
+
   /* A value to read or copy: a token, a URL, a command. */
   .code {
     @apply block border border-rule bg-surface px-3 py-2 text-meta break-all text-ink;
@@ -702,6 +707,50 @@
 
   dialog.sheet > footer {
     @apply px-5 pb-5;
+  }
+
+  /* Tabs: a row of addresses over a hairline, the one shown underlined in the accent and the rest muted until hovered.
+     A tab's count and its actions (pin, close) follow its words; the row wraps when it runs out of room. */
+  .tabs {
+    @apply flex flex-wrap items-end gap-x-5 gap-y-1 border-b border-rule;
+  }
+
+  .tab {
+    @apply -mb-px inline-flex items-center gap-1.5 border-b-2 border-transparent pb-1.5 text-control;
+  }
+
+  .tab > a {
+    @apply text-muted hover:text-ink hover:no-underline;
+  }
+
+  .tab.current {
+    @apply border-brand;
+  }
+
+  .tab.current > a {
+    @apply text-strong;
+  }
+
+  .tab > small {
+    @apply text-fine text-muted tabular-nums;
+  }
+
+  /* A link holding a block, such as a cover over a title: no underline, its words in the text's colour. */
+  a.card {
+    @apply block text-ink hover:no-underline;
+  }
+
+  /* A region covered while its busy group runs: what it holds fades and takes no input, and the ensō turns over it. */
+  .cover {
+    @apply relative;
+  }
+
+  .cover[aria-busy="true"] > :not(.spinner) {
+    @apply pointer-events-none opacity-40 transition-opacity;
+  }
+
+  .cover:not([aria-busy="true"]) > .spinner {
+    @apply hidden;
   }
 
   /* A row of controls, fields and buttons alike, each as tall as the tallest, so a bordered button beside a field

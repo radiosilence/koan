@@ -525,10 +525,11 @@ pub(crate) const FOLLOW_GUARD: &str = "evt.metaKey || evt.ctrlKey || evt.shiftKe
 /// What a link that loaded in place does once its request is sent: the address becomes its `href`, in a history entry
 /// of its own, and the entry it left is marked too, so that Back, Forward, a reload and a copied address all name the
 /// page shown. A step through the history to a marked entry reloads it, since the page holds whatever was loaded in
-/// place last; the listener is the window's, added once, so it outlives the link a patch may remove.
+/// place last, unless the page has a [`Navigation`](crate::Navigation), which loads it in place instead; the listener
+/// is the window's, added once, so it outlives the link a patch may remove.
 pub(crate) const FOLLOW_HISTORY: &str = "history.state?.kit || history.replaceState({kit: 1}, ''), \
 history.pushState({kit: 1}, '', el.href), \
-window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; location.reload()), 1)";
+window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)";
 
 /// Writes the attributes that make a link load in place, busy by its own signal and ignored while its group's runs.
 pub(crate) fn in_place_attributes(

@@ -1,0 +1,4 @@
+{#- What it holds, and the ensō over it, shown while the group's requests run; the region is busy and inert meanwhile.
+    Busy is written as a string, since Datastar writes a bare `true` as an empty attribute. -#}
+{%- let signal = self.signal() -%}
+<div class="cover{{ attrs.classes() }}"{% if busy %} aria-busy="true"{% endif %} data-attr:aria-busy="{% if busy %}true || {% endif %}${{ signal }} ? 'true' : 'false'" data-attr:inert="{% if busy %}true || {% endif %}${{ signal }}"{{ attrs }}>{{ content }}<span class="spinner large over" aria-hidden="true"></span></div>

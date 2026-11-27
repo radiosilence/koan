@@ -1,0 +1,7 @@
+{% for (service, url) in credentials %}
+{% let form = kit::Form::post(url).id(service) %}
+<form {{ form.attrs() }}>
+  {{ form.field(kit::Field::password("token", "token").hint("Stored sealed.")) }}
+  {{ form.submit(kit::Button::bordered("save")) }}
+</form>
+{% endfor %}

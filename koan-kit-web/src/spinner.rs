@@ -1,9 +1,9 @@
 //! The loader: the ensō drawing itself, as koan-kit's Spinner draws it, wherever something is on its way.
 
-use std::fmt;
+use askama::Template;
 
 use crate::arg::Text;
-use crate::attrs::{Attrs, component, escape};
+use crate::attrs::{Attrs, component};
 
 /// The ensō turning: `kit::Spinner::new().label("loading the album")`.
 ///
@@ -13,7 +13,8 @@ use crate::attrs::{Attrs, component, escape};
 /// video that is buffering. Without a [`label`](Self::label) it is decoration beside words that already say what is
 /// loading; with one it is a status a screen reader announces.
 #[must_use = "a spinner draws nothing until it is rendered"]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Template)]
+#[template(path = "spinner.html")]
 pub struct Spinner<'a> {
     label: Text<'a>,
     large: bool,
@@ -43,27 +44,6 @@ impl<'a> Spinner<'a> {
     pub fn over(mut self) -> Self {
         self.over = true;
         self
-    }
-}
-
-impl fmt::Display for Spinner<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("<span class=\"spinner")?;
-        if self.large {
-            f.write_str(" large")?;
-        }
-        if self.over {
-            f.write_str(" over")?;
-        }
-        write!(f, "{}\"", self.attrs.classes())?;
-        match self.label.present() {
-            Some(label) => {
-                write!(f, " role=\"status\"{}><span class=\"label\">", self.attrs)?;
-                escape(f, label)?;
-                f.write_str("</span></span>")
-            }
-            None => write!(f, " aria-hidden=\"true\"{}></span>", self.attrs),
-        }
     }
 }
 

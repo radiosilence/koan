@@ -23,6 +23,7 @@ pub struct Link<'a> {
     in_place: bool,
     busy_key: Text<'a>,
     current: bool,
+    card: bool,
     attrs: Attrs<'a>,
 }
 
@@ -35,8 +36,19 @@ impl<'a> Link<'a> {
             in_place: false,
             busy_key: Text::default(),
             current: false,
+            card: false,
             attrs: Attrs::default(),
         }
+    }
+
+    /// A link to `href` holding a block, such as a cover over a title and a count: a card. Its content is the markup of
+    /// a `{% filter kit::wrap(kit::Link::to(url).in_place()) %}` block, and it draws in the text's colour with no
+    /// underline. On a page with a [`Navigation`](crate::Navigation), a plain `<a>` inside its scope loads in place
+    /// without `in_place`, which suits a grid of thousands.
+    pub fn to(href: impl Into<Text<'a>>) -> Self {
+        let mut link = Self::new("", href);
+        link.card = true;
+        link
     }
 
     /// A plain click reads the page in place with `@get`, its handler patching what changes, while a modified click, a
@@ -60,6 +72,17 @@ impl<'a> Link<'a> {
     pub fn current(mut self, on: impl Into<Flag>) -> Self {
         self.current = on.into().get();
         self
+    }
+
+    /// Its classes: a card's, then the app's.
+    fn classes(&self) -> Option<String> {
+        let class = format!(
+            "{}{}",
+            if self.card { "card" } else { "" },
+            self.attrs.classes()
+        );
+        let class = class.trim_start();
+        (!class.is_empty()).then(|| class.to_owned())
     }
 
     /// The attributes that load it in place, when it does.
@@ -103,6 +126,25 @@ component!(Link);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_card_holds_a_block_and_loads_in_place() {
+        let html = Link::to("/albums/7")
+            .in_place()
+            .wrap(Markup::kit(
+                "<img alt=\"\" src=\"/c/7\"><strong>Untrue</strong>".into(),
+            ))
+            .to_string();
+        assert!(
+            html.starts_with("<a href=\"/albums/7\" class=\"card\""),
+            "{html}"
+        );
+        assert!(html.contains("@get(el.getAttribute('href')"), "{html}");
+        assert!(
+            html.ends_with("><img alt=\"\" src=\"/c/7\"><strong>Untrue</strong></a>"),
+            "{html}"
+        );
+    }
 
     #[test]
     fn a_link_in_place_leaves_a_modified_click_to_the_browser() {

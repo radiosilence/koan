@@ -1,0 +1,4 @@
+{% filter kit::wrap(kit::Pairs::new().pair("last 30 days", "42 views")) %}
+  <dt>linked from</dt>
+  <dd>{% for (host, n) in referrers %}{% if !loop.first %} · {% endif %}{{ host }} {{ n }}{% endfor %}</dd>
+{% endfilter %}
