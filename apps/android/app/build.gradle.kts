@@ -166,11 +166,20 @@ val koanFfi = tasks.register<KoanFfi>("koanFfi") {
 /**
  * The Android framework jars Robolectric runs the tests on, resolved by
  * Gradle rather than fetched by Robolectric at test time, so they come from
- * Gradle's cache and repositories like any dependency.
+ * Gradle's cache and repositories like any dependency. Every level is the
+ * same module at another version, so each has a configuration of its own:
+ * one configuration would resolve them to the newest alone.
  */
-val robolectricSdks = configurations.create("robolectricSdks") {
-    isCanBeConsumed = false
-    isTransitive = false
+val robolectricSdks = mapOf(
+    33 to libs.robolectric.sdk33,
+    34 to libs.robolectric.sdk34,
+    35 to libs.robolectric.sdk35,
+).map { (level, jar) ->
+    configurations.create("robolectricSdk$level") {
+        isCanBeConsumed = false
+        isTransitive = false
+        dependencies.addLater(jar)
+    }
 }
 
 /** Robolectric's offline dependency directory: each jar named `<artifact>-<version>.jar`, as Gradle names them. */
@@ -233,9 +242,6 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
-    robolectricSdks(libs.robolectric.sdk33)
-    robolectricSdks(libs.robolectric.sdk34)
-    robolectricSdks(libs.robolectric.sdk35)
     testImplementation(platform(libs.compose.bom))
     testImplementation(libs.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.test.runner)

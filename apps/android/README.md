@@ -20,7 +20,7 @@ The APK carries arm64-v8a only: phones, and emulators on Apple silicon.
 
 ## Unit tests
 
-`./gradlew :app:testDebugUnitTest` runs the JVM tests, the Compose ones under Robolectric. Robolectric runs offline: Gradle resolves the Android framework jar for each SDK level the tests ask for (`robolectric-sdk*` in `gradle/libs.versions.toml`) and the test task points Robolectric at them, so nothing is downloaded while tests run, where a failed download used to fail CI. A test asking for a level with no jar there fails with "Unable to locate dependency"; add the level to the catalog and to `robolectricSdks` in `app/build.gradle.kts`. A Robolectric upgrade changes the jars' versions too: they are in its `DefaultSdkProvider`.
+`./gradlew :app:testDebugUnitTest` runs the JVM tests, the Compose ones under Robolectric. Robolectric runs offline: Gradle resolves the Android framework jar for each SDK level the tests ask for (`robolectric-sdk*` in `gradle/libs.versions.toml`) and the test task points Robolectric at them, so nothing is downloaded while tests run, where a failed download used to fail CI. A test asking for a level with no jar there fails with "Unable to locate dependency"; add the level to the catalog and to `robolectricSdks` in `app/build.gradle.kts`, which gives each level a configuration of its own since one configuration would resolve the same module to a single version. A Robolectric upgrade changes the jars' versions too: they are in its `DefaultSdkProvider`.
 
 ## The walk
 
