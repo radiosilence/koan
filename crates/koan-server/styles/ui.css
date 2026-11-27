@@ -58,6 +58,11 @@
     @apply my-1 border-rule;
   }
 
+  /* The sort and filter row: open on a wide screen, where its disclosure's summary is not needed. */
+  .browse > summary {
+    @apply wide:hidden;
+  }
+
   /* Record tiles: the album grid, an artist's records, a shelf's. */
   .tiles {
     @apply grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-x-4 gap-y-5 max-wide:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] max-wide:gap-x-3 max-wide:gap-y-4;

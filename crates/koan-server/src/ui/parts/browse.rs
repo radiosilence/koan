@@ -767,8 +767,7 @@ mod page_tests {
         }
         let r = page("/albums?sort=random").await;
         assert!(
-            r.body
-                .contains("<input type=\"hidden\" name=\"seed\" value=\""),
+            input_value(&r.body, "seed").is_some_and(|seed| !seed.is_empty()),
             "the shuffle is pinned"
         );
     }

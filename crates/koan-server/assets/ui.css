@@ -918,11 +918,6 @@
   .\[\&\>h2\]\:my-0 > h2 {
     margin-block: 0px;
   }
-  @media (width >= 721px) {
-    .wide\:\[\&\>summary\]\:hidden > summary {
-      display: none;
-    }
-  }
 }
 @font-face {
   font-family: "Geist Mono";
@@ -2108,6 +2103,11 @@
   #track-menu hr {
     margin-block: var(--spacing);
     border-color: var(--rule);
+  }
+  @media (width >= 721px) {
+    .browse > summary {
+      display: none;
+    }
   }
   .tiles {
     display: grid;
