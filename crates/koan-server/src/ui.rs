@@ -82,8 +82,13 @@ pub(crate) struct AssetUrls {
 
 pub(crate) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::new(|| {
     use crate::share::versioned;
-    let player_js = versioned(&paths::asset("player.js"), crate::share::ENGINE_JS);
-    let zod_js = versioned(&paths::asset("zod.js"), ZOD_JS);
+    // An import map's addresses must start with `./`, `../` or `/`: a bare
+    // relative one maps the specifier to nothing.
+    let player_js = versioned(
+        &format!("./{}", paths::asset("player.js")),
+        crate::share::ENGINE_JS,
+    );
+    let zod_js = versioned(&format!("./{}", paths::asset("zod.js")), ZOD_JS);
     AssetUrls {
         css: versioned(&paths::asset("ui.css"), UI_CSS),
         css_hash: crate::share::content_hash(UI_CSS),

@@ -417,6 +417,18 @@ mod tests {
                 && !csp.contains("unsafe-inline")
         );
         assert!(crate::share::import_map_allowed(&full.body, csp), "{csp}");
+        // A bare relative address in an import map maps its specifier to
+        // nothing, and the player would never load.
+        for specifier in ["koan/player", "zod/mini"] {
+            assert!(
+                crate::ui::ASSETS
+                    .imports
+                    .json()
+                    .contains(&format!("\"{specifier}\":\"./ui/assets/")),
+                "{}",
+                crate::ui::ASSETS.imports.json()
+            );
+        }
         // The stylesheet's URL changes with its contents, so an upgrade never pairs
         // new markup with a cached stylesheet.
         let css = &crate::ui::ASSETS.css;
