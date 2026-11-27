@@ -9,7 +9,7 @@ use std::fmt;
 use askama::Template;
 
 use crate::arg::{Amount, AsText, Content, Flag, Markup, Text};
-use crate::attrs::{Attrs, attribute, component, escape};
+use crate::attrs::{Attrs, attribute, component};
 use crate::button::Button;
 use crate::slot::Wrap;
 
@@ -244,7 +244,14 @@ macro_rules! control {
 
         impl fmt::Display for $control<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.write(f, None, None, false)
+                ControlView {
+                    control: Drawn::$control(self),
+                    label: None,
+                    note: None,
+                    invalid: false,
+                }
+                .render_into(f)
+                .map_err(|_| fmt::Error)
             }
         }
 
@@ -384,7 +391,6 @@ impl<'a> Input<'a> {
         note: Option<&str>,
         invalid: bool,
     ) -> fmt::Result {
-        write!(f, "<input type=\"{}\"", self.kind.attribute())?;
         self.common.class(f)?;
         if let Some(value) = self.value.present() {
             attribute(f, "value", value)?;
@@ -403,8 +409,7 @@ impl<'a> Input<'a> {
         if self.readonly {
             f.write_str(" readonly")?;
         }
-        self.common.write(f, label, note, invalid)?;
-        f.write_str(">")
+        self.common.write(f, label, note, invalid)
     }
 }
 
@@ -499,21 +504,8 @@ impl<'a> Select<'a> {
         note: Option<&str>,
         invalid: bool,
     ) -> fmt::Result {
-        f.write_str("<select")?;
         self.common.class(f)?;
-        self.common.write(f, label, note, invalid)?;
-        f.write_str(">")?;
-        for choice in &self.choices {
-            f.write_str("<option")?;
-            attribute(f, "value", choice.value.as_str())?;
-            if choice.value == self.selected {
-                f.write_str(" selected")?;
-            }
-            f.write_str(">")?;
-            escape(f, choice.label.as_str())?;
-            f.write_str("</option>")?;
-        }
-        f.write_str("</select>")
+        self.common.write(f, label, note, invalid)
     }
 }
 
@@ -576,7 +568,6 @@ impl<'a> Textarea<'a> {
         note: Option<&str>,
         invalid: bool,
     ) -> fmt::Result {
-        f.write_str("<textarea")?;
         self.common.class(f)?;
         if let Some(placeholder) = self.placeholder.present() {
             attribute(f, "placeholder", placeholder)?;
@@ -587,11 +578,7 @@ impl<'a> Textarea<'a> {
         if self.readonly {
             f.write_str(" readonly")?;
         }
-        self.common.write(f, label, note, invalid)?;
-        // The parser drops one newline after the start tag, so this one goes and the value's own stays.
-        f.write_str(">\n")?;
-        escape(f, self.value.as_str())?;
-        f.write_str("</textarea>")
+        self.common.write(f, label, note, invalid)
     }
 }
 
@@ -627,14 +614,62 @@ impl Control<'_> {
         note: Option<&str>,
         invalid: bool,
     ) -> fmt::Result {
-        match self {
-            Self::Input(input) => input.write(f, label, note, invalid),
-            Self::Select(select) => select.write(f, label, note, invalid),
-            Self::Textarea(textarea) => textarea.write(f, label, note, invalid),
-            Self::Custom(markup) => f.write_str(markup.as_str()),
+        let control = match self {
+            Self::Input(input) => Drawn::Input(input),
+            Self::Select(select) => Drawn::Select(select),
+            Self::Textarea(textarea) => Drawn::Textarea(textarea),
+            Self::Custom(markup) => return f.write_str(markup.as_str()),
+        };
+        ControlView {
+            control,
+            label,
+            note,
+            invalid,
+        }
+        .render_into(f)
+        .map_err(|_| fmt::Error)
+    }
+}
+
+/// One of the kit's controls, as its template draws it.
+enum Drawn<'c, 'a> {
+    Input(&'c Input<'a>),
+    Select(&'c Select<'a>),
+    Textarea(&'c Textarea<'a>),
+}
+
+/// A control drawn by its template, with the aria its field gives it.
+#[derive(Template)]
+#[template(path = "control.html")]
+struct ControlView<'c, 'a> {
+    control: Drawn<'c, 'a>,
+    label: Option<&'c str>,
+    note: Option<&'c str>,
+    invalid: bool,
+}
+
+impl ControlView<'_, '_> {
+    /// The control's attributes, after its tag's name.
+    fn attributes(&self) -> ControlAttributes<'_, '_, '_> {
+        ControlAttributes(self)
+    }
+}
+
+/// A control's attributes, written by the control.
+struct ControlAttributes<'v, 'c, 'a>(&'v ControlView<'c, 'a>);
+
+impl fmt::Display for ControlAttributes<'_, '_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let view = self.0;
+        match view.control {
+            Drawn::Input(input) => input.write(f, view.label, view.note, view.invalid),
+            Drawn::Select(select) => select.write(f, view.label, view.note, view.invalid),
+            Drawn::Textarea(area) => area.write(f, view.label, view.note, view.invalid),
         }
     }
 }
+
+impl askama::filters::HtmlSafe for ControlAttributes<'_, '_, '_> {}
 
 impl From<Markup> for Control<'_> {
     fn from(markup: Markup) -> Self {

@@ -1,0 +1,6 @@
+{#- A glyph of the set on its 24-unit grid, its stroke set by the size it is drawn at: decoration, or named. -#}
+<svg class="icon{{ attrs.classes() }}" width="{{ px }}" height="{{ px }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="{{ self.stroke() }}" stroke-linecap="square" stroke-linejoin="miter"
+{%- if let Some(label) = label.present() %} role="img" aria-label="{{ label }}"{% else %} aria-hidden="true"{% endif %}{{ attrs }}>
+{%- if !glyph.strokes.is_empty() %}<path d="{{ glyph.strokes }}"/>{% endif -%}
+{%- if !glyph.fills.is_empty() %}<path d="{{ glyph.fills }}" fill="currentColor" stroke="none"/>{% endif -%}
+</svg>

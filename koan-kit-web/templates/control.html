@@ -1,0 +1,14 @@
+{#- One of the kit's controls: its element, its attributes written by the control, and a select's options or a
+    textarea's text. The parser drops one newline after a textarea's start tag, so the template's goes and the value's
+    own stays. -#}
+{%- match control -%}
+{%- when Drawn::Input(input) -%}
+<input type="{{ input.kind.attribute() }}"{{ self.attributes() }}>
+{%- when Drawn::Select(select) -%}
+<select{{ self.attributes() }}>
+{%- for choice in select.choices %}<option value="{{ choice.value }}"{% if choice.value == select.selected %} selected{% endif %}>{{ choice.label }}</option>{% endfor -%}
+</select>
+{%- when Drawn::Textarea(area) -%}
+<textarea{{ self.attributes() }}>
+{{ area.value }}</textarea>
+{%- endmatch -%}

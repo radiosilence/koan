@@ -182,15 +182,6 @@ impl fmt::Display for Classes<'_> {
 
 impl HtmlSafe for Classes<'_> {}
 
-/// Text written escaped, as `Display`.
-pub(crate) struct Escaped<'t>(pub(crate) &'t str);
-
-impl fmt::Display for Escaped<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        escape(f, self.0)
-    }
-}
-
 /// ` name="value"`, the value escaped.
 pub(crate) fn attribute(f: &mut fmt::Formatter<'_>, name: &str, value: &str) -> fmt::Result {
     f.write_str(" ")?;
