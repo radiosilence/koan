@@ -404,7 +404,7 @@ mod tests {
         let r = send(
             &f.app,
             get("/albums")
-                .header("x-koan-partial", "1")
+                .header("datastar-request", "true")
                 .body(Body::empty())
                 .unwrap(),
         )

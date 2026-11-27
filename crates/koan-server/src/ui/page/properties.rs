@@ -178,7 +178,6 @@ mod tests {
         let r = send(
             &f.app,
             get(&uri)
-                .header("x-koan-partial", "1")
                 .header(header::COOKIE, format!("koan_access={admin}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -191,7 +190,6 @@ mod tests {
         let r = send(
             &f.app,
             authed(&f.state, &uri)
-                .header("x-koan-partial", "1")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -205,7 +203,6 @@ mod tests {
         let r = send(
             &f.app,
             authed(&f.state, "/track/999999/properties")
-                .header("x-koan-partial", "1")
                 .body(Body::empty())
                 .unwrap(),
         )
