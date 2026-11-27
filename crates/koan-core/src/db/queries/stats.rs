@@ -312,6 +312,7 @@ mod tests {
         also.mtime = Some(20);
         let mut untagged = sample_meta("T3", "A1", "Al2");
         untagged.genre = None;
+        untagged.mtime = Some(5);
         for meta in [techno, also, untagged] {
             upsert_track(&db.conn, &meta).unwrap();
         }
