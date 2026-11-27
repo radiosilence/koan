@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.77.2
+
+### Fixed
+
+- **The web UI keeps playing as you move around it.** Every page, Playlists, a playlist, Users and Assistants among them, now loads in place, and Back and Forward do too, so the music no longer stops. Underneath, the UI is rebuilt as a routed application drawn only with the kōan web kit: Assistants moved to `/assistants` (`/connect` redirects), the queue's rows are drawn by the server, and actions refuse requests that do not parse.
+- **Linked devices sync after a rescan that rewrites tags.** A scan that edits tags in place now tells devices the library changed, and an album queued by a standing order keeps its file order when its tracks have no numbers.
+- **The web UI's queue page no longer floods the server past 5,000 tracks.** The page draws the whole queue and asks again only after a failed answer, at most every five seconds; the Library page's caches redraw at most once a second again; and making, changing or deleting an account says what happened even when the list of accounts cannot be read back.
+
+### Internal
+
+- **The web UI's rules.** CLAUDE.md sets down the rules radiosilence's server-rendered apps follow after slsk-mcp, and no longer allows `|safe` for markup the server built.
+- **askama-analyzer formats the templates.** `just fmt` runs its formatter, and CI runs `askama-analyzer fmt --check` as an advisory step until a later change formats the templates and makes it blocking. mise installs the latest release with its release-age wait off for this tool alone, since it is maintained alongside these projects and CI should run the release the editor runs.
+- **koan-kit-web 0.8.** The web kit makes markup only from its templates and components, names a request's busy signal by what the control is, and adds in-place navigation, tabs, fields that load, a region covered while busy, cards, QR codes and a flash for failed requests, which the web UI's rework draws with.
+- **koan-server in modules, its SQL in koan-core.** The Subsonic API and the linked-client registry are split into a module per concern with their tests beside them, the response tree names its elements with an enum, and every query koan-server ran against koan-core's tables is a tested function in `koan_core::db::queries`.
+- **koan-kit-web 0.8.1.** Fixes from the review of 0.8: in-place navigation has one owner of the history and pushes only what an answer drew, busy signals are named by the request alone, app classes are escaped once, and loading fields are inert.
+- **Follow-ups to the koan-server split.** Remote sync and organize announce the rows they change, as scans do, so linked devices hear of edits in place from them too; stale devices are pruned even when marking the live ones seen fails; and a failure to mark a device seen is logged at debug, since it recurs on every report the device sends.
+
 ## 0.77.1
 
 ### Internal
