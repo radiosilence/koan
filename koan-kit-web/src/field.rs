@@ -655,6 +655,10 @@ pub struct Field<'a> {
     hint: Content<'a>,
     error: Text<'a>,
     warning: Text<'a>,
+    /// The id of the form it sits in, which its ids are built on.
+    scope: Text<'a>,
+    /// Where it fetches itself from as the page starts.
+    loads: Text<'a>,
     attrs: Attrs<'a>,
 }
 
@@ -667,8 +671,32 @@ impl<'a> Field<'a> {
             hint: Content::default(),
             error: Text::default(),
             warning: Text::default(),
+            scope: Text::default(),
+            loads: Text::default(),
             attrs: Attrs::default(),
         }
+    }
+
+    /// Fetches itself from `url` as the page starts, for a control whose choices or value the server takes a moment to
+    /// learn, such as a select filled from another service: until then the label shows and the control stands as a
+    /// skeleton holding the ensō, disabled. The handler answers with this field, settled and without `loads`, under the
+    /// same [`id`](Self::id), which it needs for the answer to find it.
+    pub fn loads(mut self, url: impl Into<Text<'a>>) -> Self {
+        self.loads = url.into();
+        self.control = match self.control {
+            Control::Input(control) => Control::Input(control.disabled(true)),
+            Control::Select(control) => Control::Select(control.disabled(true)),
+            Control::Textarea(control) => Control::Textarea(control.disabled(true)),
+            custom @ Control::Custom(_) => custom,
+        };
+        self
+    }
+
+    /// Builds its label's and note's ids on `scope`, the id of the form it sits in, unless it has an
+    /// [`id`](Self::id) of its own: `{scope}-{name}-note`. [`Form::field`](crate::Form::field) gives it the form's.
+    pub fn scope(mut self, scope: impl Into<Text<'a>>) -> Self {
+        self.scope = scope.into();
+        self
     }
 
     /// A field whose control is the markup of a `{% filter kit::wrap(field) %}` block: one the kit lacks, or a group
@@ -907,12 +935,22 @@ impl<'a> Field<'a> {
     }
 
     /// What the label's and the note's ids are built from: the field's id, or its control's name, or for a group with
-    /// neither its label, so the same field renders the same ids and a patch morphs it in place. Two groups with one
-    /// label on a page are told apart by [`id`](Self::id).
+    /// neither its label, each after the form's id when it is [`scope`](Self::scope)d, so the same field renders the
+    /// same ids and a patch morphs it in place. Two fields alike on a page are told apart by their forms' ids, or by
+    /// [`id`](Self::id).
     fn base(&self) -> String {
         if !self.attrs.id().is_empty() {
             return self.attrs.id().to_owned();
         }
+        let own = self.unscoped();
+        match self.scope.present() {
+            Some(scope) if !own.is_empty() => format!("{scope}-{own}"),
+            _ => own,
+        }
+    }
+
+    /// The base without a form's id.
+    fn unscoped(&self) -> String {
         let name = self.control.name();
         if !name.is_empty() || !self.is_custom() {
             return name.to_owned();
@@ -1088,6 +1126,32 @@ mod tests {
         assert!(
             first.contains("aria-describedby=\"rename-name-note\""),
             "{first}"
+        );
+    }
+
+    #[test]
+    fn a_field_that_loads_stands_as_a_skeleton_until_answered() {
+        let field = Field::select("model", "model", ["…"])
+            .loads("/settings/model")
+            .id("model")
+            .to_string();
+        assert!(field.contains("data-url=\"/settings/model\""), "{field}");
+        assert!(
+            field.contains("data-init=\"@get(el.dataset.url)\""),
+            "{field}"
+        );
+        assert!(field.contains("aria-busy=\"true\""), "{field}");
+        assert!(
+            field.contains("<span class=\"skeleton\"><select"),
+            "{field}"
+        );
+        assert!(field.contains(" disabled"), "{field}");
+        let settled = Field::select("model", "model", ["opus"])
+            .id("model")
+            .to_string();
+        assert!(
+            !settled.contains("data-init"),
+            "the answer stops fetching: {settled}"
         );
     }
 

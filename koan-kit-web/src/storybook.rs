@@ -13,7 +13,7 @@ use askama::Template;
 use askama_datastar::Html;
 
 use crate as kit;
-use crate::Wrap as _;
+use crate::attrs::render;
 
 /// One thing drawn, and the call that drew it.
 pub struct Entry {
@@ -50,161 +50,32 @@ macro_rules! entry {
     };
 }
 
-/// The storybook's form, as an app writes it in a template.
-const FORM_CODE: &str = r#"{% let form = kit::Form::post("/stub/slow") %}
-<form {{ form.attrs() }}>
-  {{ kit::Field::text("name", "name").required().hint("What the server calls itself.") }}
-  {{ kit::Toggle::new("public", "listed publicly") }}
-  {{ form.submit(kit::Button::primary("save")) }}
-</form>"#;
-
-/// The storybook's live search, as an app writes it in a template.
-const SEARCH_CODE: &str = r#"{% let search = kit::Form::get("/stub/search").live() %}
-<form {{ search.attrs() }}>
-  {{ kit::Input::search("q").label("search").placeholder("polar bear") }}
-</form>
-<ul id="story-results" class="rows"></ul>"#;
-
-/// A sheet's body, as a filter block gives it.
-const WRAP_CODE: &str = r#"{% filter kit::wrap(kit::Sheet::new("story-wrapped", "rename").close("close")) %}
-  <p>The sheet holds whatever the block renders.</p>
-{% endfilter %}"#;
-
-/// A form with several actions, as an app writes it in a template.
-const ACTIONS_CODE: &str = r#"{% let form = kit::Form::post("/stub/slow").id("story-actions") %}
-<form {{ form.attrs() }} class="controls">
-  {{ kit::Input::text("tag").label("tag").placeholder("tag").required() }}
-  {{ kit::Button::bordered("add").post("/stub/slow").sends("story-actions").busy_key("story-actions") }}
-  {{ kit::Button::bordered("remove").post("/stub/slow?remove").sends("story-actions").busy_key("story-actions") }}
-</form>"#;
-
-/// A form that asks first, as an app writes it in a template.
-const ASKING_FORM_CODE: &str = r#"{% let form = kit::Form::post("/stub/slow").id("story-ban") %}
-<form {{ form.attrs() }} class="controls">
-  {{ kit::Input::text("username").label("username to ban").placeholder("username").required() }}
-  {{ kit::Button::primary("ban").bad().post("/stub/slow").sends("story-ban").confirm("ban this user?", "ban") }}
-</form>"#;
-
-/// A compact row, as an app writes it.
-const COMPACT_ROW_CODE: &str = r#"<div class="compact controls">
-  {{ kit::Input::text("split").label("separator").placeholder("split on") }}
-  {{ kit::Combo::new(kit::Select::new("sort").options(["newest", "oldest"]).label("sort"), kit::Button::bordered("sort")) }}
-  {{ kit::Button::bordered("credit artists") }}
-  {{ kit::Button::quiet("pin").icon_only(kit::icon::PIN) }}
-</div>"#;
-
-/// A field beside a bordered button at the default size.
-const CONTROLS_CODE: &str = r#"<div class="controls">
-  {{ kit::Input::text("room").label("room").placeholder("room name") }}
-  {{ kit::Button::bordered("join") }}
-</div>"#;
-
-/// Rows a template builds with a loop.
-const PAIRS_CODE: &str = r#"{% filter kit::wrap(kit::Pairs::new().pair("last 30 days", "42 views")) %}
-  <dt>linked from</dt>
-  <dd>{% for (host, n) in referrers %}{% if !loop.first %} · {% endif %}{{ host }} {{ n }}{% endfor %}</dd>
-{% endfilter %}"#;
-
-/// A summary written as markup.
-const SUMMARY_CODE: &str = r#"{% filter kit::wrap(kit::Disclosure::new("")) %}
-  <summary><span>3. Held on the Tips of Fingers</span> <small>4:12</small></summary>
-  <p>Polar Bear · FLAC 16/44.1</p>
-{% endfilter %}"#;
+/// An example written as an app writes it, in a template: the code shown is the template that drew it.
+macro_rules! story {
+    ($name:ident, $file:literal $(, $field:ident: $ty:ty = $value:expr)*) => {{
+        #[derive(Template)]
+        #[template(path = $file)]
+        struct $name {
+            $($field: $ty,)*
+        }
+        Entry {
+            code: include_str!(concat!("../templates/", $file)).trim_end(),
+            html: render(&$name { $($field: $value,)* }),
+        }
+    }};
+}
 
 /// Every section, in the order the page shows them.
+///
+/// # Panics
+///
+/// Never: its QR code's link is short enough for a code.
 #[must_use]
 #[expect(
     clippy::too_many_lines,
     reason = "a list of every component in every state, read top to bottom"
 )]
 pub fn sections() -> Vec<Section> {
-    let form = kit::Form::post("/stub/slow");
-    let form_html = Html::trusted(format!(
-        "<form{}>{}{}{}</form>",
-        form.attrs(),
-        kit::Field::text("name", "name")
-            .required()
-            .hint("What the server calls itself."),
-        kit::Toggle::new("public", "listed publicly"),
-        form.submit(kit::Button::primary("save")),
-    ));
-    let search = kit::Form::get("/stub/search").live();
-    let search_html = Html::trusted(format!(
-        "<form{}>{}</form><ul id=\"story-results\" class=\"rows\"></ul>",
-        search.attrs(),
-        kit::Input::search("q")
-            .label("search")
-            .placeholder("polar bear"),
-    ));
-    let actions = kit::Form::post("/stub/slow").id("story-actions");
-    let actions_html = Html::trusted(format!(
-        "<form{} class=\"controls\">{}{}{}</form>",
-        actions.attrs(),
-        kit::Input::text("tag")
-            .label("tag")
-            .placeholder("tag")
-            .required(),
-        kit::Button::bordered("add")
-            .post("/stub/slow")
-            .sends("story-actions")
-            .busy_key("story-actions"),
-        kit::Button::bordered("remove")
-            .post("/stub/slow?remove")
-            .sends("story-actions")
-            .busy_key("story-actions"),
-    ));
-    let ban = kit::Form::post("/stub/slow").id("story-ban");
-    let asking_form = Html::trusted(format!(
-        "<form{} class=\"controls\">{}{}</form>",
-        ban.attrs(),
-        kit::Input::text("username")
-            .label("username to ban")
-            .placeholder("username")
-            .required(),
-        kit::Button::primary("ban")
-            .bad()
-            .post("/stub/slow")
-            .sends("story-ban")
-            .confirm("ban this user?", "ban"),
-    ));
-    let compact_row = Html::trusted(format!(
-        "<div class=\"compact controls\">{}{}{}{}</div>",
-        kit::Input::text("split")
-            .label("separator")
-            .placeholder("split on"),
-        kit::Combo::new(
-            kit::Select::new("sort")
-                .options(["newest", "oldest"])
-                .label("sort"),
-            kit::Button::bordered("sort")
-        ),
-        kit::Button::bordered("credit artists"),
-        kit::Button::quiet("pin").icon_only(kit::icon::PIN),
-    ));
-    let controls = Html::trusted(format!(
-        "<div class=\"controls\">{}{}</div>",
-        kit::Input::text("room")
-            .label("room")
-            .placeholder("room name"),
-        kit::Button::bordered("join"),
-    ));
-    let pairs_html = kit::Pairs::new()
-        .pair("last 30 days", "42 views")
-        .wrap(kit::Markup::from(Html::trusted(
-            "<dt>linked from</dt><dd>example.com 30 · other sites 12</dd>",
-        )))
-        .html();
-    let summary_html = kit::Disclosure::new("")
-        .wrap(kit::Markup::from(Html::trusted(
-            "<summary><span>3. Held on the Tips of Fingers</span> <small>4:12</small></summary><p>Polar Bear · FLAC 16/44.1</p>",
-        )))
-        .html();
-    let wrapped = kit::Sheet::new("story-wrapped", "rename")
-        .close("close")
-        .body(Html::trusted(
-            "<p>The sheet holds whatever the block renders.</p>",
-        ));
-
     vec![
         Section {
             title: "buttons",
@@ -241,14 +112,8 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Button::bordered("re-tag").compact()),
                 entry!(kit::Button::primary("apply").compact()),
                 entry!(kit::Field::number("slots", "upload slots").value("4").compact()),
-                Entry {
-                    code: COMPACT_ROW_CODE,
-                    html: compact_row,
-                },
-                Entry {
-                    code: CONTROLS_CODE,
-                    html: controls,
-                },
+                story!(CompactRow, "story/compact_row.html"),
+                story!(Controls, "story/controls.html"),
             ],
         },
         Section {
@@ -267,6 +132,22 @@ pub fn sections() -> Vec<Section> {
                 )),
                 entry!(kit::Link::new("load in place", "/stub/place").in_place().busy_key("story-place")),
                 entry!(kit::Status::wait("queued").busy_with("card-1")),
+                entry!(kit::Button::bordered("fail on the server").get("/stub/error")),
+                story!(CoverStory, "story/cover.html"),
+            ],
+        },
+        Section {
+            title: "navigation",
+            intro: "Tabs, cards and lists whose links load in place. One Navigation in the shell loads every link of a marked region in place, and Back and Forward with them.",
+            entries: vec![
+                entry!(kit::Tabs::new("searches")
+                    .tab(kit::Tab::new("Burial", "/stub/place?burial").current(true).in_place())
+                    .tab(kit::Tab::new("Phace", "/stub/place?phace").count(12).in_place()
+                        .action(kit::Button::quiet("close").icon_only(kit::icon::CLOSE).compact().post("/stub/slow")))
+                    .tab(kit::Tab::new("Polar Bear", "/stub/place?polar").in_place())),
+                story!(Card, "story/card.html"),
+                entry!(kit::Navigation::new().follows("url")),
+                story!(InPlace, "story/in_place.html"),
             ],
         },
         Section {
@@ -285,10 +166,7 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Button::primary("rename files")
                     .post("/stub/slow")
                     .preview("/stub/preview", "rename three files?", "rename")),
-                Entry {
-                    code: ASKING_FORM_CODE,
-                    html: asking_form,
-                },
+                story!(AskingForm, "story/asking_form.html"),
             ],
         },
         Section {
@@ -302,10 +180,7 @@ pub fn sections() -> Vec<Section> {
                     .action(kit::Button::quiet("cancel").closes("story-sheet"))
                     .action(kit::Button::primary("add").closes("story-sheet"))),
                 entry!(kit::Button::bordered("open a wrapped sheet").opens("story-wrapped")),
-                Entry {
-                    code: WRAP_CODE,
-                    html: wrapped.html(),
-                },
+                story!(Wrapped, "story/wrap.html"),
             ],
         },
         Section {
@@ -323,6 +198,7 @@ pub fn sections() -> Vec<Section> {
                     .value("Text a person wrote keeps its Case.")
                     .warning("Saved on this device only.")),
                 entry!(kit::Field::number("slots", "upload slots").value("4").min(0).max(20)),
+                entry!(kit::Field::select("model", "model", ["…"]).loads("/stub/model").id("story-model")),
                 entry!(kit::Combo::new(
                     kit::Input::text("split").placeholder("split on").label("separator"),
                     kit::Button::bordered("credit artists")
@@ -351,25 +227,18 @@ pub fn sections() -> Vec<Section> {
             title: "forms",
             intro: "A form keeps its method and action, and its submit is busy while the form's request runs.",
             entries: vec![
-                Entry {
-                    code: FORM_CODE,
-                    html: form_html,
-                },
-                Entry {
-                    code: SEARCH_CODE,
-                    html: search_html,
-                },
-                Entry {
-                    code: ACTIONS_CODE,
-                    html: actions_html,
-                },
-                entry!(kit::Field::custom("release type")
-                    .hint("A group of controls a label cannot hold, named by the field's label.")
-                    .wrap(kit::Markup::from(Html::trusted(concat!(
-                        r#"<span class="controls">"#,
-                        r#"<select name="primary" aria-label="primary type"><option>album</option><option>single</option></select>"#,
-                        r#"<label class="check"><input type="checkbox" name="clear"> clear</label></span>"#
-                    ))))),
+                story!(FormStory, "story/form.html"),
+                story!(Search, "story/search.html"),
+                story!(Actions, "story/actions.html"),
+                story!(Group, "story/group.html"),
+                story!(
+                    Repeated,
+                    "story/repeated.html",
+                    credentials: Vec<(&'static str, &'static str)> = vec![
+                        ("story-cred-github", "/stub/slow?github"),
+                        ("story-cred-slack", "/stub/slow?slack"),
+                    ]
+                ),
             ],
         },
         Section {
@@ -416,17 +285,16 @@ pub fn sections() -> Vec<Section> {
                     .pair("size", "1.2 GB")
                     .optional("label", None::<&str>)
                     .pair("source", kit::Button::link("soulseek").href("#content"))),
-                Entry {
-                    code: PAIRS_CODE,
-                    html: pairs_html,
-                },
+                story!(
+                    PairsStory,
+                    "story/pairs.html",
+                    referrers: Vec<(&'static str, u32)> = vec![("example.com", 30), ("other sites", 12)]
+                ),
                 entry!(kit::Disclosure::new("connection details").body("What only some readers need.")),
                 entry!(kit::Disclosure::new("files").loads("/stub/files", "Reading…").id("story-files")),
-                Entry {
-                    code: SUMMARY_CODE,
-                    html: summary_html,
-                },
+                story!(Summary, "story/summary.html"),
                 entry!(kit::CopyField::new("mcp url", "https://mcp.example.com/mcp/github", "copy").copied("copied")),
+                entry!(kit::Qr::new("https://koan.rocks/join/x1").expect("fits").label("invite link")),
                 entry!(kit::CopyField::new("share link", "https://dither.example/a/x1", "copy").copied("copied").icon_only().name("link").id("story-share")),
             ],
         },
@@ -452,6 +320,7 @@ struct Page {
     sections: Vec<Section>,
     confirm: Html,
     flash: Html,
+    navigation: Html,
 }
 
 /// The storybook: static, for ui.koan.rocks, or `live` with Datastar from `/datastar.js` for `--serve`.
@@ -472,12 +341,13 @@ pub fn page(live: bool) -> Html {
         head: head.html(),
         sections: sections(),
         confirm: kit::Confirm::new("cancel").html(),
-        flash: kit::Flash::region().html(),
+        flash: kit::Flash::region()
+            .failed("That did not work. Try again.")
+            .unreachable("The storybook's server could not be reached.")
+            .html(),
+        navigation: kit::Navigation::new().html(),
     };
-    Html::trusted(
-        page.render()
-            .expect("the storybook holds components and markup, whose Display cannot fail"),
-    )
+    render(&page)
 }
 
 #[cfg(test)]

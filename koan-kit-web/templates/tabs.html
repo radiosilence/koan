@@ -1,0 +1,4 @@
+{#- A row of tabs, each an address, named for a screen reader. -#}
+<nav class="tabs{{ attrs.classes() }}"{% if let Some(label) = label.present() %} aria-label="{{ label }}"{% endif %}{{ attrs }}>
+{%- for tab in each %}{{ tab }}{% endfor -%}
+</nav>

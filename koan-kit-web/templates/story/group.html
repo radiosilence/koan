@@ -1,0 +1,6 @@
+{% filter kit::wrap(kit::Field::custom("release type").hint("A group of controls a label cannot hold, named by the field's label.")) %}
+  <span class="controls">
+    {{ kit::Select::new("primary").options(["album", "single"]).label("primary type") }}
+    {{ kit::Check::new("clear", "clear") }}
+  </span>
+{% endfilter %}

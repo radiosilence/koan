@@ -1,0 +1,5 @@
+{#- The ensō turning: decoration beside words, or with a label a status a screen reader announces. -#}
+<span class="spinner{% if large %} large{% endif %}{% if over %} over{% endif %}{{ attrs.classes() }}"
+{%- if let Some(label) = label.present() %} role="status"{{ attrs }}><span class="label">{{ label }}</span></span>
+{%- else %} aria-hidden="true"{{ attrs }}></span>
+{%- endif -%}

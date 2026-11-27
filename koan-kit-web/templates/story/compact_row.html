@@ -1,0 +1,6 @@
+<div class="compact controls">
+  {{ kit::Input::text("split").label("separator").placeholder("split on") }}
+  {{ kit::Combo::new(kit::Select::new("sort").options(["newest", "oldest"]).label("sort"), kit::Button::bordered("sort")) }}
+  {{ kit::Button::bordered("credit artists") }}
+  {{ kit::Button::quiet("pin").icon_only(kit::icon::PIN) }}
+</div>

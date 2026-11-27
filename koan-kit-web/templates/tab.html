@@ -1,0 +1,9 @@
+{#- One tab: its link, a count, and its actions after it. Tabs a template wrote stand in its place as they are. -#}
+{%- if let Some(link) = link -%}
+<span class="tab{% if current %} current{% endif %}{{ attrs.classes() }}"{{ attrs }}>{{ link }}
+{%- if let Some(count) = count.present() %}<small>{{ count }}</small>{% endif %}
+{%- for action in actions %}{{ action }}{% endfor -%}
+</span>
+{%- else -%}
+{{ markup }}
+{%- endif -%}
