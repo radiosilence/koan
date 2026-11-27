@@ -242,18 +242,36 @@ function mark() {
 
 // The queue page's list asks the server for the rows of the queue held here
 // whenever the two differ. The list names the queue it was drawn for.
+// A queue asked for is not asked for again until its answer has had time to
+// arrive: an answer that failed (the server unavailable, the network down)
+// leaves the list as it was, and it is asked for again then, at most this
+// often.
+const ASK_AGAIN = 5000;
+let asked = { key: "", at: 0 };
+let askAgain = 0;
 function askForQueue(queue: UiTrack[]) {
   const list = document.getElementById("queue");
   if (!list) return;
   const key = queue.map((t) => t.id).join(",");
-  if (list.dataset["drawn"] === key || list.dataset["asked"] === key) return;
-  list.dataset["asked"] = key;
+  if (list.dataset["drawn"] === key) return;
+  if (asked.key === key && Date.now() - asked.at < ASK_AGAIN) return;
+  asked = { key, at: Date.now() };
   window.dispatchEvent(new CustomEvent("koan-queue", { detail: queue.map((t) => t.id) }));
+  clearTimeout(askAgain);
+  askAgain = setTimeout(() => askForQueue(player.queue), ASK_AGAIN);
 }
 
 // Pages arrive in place: mark what plays on each, ask for the queue's rows,
-// and open the sort and filter row on a wide screen.
-new MutationObserver(() => {
+// and open the sort and filter row on a wide screen. Only elements arriving
+// in the page's own regions count: the player's clock rewrites its text four
+// times a second, and its Now Playing lines take their links as the track
+// changes, none of which is a page arriving.
+const arrived = (r: MutationRecord) =>
+  r.target instanceof Element &&
+  !r.target.closest("[data-np], footer") &&
+  [...r.addedNodes].some((n) => n instanceof Element);
+new MutationObserver((records) => {
+  if (!records.some(arrived)) return;
   mark();
   askForQueue(player.queue);
   for (const d of all<HTMLDetailsElement>("details.browse", main())) if (wide.matches && !d.dataset["opened"]) { d.dataset["opened"] = "1"; d.open = true; }

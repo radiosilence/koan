@@ -1,9 +1,14 @@
-{#- Every account, with its access, an invite, and for others a new password, two-step sign-in turned off, or deletion. Not on your own row: a new password signs out every session, this one included. -#}
+{#- Every account, with its access, an invite, and for others a new password, two-step sign-in turned off, or deletion. Not on your own row: a new password signs out every session, this one included. When the accounts could not be read back after a change, the list says so; the change's own outcome is shown beside it. -#}
 <ul id="{{ self.id() }}">
+{%- match listing %}
+{%- when Some(listing) %}
 {%- for u in listing.rows %}
 <li class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-1 py-2.5">
 <span class="min-w-[8em] flex-1 truncate wrap-anywhere">{{ u.username }}{% if u.id == me %}<small class="ml-2 text-meta text-muted">you</small>{% endif %}{% if self.two_step(u) %}<small class="ml-2 text-meta text-muted">two-step</small>{% endif %}</span>
 {{ self.role(u) }}{{ self.invite(u) }}
 {%- if u.id != me %}{{ self.password(u) }}{% if self.two_step(u) %}{{ self.two_step_off(u) }}{% endif %}{{ self.delete(u) }}{% endif %}</li>
 {%- endfor %}
+{%- when None %}
+<li>{{ kit::Notice::bad("The accounts could not be read. Reload the page to see them.") }}</li>
+{%- endmatch %}
 </ul>

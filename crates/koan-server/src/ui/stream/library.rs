@@ -16,6 +16,11 @@ pub(in crate::ui) struct Library {
 }
 
 impl Live for Library {
+    /// A warm pass moves the cover cache thousands of times, and each pass
+    /// lists the cover directory and counts the library, so at most once a
+    /// second.
+    const THROTTLE: std::time::Duration = std::time::Duration::from_secs(1);
+
     fn open(_: &UiState, _: &AuthUser, _: &Shown) -> Self {
         Self {
             rescan: last(),
@@ -37,5 +42,18 @@ impl Live for Library {
             events.extend(self.caches.send(&html));
         }
         Pass::Drew(events)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The old caches stream drew at most once a second, and a warm pass
+    /// moves the cache thousands of times: the Library page's stream keeps
+    /// that pace, since each pass lists the cover directory.
+    #[test]
+    fn the_library_page_draws_at_most_once_a_second() {
+        assert!(<Library as Live>::THROTTLE >= std::time::Duration::from_secs(1));
     }
 }

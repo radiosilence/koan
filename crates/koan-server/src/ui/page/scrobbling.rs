@@ -203,10 +203,15 @@ async fn with_message(
     uri: &axum::http::Uri,
     message: &str,
 ) -> Response {
-    let body = body(s, user, Some(message))
-        .await
-        .unwrap_or_else(super::Refusal::body);
-    super::respond(s, user, headers, uri, Section::Account, body)
+    super::respond(
+        s,
+        user,
+        headers,
+        uri,
+        Section::Account,
+        body(s, user, Some(message)),
+    )
+    .await
 }
 
 /// Send the person to Last.fm to approve kōan.
