@@ -848,6 +848,15 @@ jobs:
         env:
           BUNDLE: ${{ github.event_name != 'pull_request' && ':app:bundleRelease' || '' }}
         run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease ${BUNDLE:+"$BUNDLE"} -Pabis=arm64-v8a -PversionCode="$(date -u +%s)"
+      # Robolectric runs offline on the jars Gradle resolved; its downloader
+      # would have put them here.
+      - name: Robolectric fetched nothing
+        run: |
+          if [ -e ~/.m2/repository/org/robolectric ]; then
+            echo "::error::Robolectric downloaded jars during the tests"
+            find ~/.m2/repository/org/robolectric -name '*.jar'
+            exit 1
+          fi
       - name: Name the APK
         env:
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
