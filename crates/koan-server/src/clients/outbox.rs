@@ -32,7 +32,11 @@ fn with<T>(
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, koan_core::db::connection::DbError>,
 ) -> Option<T> {
     let db = db()?;
-    f(&db.conn)
+    logged(what, f(&db.conn))
+}
+
+fn logged<T>(what: &str, result: Result<T, koan_core::db::connection::DbError>) -> Option<T> {
+    result
         .inspect_err(|e| log::warn!("link: could not {what}: {e}"))
         .ok()
 }
@@ -71,20 +75,25 @@ pub fn take_and_remember(
     platform: &str,
     live: &[(String, String)],
 ) -> (Vec<Envelope>, bool) {
-    if db().is_none() {
+    // One connection for the three steps, each logged on its own: a device
+    // that could not be recorded still takes what waits for it.
+    let Some(db) = db() else {
         return (seeded(username, device), false);
-    }
-    let now = now();
-    with("record a device", |c| {
-        link::record_device(c, device, username, name, platform, now)
-    });
-    let pruned = with("forget stale devices", |c| {
-        link::forget_stale(c, live, now, KEEP_SECS)
-    })
+    };
+    let (c, now) = (&db.conn, now());
+    logged(
+        "record a device",
+        link::record_device(c, device, username, name, platform, now),
+    );
+    let pruned = logged(
+        "forget stale devices",
+        link::forget_stale(c, live, now, KEEP_SECS),
+    )
     .unwrap_or(false);
-    let waiting = with("take waiting commands", |c| {
-        link::take_waiting(c, device, username)
-    })
+    let waiting = logged(
+        "take waiting commands",
+        link::take_waiting(c, device, username),
+    )
     .unwrap_or_default();
     if !waiting.is_empty() {
         log::info!("link: {} waiting commands for {name}", waiting.len());
