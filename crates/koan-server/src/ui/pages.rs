@@ -253,21 +253,7 @@ fn year(date: Option<&str>) -> &str {
 pub(super) type Versions = HashMap<i64, i64>;
 
 fn cover_versions(conn: &rusqlite::Connection, album_ids: &[i64]) -> Versions {
-    if album_ids.is_empty() {
-        return Versions::new();
-    }
-    let sql = format!(
-        "SELECT album_id, MAX(COALESCE(mtime, 0)) FROM tracks WHERE album_id IN ({}) GROUP BY album_id",
-        vec!["?"; album_ids.len()].join(",")
-    );
-    let Ok(mut stmt) = conn.prepare(&sql) else {
-        return Versions::new();
-    };
-    stmt.query_map(rusqlite::params_from_iter(album_ids), |r| {
-        Ok((r.get(0)?, r.get(1)?))
-    })
-    .map(|rows| rows.flatten().collect())
-    .unwrap_or_default()
+    queries::album_file_versions(conn, album_ids).unwrap_or_default()
 }
 
 pub(super) fn cover_url(album_id: i64, size: u32, versions: &Versions) -> String {

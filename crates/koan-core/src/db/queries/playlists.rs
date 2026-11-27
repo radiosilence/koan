@@ -978,6 +978,30 @@ fn touch(conn: &Connection, id: i64) -> Result<(), DbError> {
     Ok(())
 }
 
+/// Who can see these playlists, by username: their owner, when none of them
+/// is public and one account owns them all. `None` when anyone could.
+pub fn private_owner(conn: &Connection, playlists: &[i64]) -> Result<Option<String>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT p.public, u.username FROM playlists p LEFT JOIN users u ON u.id = p.user_id
+         WHERE p.id IN (SELECT value FROM json_each(?1))",
+    )?;
+    let rows: Vec<(bool, Option<String>)> = stmt
+        .query_map([super::json_list(playlists)], |r| {
+            Ok((r.get::<_, i64>(0)? != 0, r.get(1)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    if rows.iter().any(|(public, _)| *public) {
+        return Ok(None);
+    }
+    let mut owners = rows.into_iter().map(|(_, owner)| owner);
+    let Some(Some(first)) = owners.next() else {
+        return Ok(None);
+    };
+    Ok(owners
+        .all(|o| o.as_deref() == Some(first.as_str()))
+        .then_some(first))
+}
+
 #[cfg(test)]
 mod splice_tests {
     use super::spliced;
@@ -1462,5 +1486,23 @@ mod tests {
         );
         set_playlist_grouped(&conn, id, None).unwrap();
         assert_eq!(get_playlist(&conn, id).unwrap().unwrap().grouped, None);
+    }
+
+    #[test]
+    fn private_playlists_of_one_owner_are_that_owners_alone() {
+        let conn = test_conn();
+        let user = |name: &str| {
+            crate::db::queries::auth::create_user(&conn, name, "password", crate::auth::Role::User)
+                .unwrap()
+        };
+        let (jo, kim) = (user("jo"), user("kim"));
+        let a = create_playlist(&conn, jo, "A", None).unwrap();
+        let b = create_playlist(&conn, jo, "B", None).unwrap();
+        let theirs = create_playlist(&conn, kim, "C", None).unwrap();
+        assert_eq!(private_owner(&conn, &[a, b]).unwrap(), Some("jo".into()));
+        assert_eq!(private_owner(&conn, &[a, theirs]).unwrap(), None);
+        conn.execute("UPDATE playlists SET public = 1 WHERE id = ?1", [b])
+            .unwrap();
+        assert_eq!(private_owner(&conn, &[a, b]).unwrap(), None);
     }
 }

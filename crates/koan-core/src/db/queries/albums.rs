@@ -862,6 +862,25 @@ pub fn enrich_remote_album(
     Ok(())
 }
 
+/// The newest album whose artist's name and title contain these, ignoring
+/// case. `%` and `_` in either are dropped rather than matched as wildcards.
+pub fn newest_album_matching(
+    conn: &Connection,
+    artist: &str,
+    title: &str,
+) -> Result<Option<i64>, DbError> {
+    let like = |s: &str| format!("%{}%", s.replace(['%', '_'], ""));
+    Ok(conn
+        .query_row(
+            "SELECT al.id FROM albums al JOIN artists a ON a.id = al.artist_id
+              WHERE a.name LIKE ?1 COLLATE NOCASE AND al.title LIKE ?2 COLLATE NOCASE
+              ORDER BY al.id DESC LIMIT 1",
+            [like(artist), like(title)],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1625,5 +1644,26 @@ mod tests {
         assert_eq!(tracks.len(), 2);
         assert_eq!(tracks[0].track_number, Some(1));
         assert_eq!(tracks[1].track_number, Some(2));
+    }
+
+    #[test]
+    fn an_album_is_found_by_parts_of_its_artist_and_title() {
+        use crate::db::queries::{sample_meta, tracks_by_ids, upsert_track};
+        let db = test_db();
+        let album = |title: &str| {
+            let id = upsert_track(&db.conn, &sample_meta("T", "Boards of Canada", title)).unwrap();
+            tracks_by_ids(&db.conn, &[id]).unwrap()[0].album_id.unwrap()
+        };
+        let older = album("Geogaddi");
+        let newer = album("Geogaddi (Deluxe)");
+        assert!(newer > older);
+        assert_eq!(
+            newest_album_matching(&db.conn, "boards", "geogaddi").unwrap(),
+            Some(newer)
+        );
+        assert_eq!(
+            newest_album_matching(&db.conn, "boards", "100%").unwrap(),
+            None
+        );
     }
 }
