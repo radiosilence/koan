@@ -31,9 +31,27 @@ fn with<T>(
     what: &str,
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, koan_core::db::connection::DbError>,
 ) -> Option<T> {
+    logged(log::Level::Warn, what, f)
+}
+
+/// [`with`] for a write made on every report a device sends, whose failure is
+/// logged at debug: a database that keeps failing would otherwise fill the
+/// log, and the failure shows in the writes that are logged.
+fn quietly<T>(
+    what: &str,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, koan_core::db::connection::DbError>,
+) -> Option<T> {
+    logged(log::Level::Debug, what, f)
+}
+
+fn logged<T>(
+    level: log::Level,
+    what: &str,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, koan_core::db::connection::DbError>,
+) -> Option<T> {
     let db = db()?;
     f(&db.conn)
-        .inspect_err(|e| log::warn!("link: could not {what}: {e}"))
+        .inspect_err(|e| log::log!(level, "link: could not {what}: {e}"))
         .ok()
 }
 
@@ -115,7 +133,7 @@ fn seeded(_: &str, _: &str) -> Vec<Envelope> {
 
 /// Mark `(device, username)` pairs seen now.
 pub fn touch(devices: &[(String, String)]) {
-    with("mark devices seen", |c| link::touch(c, devices, now()));
+    quietly("mark devices seen", |c| link::touch(c, devices, now()));
 }
 
 /// Queue `cmd` for each known device in scope that is not in `live`.

@@ -1205,7 +1205,7 @@ pub fn tracks_for_album(conn: &Connection, album_id: i64) -> Result<Vec<TrackRow
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE t.album_id = ?1
-         ORDER BY t.disc, t.track_number",
+         ORDER BY t.disc, t.track_number, t.id",
     )?;
 
     let rows = stmt
@@ -1474,6 +1474,16 @@ pub fn albums_with_files(conn: &Connection) -> Result<Vec<i64>, DbError> {
     rows.collect::<Result<_, _>>().map_err(Into::into)
 }
 
+/// The albums [`albums_with_files`] lists, in no order: for counting them
+/// without sorting every local track by path.
+pub fn albums_with_files_unordered(conn: &Connection) -> Result<Vec<i64>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT album_id FROM tracks WHERE path IS NOT NULL AND album_id IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |r| r.get(0))?;
+    rows.collect::<Result<_, _>>().map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1485,6 +1495,33 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    /// Tracks with no number, or the same one, come back in the order they
+    /// were added.
+    #[test]
+    fn an_albums_tied_tracks_come_back_by_id() {
+        let db = test_db();
+        let ids: Vec<i64> = ["Cedar", "Alder", "Birch"]
+            .into_iter()
+            .map(|title| {
+                let mut meta = sample_meta(title, "Ayla", "Moss");
+                meta.track_number = None;
+                upsert_track(&db.conn, &meta).unwrap()
+            })
+            .collect();
+        let album: i64 = db
+            .conn
+            .query_row("SELECT album_id FROM tracks WHERE id = ?1", [ids[0]], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let got: Vec<i64> = tracks_for_album(&db.conn, album)
+            .unwrap()
+            .iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(got, ids);
     }
 
     /// A download the person asked for is owed from the ask until its file

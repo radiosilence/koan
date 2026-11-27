@@ -255,7 +255,7 @@ impl Covers {
             }
         }
         let all = (1u8 << WARMED.len()) - 1;
-        let unwarmed = koan_core::db::queries::albums_with_files(conn)
+        let unwarmed = koan_core::db::queries::albums_with_files_unordered(conn)
             .map(|ids| {
                 ids.into_iter()
                     .filter(|id| warmed.get(id) != Some(&all))

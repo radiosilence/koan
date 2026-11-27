@@ -2,12 +2,14 @@
 //! MusicBrainz ids, sort names, last plays, when a row was favourited. A
 //! response that draws a list of 500 albums reads each of these once, not once
 //! per album.
+//!
+//! A `user` here is already resolved (`auth::resolve_user`): the caller does
+//! that once for the whole response.
 
 use std::collections::HashMap;
 
 use rusqlite::{Connection, params};
 
-use super::auth::resolve_user;
 use super::json_list;
 use crate::db::connection::DbError;
 
@@ -98,7 +100,7 @@ pub fn tracks_last_played(
         "SELECT track_id, MAX(played_at) FROM play_history
          WHERE track_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2
          GROUP BY track_id",
-        params![json_list(ids), resolve_user(conn, user)?],
+        params![json_list(ids), user],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )
 }
@@ -116,7 +118,7 @@ pub fn albums_last_played(
          JOIN tracks t ON t.id = h.track_id
          WHERE t.album_id IN (SELECT value FROM json_each(?1)) AND h.user_id = ?2
          GROUP BY t.album_id",
-        params![json_list(ids), resolve_user(conn, user)?],
+        params![json_list(ids), user],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )
 }
@@ -162,7 +164,7 @@ fn favourited_at(
             "SELECT {column}, COALESCE(unixepoch(created_at), 0) FROM {table}
              WHERE {column} IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
         ),
-        params![json_list(ids), resolve_user(conn, user)?],
+        params![json_list(ids), user],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )
 }

@@ -1190,8 +1190,12 @@ fn rewrite_saved_queues(
 }
 
 /// Files that moved and the places they went, for everything the moves'
-/// own transactions do not cover.
+/// own transactions do not cover, the announcement that rows changed among
+/// them.
 fn follow_moved(db: &Database, moved: &[(PathBuf, PathBuf)]) {
+    if !moved.is_empty() {
+        crate::db::queries::library_written();
+    }
     follow_playlist_files(db, moved);
     if let Err(e) = rewrite_saved_queues(&db.conn, moved) {
         log::warn!("organize: the saved queue still names files at their old paths: {e}");
