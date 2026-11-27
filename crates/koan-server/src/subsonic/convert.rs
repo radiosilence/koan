@@ -228,26 +228,6 @@ pub(super) fn artist_id3_node(id: i64, name: &str, extras: &ArtistExtras) -> Xml
         )
 }
 
-/// Ids as one JSON array, for `IN (SELECT value FROM json_each(?1))` — a
-/// single bound parameter however long the list.
-pub(super) fn json_ids(ids: impl IntoIterator<Item = i64>) -> String {
-    serde_json::to_string(&ids.into_iter().collect::<Vec<_>>()).unwrap_or_default()
-}
-
-pub(super) fn by_id<T>(
-    db: &Database,
-    sql: &str,
-    params: impl rusqlite::Params,
-    mut row: impl FnMut(&rusqlite::Row) -> rusqlite::Result<(i64, T)>,
-) -> Result<Vec<(i64, T)>, SubsonicError> {
-    let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
-    let mut stmt = db.conn.prepare_cached(sql).map_err(internal)?;
-    stmt.query_map(params, |r| row(r))
-        .map_err(internal)?
-        .collect::<Result<_, _>>()
-        .map_err(internal)
-}
-
 /// What `Child` carries beyond `TrackRow`.
 #[derive(Default)]
 pub(super) struct SongExtras {
@@ -282,7 +262,7 @@ pub(super) fn song_extras<'a>(
     if tracks.is_empty() {
         return Ok(SongExtras::default());
     }
-    let ids = json_ids(tracks.iter().map(|t| t.id));
+    let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
     let user = history_user(db, caller.user_id)?;
     let credits = credits_of(db, CreditsOf::Tracks, tracks.iter().map(|t| t.id))?;
     let album_credits = credits_of(
@@ -305,32 +285,10 @@ pub(super) fn song_extras<'a>(
         )?,
         credits,
         album_credits,
-        mbid: by_id(
-            db,
-            "SELECT id, mbid FROM tracks
-             WHERE id IN (SELECT value FROM json_each(?1)) AND mbid IS NOT NULL",
-            [&ids],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?
-        .into_iter()
-        .collect(),
-        played: by_id(
-            db,
-            "SELECT track_id, MAX(played_at) FROM play_history
-             WHERE track_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2
-             GROUP BY track_id",
-            rusqlite::params![ids, user],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?
-        .into_iter()
-        .collect(),
-        rating: rated(
-            db,
-            user,
-            queries::RatingKind::Track,
-            tracks.iter().map(|t| t.id),
-        )?,
-        starred: starred(db, user, Favourite::Track, &ids)?,
+        mbid: queries::track_mbids(&db.conn, &ids)?,
+        played: queries::tracks_last_played(&db.conn, user, &ids)?,
+        rating: rated(db, user, queries::RatingKind::Track, ids.iter().copied())?,
+        starred: queries::tracks_favourited_at(&db.conn, user, &ids)?,
         library: (caller.role == Role::Admin).then(|| {
             Config::cached()
                 .library
@@ -394,41 +352,6 @@ pub(super) fn rated(
     queries::ratings(&db.conn, user, kind, ids).map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
-pub(super) enum Favourite {
-    Track,
-    Album,
-    Artist,
-}
-
-/// When the caller favourited these rows (`ids` as from [`json_ids`]), seconds
-/// since the epoch. `user` is already resolved.
-pub(super) fn starred(
-    db: &Database,
-    user: i64,
-    kind: Favourite,
-    ids: &str,
-) -> Result<HashMap<i64, i64>, SubsonicError> {
-    let sql = match kind {
-        Favourite::Track => {
-            "SELECT track_id, COALESCE(unixepoch(created_at), 0) FROM favourites
-             WHERE track_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
-        }
-        Favourite::Album => {
-            "SELECT album_id, COALESCE(unixepoch(created_at), 0) FROM favourite_albums
-             WHERE album_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
-        }
-        Favourite::Artist => {
-            "SELECT artist_id, COALESCE(unixepoch(created_at), 0) FROM favourite_artists
-             WHERE artist_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
-        }
-    };
-    Ok(by_id(db, sql, rusqlite::params![ids, user], |r| {
-        Ok((r.get(0)?, r.get(1)?))
-    })?
-    .into_iter()
-    .collect())
-}
-
 /// What `AlbumID3` carries beyond `AlbumRow`.
 #[derive(Default)]
 pub(super) struct AlbumExtras {
@@ -456,27 +379,13 @@ pub(super) fn album_extras<'a>(
         return Ok(AlbumExtras::default());
     }
     let album_ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
-    let ids = json_ids(album_ids.iter().copied());
     let user = history_user(db, user)?;
     let (genres, stats) = match tracks {
         Some(tracks) => album_totals(tracks),
-        None => {
-            let mut genres: HashMap<i64, Vec<String>> = HashMap::new();
-            for (id, genre) in by_id(
-                db,
-                "SELECT DISTINCT album_id, genre FROM tracks
-                 WHERE album_id IN (SELECT value FROM json_each(?1))
-                   AND genre IS NOT NULL AND genre != ''
-                 ORDER BY album_id, genre",
-                [&ids],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )? {
-                genres.entry(id).or_default().push(genre);
-            }
-            let stats = queries::album_stats(&db.conn, &album_ids)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            (genres, stats)
-        }
+        None => (
+            queries::album_genre_lists(&db.conn, &album_ids)?,
+            queries::album_stats(&db.conn, &album_ids)?,
+        ),
     };
     let credits = credits_of(db, CreditsOf::Albums, album_ids.iter().copied())?;
     let credited = credits
@@ -492,34 +401,17 @@ pub(super) fn album_extras<'a>(
             [],
         )?,
         credits,
-        names: by_id(
-            db,
-            "SELECT id, mbid, sort_name FROM albums WHERE id IN (SELECT value FROM json_each(?1))",
-            [&ids],
-            |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))),
-        )?
-        .into_iter()
-        .collect(),
+        names: queries::album_mbids_and_sort_names(&db.conn, &album_ids)?,
         genres,
         stats,
-        played: by_id(
-            db,
-            "SELECT t.album_id, MAX(h.played_at) FROM play_history h
-             JOIN tracks t ON t.id = h.track_id
-             WHERE t.album_id IN (SELECT value FROM json_each(?1)) AND h.user_id = ?2
-             GROUP BY t.album_id",
-            rusqlite::params![ids, user],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?
-        .into_iter()
-        .collect(),
+        played: queries::albums_last_played(&db.conn, user, &album_ids)?,
         rating: rated(
             db,
             user,
             queries::RatingKind::Album,
             album_ids.iter().copied(),
         )?,
-        starred: starred(db, user, Favourite::Album, &ids)?,
+        starred: queries::albums_favourited_at(&db.conn, user, &album_ids)?,
     })
 }
 
@@ -561,19 +453,11 @@ pub(super) fn artist_extras(
     ids: impl IntoIterator<Item = i64>,
 ) -> Result<ArtistExtras, SubsonicError> {
     let ids: Vec<i64> = ids.into_iter().collect();
-    let json = json_ids(ids.iter().copied());
     Ok(ArtistExtras {
         uids: Uids::load(db, ids.iter().copied(), [], [])?,
         rating: rated(db, user, queries::RatingKind::Artist, ids.iter().copied())?,
-        starred: starred(db, history_user(db, user)?, Favourite::Artist, &json)?,
-        names: by_id(
-            db,
-            "SELECT id, mbid, sort_name FROM artists WHERE id IN (SELECT value FROM json_each(?1))",
-            [&json],
-            |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))),
-        )?
-        .into_iter()
-        .collect(),
+        starred: queries::artists_favourited_at(&db.conn, user, &ids)?,
+        names: queries::artist_mbids_and_sort_names(&db.conn, &ids)?,
     })
 }
 

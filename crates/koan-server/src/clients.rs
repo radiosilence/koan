@@ -198,15 +198,7 @@ pub struct Order {
 /// An order nobody's scan has fulfilled in this long is dropped.
 const ORDER_TTL: i64 = 24 * 60 * 60;
 
-/// The owner of `device` lets the account `grantee` control it: playback and
-/// the queue, as a device on the same network may, and nothing of the
-/// owner's account.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Grant {
-    pub device: String,
-    pub owner: String,
-    pub grantee: String,
-}
+pub use koan_core::db::queries::link::Grant;
 
 #[derive(Default)]
 pub struct Registry {
@@ -1453,11 +1445,13 @@ pub fn fulfil_from(db_path: &std::path::Path) {
 }
 
 /// The tracks an order asks for, once its album is in the library: all of
-/// it, or the named ones in the order named. `None` until they are there.
+/// it, or the named ones in the order named. `None` until they are there. The
+/// album is the newest whose artist and title contain the order's.
 fn order_tracks(conn: &rusqlite::Connection, order: &Order) -> Option<Vec<i64>> {
-    let tracks = album_tracks(conn, &order.artist, &order.album)?;
+    let album = queries::newest_album_matching(conn, &order.artist, &order.album).ok()??;
+    let tracks = queries::tracks_for_album(conn, album).ok()?;
     if order.titles.is_empty() {
-        return Some(tracks.into_iter().map(|(id, _)| id).collect());
+        return Some(tracks.iter().map(|t| t.id).collect());
     }
     let picked: Vec<i64> = order
         .titles
@@ -1466,39 +1460,11 @@ fn order_tracks(conn: &rusqlite::Connection, order: &Order) -> Option<Vec<i64>> 
             let want = want.to_lowercase();
             tracks
                 .iter()
-                .find(|(_, t)| t.to_lowercase().contains(&want))
-                .map(|(id, _)| *id)
+                .find(|t| t.title.to_lowercase().contains(&want))
+                .map(|t| t.id)
         })
         .collect();
     (!picked.is_empty()).then_some(picked)
-}
-
-/// The newest album whose artist and title contain these, as its tracks in
-/// disc and track order.
-pub fn album_tracks(
-    conn: &rusqlite::Connection,
-    artist: &str,
-    album: &str,
-) -> Option<Vec<(i64, String)>> {
-    let like = |s: &str| format!("%{}%", s.replace(['%', '_'], ""));
-    let album_id: i64 = conn
-        .query_row(
-            "SELECT al.id FROM albums al JOIN artists a ON a.id = al.artist_id
-              WHERE a.name LIKE ?1 COLLATE NOCASE AND al.title LIKE ?2 COLLATE NOCASE
-              ORDER BY al.id DESC LIMIT 1",
-            [like(artist), like(album)],
-            |r| r.get(0),
-        )
-        .ok()?;
-    let mut stmt = conn
-        .prepare("SELECT id, title FROM tracks WHERE album_id = ?1 ORDER BY disc, track_number, id")
-        .ok()?;
-    let tracks = stmt
-        .query_map([album_id], |r| Ok((r.get(0)?, r.get(1)?)))
-        .ok()?
-        .filter_map(Result::ok)
-        .collect();
-    Some(tracks)
 }
 
 impl Registry {
@@ -1543,12 +1509,6 @@ impl Registry {
             .iter()
             .map(|e| (e.device.clone(), e.info.username.clone()))
             .collect()
-    }
-}
-
-impl Absent {
-    fn key(&self) -> (String, String) {
-        (self.device.clone(), self.username.clone())
     }
 }
 
@@ -1743,34 +1703,15 @@ pub fn smart_activity(
     fields: &[koan_core::smart::Field],
 ) {
     match koan_core::db::queries::smart::refresh_after_activity(&db.conn, user, fields) {
-        Ok(moved) if !moved.is_empty() => changed_for(audience(&db.conn, &moved).as_deref()),
+        Ok(moved) if !moved.is_empty() => changed_for(
+            queries::private_owner(&db.conn, &moved)
+                .ok()
+                .flatten()
+                .as_deref(),
+        ),
         Ok(_) => {}
         Err(e) => log::warn!("smart playlists not refreshed after activity: {e}"),
     }
-}
-
-/// Who can see these playlists: their owner's account when none is public
-/// and one account owns them all, else everyone (`None`).
-fn audience(conn: &rusqlite::Connection, playlists: &[i64]) -> Option<String> {
-    let ids = serde_json::to_string(playlists).ok()?;
-    let rows: Vec<(bool, Option<String>)> = conn
-        .prepare(
-            "SELECT p.public, u.username FROM playlists p LEFT JOIN users u ON u.id = p.user_id
-             WHERE p.id IN (SELECT value FROM json_each(?1))",
-        )
-        .and_then(|mut s| {
-            s.query_map([ids], |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?)))?
-                .collect()
-        })
-        .ok()?;
-    if rows.iter().any(|(public, _)| *public) {
-        return None;
-    }
-    let mut owners = rows.into_iter().map(|(_, owner)| owner);
-    let first = owners.next()??;
-    owners
-        .all(|o| o.as_deref() == Some(first.as_str()))
-        .then_some(first)
 }
 
 /// Have every device pull what the server just changed (a playlist edited,
@@ -1878,17 +1819,13 @@ fn send_wakes() {
     }
 }
 
-/// After a library scan or sync: if the library holds different tracks or
-/// albums from when this was last asked, tell every device. A scan that found
-/// nothing new, which is most of them, sends nothing.
+/// After a library scan or sync: if the library has changed since this was
+/// last asked (`queries::library_stamp`: rows added, removed or rewritten),
+/// tell every device. A scan that found nothing new, which is most of them,
+/// sends nothing.
 pub fn changed_if_library_moved(conn: &rusqlite::Connection) {
-    static LAST: parking_lot::Mutex<Option<(i64, i64, i64)>> = parking_lot::Mutex::new(None);
-    let Ok(now) = conn.query_row(
-        "SELECT (SELECT COUNT(*) FROM tracks), (SELECT COALESCE(MAX(id), 0) FROM tracks),
-                (SELECT COUNT(*) FROM albums)",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-    ) else {
+    static LAST: parking_lot::Mutex<Option<u64>> = parking_lot::Mutex::new(None);
+    let Ok(now) = queries::library_stamp(conn).map(|stamp| stamp.rows) else {
         return;
     };
     let before = LAST.lock().replace(now);
@@ -1907,16 +1844,20 @@ pub(crate) fn seed_outbox(username: &str, device: &str, envelope: Envelope) {
 }
 
 /// The server-side record of devices and their waiting commands, in the
-/// library database so it outlives a restart.
+/// library database so it outlives a restart: `koan_core::db::queries::link`,
+/// on the shared pool, with failures logged and survived.
 mod outbox {
-    use koan_core::db::queries;
+    use koan_core::db::queries::link;
+    use koan_core::remote::acks::Envelope;
     use koan_core::remote::link::LinkCommand;
+
+    pub use link::{Absent, PushTarget, TvPairing};
 
     /// Dropped undelivered after this long: a device away a month re-syncs
     /// on its own when opened. A device unseen this long is forgotten with
     /// its push token, so the entry a reinstall leaves behind stops being
     /// offered as a device; a live one gives its token again when it links.
-    const KEEP_SECS: i64 = 30 * 24 * 60 * 60;
+    pub(super) const KEEP_SECS: i64 = 30 * 24 * 60 * 60;
 
     /// Tests keep to memory: the configured database is whoever ran them.
     ///
@@ -1929,14 +1870,24 @@ mod outbox {
         koan_core::db::pool::shared().get().ok()
     }
 
+    /// Run `f` on the shared database, logging a failure as `what`: `None`
+    /// without a database or after a failure.
+    fn with<T>(
+        what: &str,
+        f: impl FnOnce(&rusqlite::Connection) -> Result<T, koan_core::db::connection::DbError>,
+    ) -> Option<T> {
+        let db = db()?;
+        f(&db.conn)
+            .inspect_err(|e| log::warn!("link: could not {what}: {e}"))
+            .ok()
+    }
+
+    fn now() -> i64 {
+        chrono::Utc::now().timestamp()
+    }
+
     pub fn load_orders() -> Vec<super::Order> {
-        let Some(db) = db() else { return Vec::new() };
-        db.conn
-            .prepare("SELECT body FROM link_orders ORDER BY created_at")
-            .and_then(|mut s| {
-                s.query_map([], |r| r.get::<_, String>(0))?
-                    .collect::<Result<Vec<_>, _>>()
-            })
+        with("read the standing orders", link::orders)
             .unwrap_or_default()
             .into_iter()
             .filter_map(|b| serde_json::from_str(&b).ok())
@@ -1944,71 +1895,56 @@ mod outbox {
     }
 
     pub fn save_order(order: &super::Order) {
-        let (Some(db), Ok(body)) = (db(), serde_json::to_string(order)) else {
+        let Ok(body) = serde_json::to_string(order) else {
             return;
         };
-        let _ = db.conn.execute(
-            "INSERT OR REPLACE INTO link_orders (id, body, created_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![order.id, body, order.created_at],
-        );
+        with("keep an order", |c| {
+            link::save_order(c, &order.id, &body, order.created_at)
+        });
     }
 
     pub fn drop_order(id: &str) {
-        if let Some(db) = db() {
-            let _ = db
-                .conn
-                .execute("DELETE FROM link_orders WHERE id = ?1", [id]);
-        }
+        with("drop an order", |c| link::drop_order(c, id));
     }
 
+    /// Record the device as linked now, forget the stale, and take what
+    /// waits for it. Whether any device was forgotten.
     pub fn take_and_remember(
         username: &str,
         device: &str,
         name: &str,
         platform: &str,
         live: &[(String, String)],
-    ) -> (Vec<koan_core::remote::acks::Envelope>, bool) {
-        let Some(db) = db() else {
+    ) -> (Vec<Envelope>, bool) {
+        if db().is_none() {
             return (seeded(username, device), false);
-        };
-        let now = chrono::Utc::now().timestamp();
-        let _ = db.conn.execute(
-            "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT (device, username) DO UPDATE SET name = ?3, platform = ?4, last_seen = ?5",
-            rusqlite::params![device, username, name, platform, now],
-        );
-        let pruned = forget_stale(&db.conn, live, now);
-        let waiting: Vec<(i64, String)> = db
-            .conn
-            .prepare("SELECT id, command FROM link_outbox WHERE device = ?1 AND username = ?2 ORDER BY id")
-            .and_then(|mut s| {
-                s.query_map([device, username], |r| Ok((r.get(0)?, r.get(1)?)))?
-                    .collect()
-            })
-            .unwrap_or_default();
-        let _ = db.conn.execute(
-            "DELETE FROM link_outbox WHERE device = ?1 AND username = ?2",
-            [device, username],
-        );
+        }
+        let now = now();
+        with("record a device", |c| {
+            link::record_device(c, device, username, name, platform, now)
+        });
+        let pruned = with("forget stale devices", |c| {
+            link::forget_stale(c, live, now, KEEP_SECS)
+        })
+        .unwrap_or(false);
+        let waiting = with("take waiting commands", |c| {
+            link::take_waiting(c, device, username)
+        })
+        .unwrap_or_default();
         if !waiting.is_empty() {
             log::info!("link: {} waiting commands for {name}", waiting.len());
         }
-        let waiting = waiting
-            .into_iter()
-            .filter_map(|(_, c)| serde_json::from_str(&c).ok())
-            .collect();
         (waiting, pruned)
     }
 
     /// Commands a test has left waiting for a device: tests have no outbox
     /// database.
     #[cfg(test)]
-    pub(crate) static SEEDED: parking_lot::Mutex<
-        Vec<(String, String, koan_core::remote::acks::Envelope)>,
-    > = parking_lot::Mutex::new(Vec::new());
+    pub(crate) static SEEDED: parking_lot::Mutex<Vec<(String, String, Envelope)>> =
+        parking_lot::Mutex::new(Vec::new());
 
     #[cfg(test)]
-    fn seeded(username: &str, device: &str) -> Vec<koan_core::remote::acks::Envelope> {
+    fn seeded(username: &str, device: &str) -> Vec<Envelope> {
         let mut seeded = SEEDED.lock();
         let (taken, kept) = std::mem::take(&mut *seeded)
             .into_iter()
@@ -2018,60 +1954,13 @@ mod outbox {
     }
 
     #[cfg(not(test))]
-    fn seeded(_: &str, _: &str) -> Vec<koan_core::remote::acks::Envelope> {
+    fn seeded(_: &str, _: &str) -> Vec<Envelope> {
         Vec::new()
-    }
-
-    /// Drop undelivered commands, devices and push tokens older than
-    /// `KEEP_SECS`. A link held open that long is seen, not stale. Whether
-    /// any device was dropped.
-    pub(super) fn forget_stale(
-        conn: &rusqlite::Connection,
-        live: &[(String, String)],
-        now: i64,
-    ) -> bool {
-        touch_with(conn, live, now);
-        let _ = conn.execute(
-            "DELETE FROM link_outbox WHERE created_at < ?1",
-            [now - KEEP_SECS],
-        );
-        // A paired Apple TV is kept however long it sleeps: the pairing was
-        // a deliberate act, and waking it is what links it again.
-        let _ = conn.execute(
-            "DELETE FROM link_handles WHERE (device, username) IN
-               (SELECT device, username FROM link_devices WHERE last_seen < ?1)
-               AND (device, username) NOT IN (SELECT device, username FROM link_tv)",
-            [now - KEEP_SECS],
-        );
-        conn.execute(
-            "DELETE FROM link_devices WHERE last_seen < ?1
-               AND (device, username) NOT IN (SELECT device, username FROM link_tv)",
-            [now - KEEP_SECS],
-        )
-        .is_ok_and(|n| n > 0)
     }
 
     /// Mark `(device, username)` pairs seen now.
     pub fn touch(devices: &[(String, String)]) {
-        if let Some(db) = db() {
-            touch_with(&db.conn, devices, chrono::Utc::now().timestamp());
-        }
-    }
-
-    fn touch_with(conn: &rusqlite::Connection, devices: &[(String, String)], now: i64) {
-        for (device, username) in devices {
-            let _ = conn.execute(
-                "UPDATE link_devices SET last_seen = ?1 WHERE device = ?2 AND username = ?3",
-                rusqlite::params![now, device, username],
-            );
-        }
-    }
-
-    /// A known device that was not linked when something was queued for it.
-    pub struct Absent {
-        pub device: String,
-        pub username: String,
-        pub name: String,
+        with("mark devices seen", |c| link::touch(c, devices, now()));
     }
 
     /// Queue `cmd` for each known device in scope that is not in `live`.
@@ -2080,211 +1969,64 @@ mod outbox {
         live: &[(String, String)],
         cmd: &LinkCommand,
     ) -> Vec<Absent> {
-        let Some(db) = db() else { return Vec::new() };
-        let known: Vec<(String, String, String)> = db
-            .conn
-            .prepare("SELECT device, username, name FROM link_devices")
-            .and_then(|mut s| {
-                s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                    .collect()
-            })
-            .unwrap_or_default();
-        let Ok(text) = serde_json::to_string(cmd) else {
-            return Vec::new();
-        };
-        let absent: Vec<_> = known
-            .into_iter()
-            .filter(|(device, user, _)| {
-                !username.is_some_and(|u| u != user)
-                    && !live.iter().any(|(d, u)| d == device && u == user)
-            })
-            .collect();
-        if absent.is_empty() {
-            return Vec::new();
-        }
-        let is_sync = matches!(cmd, LinkCommand::Sync { .. });
-        let now = chrono::Utc::now().timestamp();
-        // Every playlist edit and scan lands here: one transaction, not two
-        // per device.
-        koan_core::db::queries::atomically(&db.conn, || {
-            let mut queued = Vec::new();
-            for (device, user, name) in absent {
-                if is_sync {
-                    // One pending sync is enough; a full one covers an incremental.
-                    let _ = db.conn.execute(
-                        "DELETE FROM link_outbox WHERE device = ?1 AND username = ?2 AND command LIKE '{\"type\":\"sync\"%'",
-                        [&device, &user],
-                    );
-                }
-                if db
-                    .conn
-                    .execute(
-                        "INSERT INTO link_outbox (device, username, command, created_at) VALUES (?1, ?2, ?3, ?4)",
-                        rusqlite::params![device, user, text, now],
-                    )
-                    .is_ok()
-                {
-                    queued.push(Absent {
-                        device,
-                        username: user,
-                        name,
-                    });
-                }
-            }
-            Ok::<_, rusqlite::Error>(queued)
+        with("queue a command", |c| {
+            link::queue_for_absent(c, username, live, cmd, now())
         })
         .unwrap_or_default()
     }
 
-    /// An Apple TV of the account's, paired to be woken.
-    pub struct TvPairing {
-        pub device: String,
-        pub name: String,
-        pub platform: String,
-        /// Unix seconds.
-        pub last_seen: i64,
-        pub pairing: koan_core::remote::companion::Credential,
-    }
-
-    /// A device Apple's push service can reach.
-    #[derive(Clone)]
-    pub struct PushTarget {
-        pub device: String,
-        pub username: String,
-        pub name: String,
-        pub platform: String,
-        /// The push relay's handle for it.
-        pub handle: String,
-        /// Unix seconds.
-        pub last_seen: i64,
-    }
-
-    /// Keep a command for `device` until it next links, under the id it was
-    /// sent with, if any, so a device that also got it over its link acts on
-    /// it once.
-    pub fn queue_for(device: &str, username: &str, envelope: &koan_core::remote::acks::Envelope) {
-        let (Some(db), Ok(text)) = (db(), serde_json::to_string(envelope)) else {
-            return;
-        };
-        let _ = db.conn.execute(
-            "INSERT INTO link_outbox (device, username, command, created_at) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![device, username, text, chrono::Utc::now().timestamp()],
-        );
+    /// Keep a command for `device` until it next links.
+    pub fn queue_for(device: &str, username: &str, envelope: &Envelope) {
+        with("queue a command", |c| {
+            link::queue_for(c, device, username, envelope, now())
+        });
     }
 
     /// Every account on the server, by name: what an owner chooses from to
     /// share a device. Any account may see them; the server's users trust
     /// each other that far.
     pub fn accounts() -> Vec<String> {
-        let Some(db) = db() else { return Vec::new() };
-        koan_core::db::queries::auth::list_users(&db.conn)
-            .map(|users| users.into_iter().map(|u| u.username).collect())
-            .unwrap_or_default()
-    }
-
-    /// Where each device last linked from, by device id: the most recent of
-    /// its rows, should it have linked as more than one account.
-    pub fn load_addresses() -> std::collections::HashMap<String, (String, std::net::IpAddr)> {
-        let Some(db) = db() else {
-            return Default::default();
-        };
-        load_addresses_in(&db.conn)
-    }
-
-    pub(super) fn load_addresses_in(
-        conn: &rusqlite::Connection,
-    ) -> std::collections::HashMap<String, (String, std::net::IpAddr)> {
-        conn.prepare(
-            "SELECT device, username, addr FROM link_devices WHERE addr IS NOT NULL ORDER BY last_seen",
-        )
-        .and_then(|mut s| {
-            s.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()
+        with("list the accounts", |c| {
+            Ok(koan_core::db::queries::auth::list_users(c)?
+                .into_iter()
+                .map(|u| u.username)
+                .collect())
         })
         .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(device, username, addr)| Some((device, (username, addr.parse().ok()?))))
-        .collect()
+    }
+
+    /// Where each device last linked from, by device id.
+    pub fn load_addresses() -> std::collections::HashMap<String, (String, std::net::IpAddr)> {
+        with("read device addresses", link::addresses).unwrap_or_default()
     }
 
     pub fn save_address(device: &str, username: &str, addr: std::net::IpAddr) {
-        if let Some(db) = db() {
-            save_address_in(&db.conn, device, username, addr);
-        }
-    }
-
-    pub(super) fn save_address_in(
-        conn: &rusqlite::Connection,
-        device: &str,
-        username: &str,
-        addr: std::net::IpAddr,
-    ) {
-        let _ = conn.execute(
-            "UPDATE link_devices SET addr = ?1 WHERE device = ?2 AND username = ?3",
-            rusqlite::params![addr.to_string(), device, username],
-        );
+        with("keep a device's address", |c| {
+            link::save_address(c, device, username, addr)
+        });
     }
 
     pub fn load_grants() -> Vec<super::Grant> {
-        let Some(db) = db() else { return Vec::new() };
-        db.conn
-            .prepare("SELECT device, owner, grantee FROM link_grants ORDER BY created_at")
-            .and_then(|mut s| {
-                s.query_map([], |r| {
-                    Ok(super::Grant {
-                        device: r.get(0)?,
-                        owner: r.get(1)?,
-                        grantee: r.get(2)?,
-                    })
-                })?
-                .collect()
-            })
-            .unwrap_or_default()
+        with("read shared devices", link::grants).unwrap_or_default()
     }
 
     pub fn save_grant(g: &super::Grant) {
-        if let Some(db) = db() {
-            let _ = db.conn.execute(
-                "INSERT OR IGNORE INTO link_grants (device, owner, grantee, created_at) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![g.device, g.owner, g.grantee, chrono::Utc::now().timestamp()],
-            );
-        }
+        with("share a device", |c| link::save_grant(c, g, now()));
     }
 
     pub fn drop_grant(g: &super::Grant) {
-        if let Some(db) = db() {
-            let _ = db.conn.execute(
-                "DELETE FROM link_grants WHERE device = ?1 AND owner = ?2 AND grantee = ?3",
-                [&g.device, &g.owner, &g.grantee],
-            );
-        }
+        with("stop sharing a device", |c| link::drop_grant(c, g));
     }
 
     pub fn save_push(username: &str, device: &str, handle: &str) {
-        let Some(db) = db() else { return };
-        let _ = db.conn.execute(
-            "INSERT INTO link_handles (device, username, handle, updated_at) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT (device, username) DO UPDATE SET handle = ?3, updated_at = ?4",
-            rusqlite::params![device, username, handle, chrono::Utc::now().timestamp()],
-        );
+        with("keep a push handle", |c| {
+            link::save_push(c, username, device, handle, now())
+        });
     }
 
     /// Whether `device` is an Apple TV that has linked as `username`'s.
     pub fn is_tv(username: &str, device: &str) -> bool {
-        let Some(db) = db() else { return false };
-        db.conn
-            .query_row(
-                "SELECT 1 FROM link_devices WHERE device = ?1 AND username = ?2 AND platform = 'tvos'",
-                [device, username],
-                |_| Ok(()),
-            )
-            .is_ok()
+        with("read a device", |c| link::is_tv(c, username, device)).unwrap_or(false)
     }
 
     pub fn save_tv_pairing(
@@ -2292,169 +2034,38 @@ mod outbox {
         device: &str,
         pairing: Option<&koan_core::remote::companion::Credential>,
     ) {
-        let Some(db) = db() else { return };
-        let _ = match pairing.and_then(|p| serde_json::to_string(p).ok()) {
-            Some(json) => db.conn.execute(
-                "INSERT INTO link_tv (device, username, pairing, updated_at) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT (device, username) DO UPDATE SET pairing = ?3, updated_at = ?4",
-                rusqlite::params![device, username, json, chrono::Utc::now().timestamp()],
-            ),
-            None => db.conn.execute(
-                "DELETE FROM link_tv WHERE device = ?1 AND username = ?2",
-                [device, username],
-            ),
-        };
+        with("keep a TV's pairing", |c| {
+            link::save_tv_pairing(c, username, device, pairing, now())
+        });
     }
 
     /// `username`'s paired Apple TVs.
     pub fn tv_pairings(username: &str) -> Vec<TvPairing> {
-        let Some(db) = db() else { return Vec::new() };
-        tv_pairings_in(&db.conn, username)
-    }
-
-    pub(super) fn tv_pairings_in(conn: &rusqlite::Connection, username: &str) -> Vec<TvPairing> {
-        conn.prepare(
-            "SELECT t.device, d.name, d.platform, d.last_seen, t.pairing
-               FROM link_tv t JOIN link_devices d ON d.device = t.device AND d.username = t.username
-              WHERE t.username = ?1",
-        )
-        .and_then(|mut s| {
-            s.query_map([username], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, String>(4)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()
-        })
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(device, name, platform, last_seen, pairing)| {
-            Some(TvPairing {
-                device,
-                name,
-                platform,
-                last_seen,
-                pairing: serde_json::from_str(&pairing).ok()?,
-            })
-        })
-        .collect()
+        with("read paired TVs", |c| link::tv_pairings(c, username)).unwrap_or_default()
     }
 
     pub fn forget_push(username: &str, device: &str) {
-        if let Some(db) = db() {
-            let _ = db.conn.execute(
-                "DELETE FROM link_handles WHERE device = ?1 AND username = ?2",
-                [device, username],
-            );
-        }
+        with("forget a push handle", |c| {
+            link::forget_push(c, username, device)
+        });
     }
 
     /// Devices in scope with a push token, most recently seen first.
     pub fn push_targets(username: Option<&str>) -> Vec<PushTarget> {
-        let Some(db) = db() else { return Vec::new() };
-        push_targets_in(&db.conn, username)
-    }
-
-    pub(super) fn push_targets_in(
-        conn: &rusqlite::Connection,
-        username: Option<&str>,
-    ) -> Vec<PushTarget> {
-        conn
-            .prepare(
-                "SELECT p.device, p.username, d.name, d.platform, p.handle, d.last_seen
-                   FROM link_handles p JOIN link_devices d ON d.device = p.device AND d.username = p.username
-                  WHERE ?1 IS NULL OR p.username = ?1
-                  ORDER BY d.last_seen DESC",
-            )
-            .and_then(|mut s| {
-                s.query_map([username], |r| {
-                    Ok(PushTarget {
-                        device: r.get(0)?,
-                        username: r.get(1)?,
-                        name: r.get(2)?,
-                        platform: r.get(3)?,
-                        handle: r.get(4)?,
-                        last_seen: r.get(5)?,
-                    })
-                })?
-                .collect()
-            })
-            .unwrap_or_default()
+        with("read push targets", |c| link::push_targets(c, username)).unwrap_or_default()
     }
 
     /// Forget `username`'s device `device`: its record, its push token and
     /// what waits for it. It is recorded afresh if it links again.
     pub fn forget_device(device: &str, username: &str) {
-        if let Some(db) = db() {
-            forget_device_in(&db.conn, device, username);
-        }
+        with("forget a device", |c| {
+            link::forget_device(c, device, username)
+        });
     }
 
-    pub(super) fn forget_device_in(conn: &rusqlite::Connection, device: &str, username: &str) {
-        for table in ["link_handles", "link_tv", "link_outbox", "link_devices"] {
-            let _ = conn.execute(
-                &format!("DELETE FROM {table} WHERE device = ?1 AND username = ?2"),
-                [device, username],
-            );
-        }
-    }
-
-    /// What a playback command would play, for a notification to say:
-    /// "Golden Standard — Tony Petersen", or a track and how many follow.
+    /// What a playback command would play, for a notification to say.
     pub fn describe(cmd: &LinkCommand) -> Option<String> {
-        describe_in(&db()?.conn, cmd)
-    }
-
-    /// `describe` against `conn`: two queries however many tracks.
-    pub(super) fn describe_in(conn: &rusqlite::Connection, cmd: &LinkCommand) -> Option<String> {
-        let raw: Vec<&str> = match cmd {
-            LinkCommand::Play { track_ids, .. }
-            | LinkCommand::Enqueue { track_ids, .. }
-            | LinkCommand::PlayNext { track_ids } => track_ids.iter().map(String::as_str).collect(),
-            LinkCommand::JumpTo { track_id } => vec![track_id],
-            _ => return None,
-        };
-        // Bare row ids, which clients from before uids send, as they are.
-        let uids = queries::ids_for_uids(
-            conn,
-            queries::UidKind::Track,
-            raw.iter().copied().filter(|t| queries::is_uid(t)),
-        )
-        .ok()?;
-        let ids: Vec<i64> = raw
-            .iter()
-            .filter_map(|t| t.parse().ok().or_else(|| uids.get(*t).copied()))
-            .collect();
-        let first = *ids.first()?;
-        let rows: std::collections::HashMap<i64, (String, String, String, Option<i64>)> = conn
-            .prepare(
-                "SELECT t.id, t.title, COALESCE(a.name, ''), COALESCE(al.title, ''), t.album_id
-                   FROM tracks t LEFT JOIN artists a ON a.id = t.artist_id
-                   LEFT JOIN albums al ON al.id = t.album_id
-                  WHERE t.id IN (SELECT value FROM json_each(?1))",
-            )
-            .and_then(|mut s| {
-                s.query_map([serde_json::to_string(&ids).unwrap_or_default()], |r| {
-                    Ok((r.get(0)?, (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
-                })?
-                .collect()
-            })
-            .ok()?;
-        let (title, artist, album, album_id) = rows.get(&first)?.clone();
-        let one_album = ids.len() > 1
-            && album_id.is_some()
-            && ids
-                .iter()
-                .all(|id| rows.get(id).is_some_and(|r| r.3 == album_id));
-        Some(match (one_album, ids.len()) {
-            (true, _) => format!("{album} — {artist}"),
-            (false, 1) => format!("{title} — {artist}"),
-            (false, n) => format!("{title} — {artist}, and {} more", n - 1),
-        })
+        with("describe a command", |c| link::describe(c, cmd)).flatten()
     }
 }
 
@@ -3137,22 +2748,18 @@ mod tests {
     /// stay wakeable across one without being opened again.
     #[test]
     fn where_a_device_last_linked_from_survives_a_restart() {
+        use koan_core::db::queries::link;
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         koan_core::db::schema::create_tables(&conn).unwrap();
-        for (device, user, seen) in [("dev-ipad", "sarita", 1), ("dev-phone", "admin", 2)] {
-            conn.execute(
-                "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES (?1, ?2, ?1, 'ios', ?3)",
-                rusqlite::params![device, user, seen],
-            )
-            .unwrap();
-        }
         let home: std::net::IpAddr = "203.0.113.7".parse().unwrap();
-        outbox::save_address_in(&conn, "dev-ipad", "sarita", home);
-        outbox::save_address_in(&conn, "dev-phone", "admin", home);
+        for (device, user, seen) in [("dev-ipad", "sarita", 1), ("dev-phone", "admin", 2)] {
+            link::record_device(&conn, device, user, device, "ios", seen).unwrap();
+            link::save_address(&conn, device, user, home).unwrap();
+        }
 
         // A fresh server, from what was saved.
         let reg = Registry::default();
-        *reg.addresses.lock() = outbox::load_addresses_in(&conn);
+        *reg.addresses.lock() = link::addresses(&conn).unwrap();
         assert_eq!(
             reg.wake_owner("admin", "dev-phone", "dev-ipad"),
             "sarita",
@@ -3219,35 +2826,6 @@ mod tests {
         assert_eq!(listed.map(|d| d.len()), Some(0));
     }
 
-    /// The server forgets a device's push token with it, so nothing is
-    /// pushed to it again; and only the account that owns it can.
-    #[test]
-    fn forgetting_a_device_stops_pushes_to_it_and_only_for_its_account() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        koan_core::db::schema::create_tables(&conn).unwrap();
-        for user in ["j", "k"] {
-            conn.execute(
-                "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES ('dev-phone', ?1, 'phone', 'ios', 1)",
-                [user],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO link_handles (device, username, handle, updated_at) VALUES ('dev-phone', ?1, 'h', 1)",
-                [user],
-            )
-            .unwrap();
-        }
-        outbox::forget_device_in(&conn, "dev-phone", "k");
-        assert_eq!(
-            outbox::push_targets_in(&conn, Some("j")).len(),
-            1,
-            "k forgetting its own leaves j's alone"
-        );
-        outbox::forget_device_in(&conn, "dev-phone", "j");
-        assert!(outbox::push_targets_in(&conn, Some("j")).is_empty());
-        assert!(outbox::push_targets_in(&conn, None).is_empty());
-    }
-
     #[test]
     fn a_device_hears_its_peers_and_commands_reach_them_by_device_id() {
         let reg = Registry::default();
@@ -3297,73 +2875,5 @@ mod tests {
             reg.relay("j", "dev-phone", LinkCommand::Devices { devices: vec![] })
                 .is_err()
         );
-    }
-
-    #[test]
-    fn a_device_linked_for_a_month_is_not_forgotten() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        koan_core::db::schema::create_tables(&conn).unwrap();
-        let now = 100 * 24 * 60 * 60;
-        let long_ago = now - 40 * 24 * 60 * 60;
-        for device in ["mac", "old-phone"] {
-            conn.execute(
-                "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES (?1, 'j', ?1, 'ios', ?2)",
-                rusqlite::params![device, long_ago],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO link_handles (device, username, handle, updated_at) VALUES (?1, 'j', 'h', ?2)",
-                rusqlite::params![device, long_ago],
-            )
-            .unwrap();
-        }
-        outbox::forget_stale(&conn, &[("mac".into(), "j".into())], now);
-        let left = |table: &str| -> Vec<String> {
-            conn.prepare(&format!("SELECT device FROM {table} ORDER BY device"))
-                .unwrap()
-                .query_map([], |r| r.get(0))
-                .unwrap()
-                .collect::<Result<_, _>>()
-                .unwrap()
-        };
-        assert_eq!(left("link_devices"), ["mac"]);
-        assert_eq!(left("link_handles"), ["mac"]);
-    }
-
-    #[test]
-    fn a_paired_apple_tv_is_kept_however_long_it_sleeps() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        koan_core::db::schema::create_tables(&conn).unwrap();
-        let now = 100 * 24 * 60 * 60;
-        let long_ago = now - 90 * 24 * 60 * 60;
-        for (device, platform) in [("tv", "tvos"), ("other-tv", "tvos")] {
-            conn.execute(
-                "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES (?1, 'j', 'Living Room', ?2, ?3)",
-                rusqlite::params![device, platform, long_ago],
-            )
-            .unwrap();
-        }
-        let pairing = koan_core::remote::companion::Credential {
-            tv_id: "7A821767-01ED-442C-B4BB-6BDEA29109DA".into(),
-            tv_key: "a2V5".into(),
-            id: "ME".into(),
-            seed: "c2VlZA==".into(),
-        };
-        conn.execute(
-            "INSERT INTO link_tv (device, username, pairing, updated_at) VALUES ('tv', 'j', ?1, 0)",
-            [serde_json::to_string(&pairing).unwrap()],
-        )
-        .unwrap();
-        outbox::forget_stale(&conn, &[], now);
-        let paired = outbox::tv_pairings_in(&conn, "j");
-        assert_eq!(paired.len(), 1);
-        assert_eq!(paired[0].device, "tv");
-        assert_eq!(paired[0].name, "Living Room");
-        assert_eq!(paired[0].pairing, pairing);
-        assert!(outbox::tv_pairings_in(&conn, "someone").is_empty());
-        let devices: i64 = conn
-            .query_row("SELECT COUNT(*) FROM link_devices", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(devices, 1, "the unpaired TV is forgotten as before");
     }
 }

@@ -127,17 +127,12 @@ pub(super) fn song_ids<'a>(
     db: &Database,
     raws: impl Iterator<Item = &'a str>,
 ) -> Result<Vec<i64>, SubsonicError> {
-    let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
-    let mut exists = db
-        .conn
-        .prepare_cached("SELECT EXISTS (SELECT 1 FROM tracks WHERE id = ?1)")
-        .map_err(internal)?;
     raws.filter(|raw| !raw.is_empty())
         .map(|raw| {
             let missing = || SubsonicError::not_found(&format!("Song {raw}"));
             match parse_entity_id(raw) {
                 Some((None | Some(EntityKind::Song), id)) => {
-                    if exists.query_row([id], |r| r.get(0)).map_err(internal)? {
+                    if queries::track_exists(&db.conn, id)? {
                         Ok(id)
                     } else {
                         Err(missing())
@@ -145,9 +140,7 @@ pub(super) fn song_ids<'a>(
                 }
                 Some(_) => Err(missing()),
                 None if queries::is_uid(raw) => {
-                    queries::id_for_uid(&db.conn, queries::UidKind::Track, raw)
-                        .map_err(internal)?
-                        .ok_or_else(missing)
+                    queries::id_for_uid(&db.conn, queries::UidKind::Track, raw)?.ok_or_else(missing)
                 }
                 None => Err(missing()),
             }

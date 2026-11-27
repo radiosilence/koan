@@ -198,14 +198,7 @@ impl AppState {
         {
             return Ok(h.newest_file.max(h.changed));
         }
-        let newest_file: i64 = db
-            .conn
-            .query_row(
-                "SELECT COALESCE(MAX(mtime), 0) * 1000 FROM tracks",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        let newest_file = queries::newest_track_mtime_ms(&db.conn)?;
         let changed = match held {
             Some(h) if h.stamp.rows == stamp.rows => h.changed,
             _ => koan_core::clock::unix_ms(),

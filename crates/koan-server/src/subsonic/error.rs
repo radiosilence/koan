@@ -160,6 +160,12 @@ impl From<rusqlite::Error> for SubsonicError {
     }
 }
 
+impl From<koan_core::db::connection::DbError> for SubsonicError {
+    fn from(e: koan_core::db::connection::DbError) -> Self {
+        Self::internal(e)
+    }
+}
+
 impl IntoResponse for SubsonicError {
     fn into_response(self) -> Response {
         // Default to XML for error responses produced via `?` in handlers.

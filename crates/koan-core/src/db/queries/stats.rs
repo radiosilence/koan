@@ -179,6 +179,41 @@ impl Commits {
 /// Each connection's last [`Commits`] and the fingerprint read then.
 static FINGERPRINTS: parking_lot::Mutex<Vec<(Commits, u64)>> = parking_lot::Mutex::new(Vec::new());
 
+/// The newest track file's mtime, in milliseconds; 0 for an empty library.
+pub fn newest_track_mtime_ms(conn: &Connection) -> Result<i64, DbError> {
+    Ok(conn.query_row(
+        "SELECT COALESCE(MAX(mtime), 0) * 1000 FROM tracks",
+        [],
+        |r| r.get(0),
+    )?)
+}
+
+/// A genre the library's tracks are tagged with, and how much carries it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenreCount {
+    pub name: String,
+    pub tracks: i64,
+    pub albums: i64,
+}
+
+/// Every genre a track is tagged with, by name, with its track and album
+/// counts.
+pub fn genre_counts(conn: &Connection) -> Result<Vec<GenreCount>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT genre, COUNT(*), COUNT(DISTINCT album_id)
+         FROM tracks WHERE genre IS NOT NULL AND genre != ''
+         GROUP BY genre ORDER BY genre",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(GenreCount {
+            name: r.get(0)?,
+            tracks: r.get(1)?,
+            albums: r.get(2)?,
+        })
+    })?;
+    rows.collect::<Result<_, _>>().map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +298,31 @@ mod tests {
         let other = Database::open(&path).unwrap();
         upsert_track(&other.conn, &sample_meta("Two", "Bryn", "Tide")).unwrap();
         assert_ne!(library_stamp(&db.conn).unwrap().rows, edited.rows);
+    }
+
+    #[test]
+    fn the_newest_file_and_the_genres_are_read_from_the_tracks() {
+        let db = test_db();
+        assert_eq!(newest_track_mtime_ms(&db.conn).unwrap(), 0);
+        let mut techno = sample_meta("T1", "A1", "Al1");
+        techno.genre = Some("Techno".into());
+        techno.mtime = Some(10);
+        let mut also = sample_meta("T2", "A1", "Al2");
+        also.genre = Some("Techno".into());
+        also.mtime = Some(20);
+        let mut untagged = sample_meta("T3", "A1", "Al2");
+        untagged.genre = None;
+        for meta in [techno, also, untagged] {
+            upsert_track(&db.conn, &meta).unwrap();
+        }
+        assert_eq!(newest_track_mtime_ms(&db.conn).unwrap(), 20_000);
+        assert_eq!(
+            genre_counts(&db.conn).unwrap(),
+            [GenreCount {
+                name: "Techno".into(),
+                tracks: 2,
+                albums: 2,
+            }]
+        );
     }
 }

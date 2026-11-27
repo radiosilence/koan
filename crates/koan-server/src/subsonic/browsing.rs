@@ -197,21 +197,12 @@ pub(super) async fn get_artist_info2(
 ) -> Response {
     offload_response(move || {
         respond(&state, &params.auth, |_, b| {
-            use rusqlite::OptionalExtension as _;
             let (artist_id, mbid) = {
                 let db = state.open_db()?;
                 let artist_id = require_id(&db, params.id.as_deref(), EntityKind::Artist)?;
-                let mbid: Option<String> = db
-                    .conn
-                    .query_row(
-                        "SELECT mbid FROM artists WHERE id = ?1",
-                        rusqlite::params![artist_id],
-                        |row| row.get(0),
-                    )
-                    .optional()
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?
+                let mbid = queries::artist_mbid(&db.conn, artist_id)?
                     .ok_or_else(|| SubsonicError::not_found("Artist"))?;
-                (artist_id, mbid.filter(|m| !m.is_empty()))
+                (artist_id, mbid)
             };
             // No connection is held while MusicBrainz and Wikimedia answer.
             let info = koan_core::artist_info::fetch_by_id(&state.pool, artist_id)

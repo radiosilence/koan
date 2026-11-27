@@ -159,14 +159,11 @@ pub(super) async fn get_scan_status(
     offload_response(move || {
         respond_db(&state, &params, |db, b| {
             // Clients poll this; the track count is all it reports.
-            let count: i64 = db
-                .conn
-                .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            let count = queries::count_tracks(&db.conn, &queries::TrackFilter::default())?;
             Ok(b.child(
                 XmlNode::new("scanStatus")
                     .attr_bool("scanning", false)
-                    .attr_int("count", count),
+                    .attr_int("count", i64::try_from(count).unwrap_or(i64::MAX)),
             ))
         })
     })
@@ -179,35 +176,15 @@ pub(super) async fn get_genres(
 ) -> Response {
     offload_response(move || {
         respond_db(&state, &params, |db, b| {
-            let mut stmt = db
-                .conn
-                .prepare(
-                    "SELECT genre, COUNT(*), COUNT(DISTINCT album_id)
-                 FROM tracks WHERE genre IS NOT NULL AND genre != ''
-                 GROUP BY genre ORDER BY genre",
-                )
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                })
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-
             let mut genres_node = XmlNode::new("genres").array_of("genre");
-            for row in rows {
-                let (name, song_count, album_count) =
-                    row.map_err(|e| SubsonicError::internal(e.to_string()))?;
+            for genre in queries::genre_counts(&db.conn)? {
                 genres_node = genres_node.child(
                     XmlNode::new("genre")
-                        .attr_int("songCount", song_count)
-                        .attr_int("albumCount", album_count)
+                        .attr_int("songCount", genre.tracks)
+                        .attr_int("albumCount", genre.albums)
                         // The XSD carries the name as element text; `value` is the
                         // JSON spelling of the same thing.
-                        .text(&name),
+                        .text(&genre.name),
                 );
             }
 

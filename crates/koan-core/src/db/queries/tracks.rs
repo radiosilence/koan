@@ -1434,6 +1434,46 @@ pub fn favourite_album_ids_batch(conn: &Connection, user: i64) -> Result<HashSet
     Ok(ids)
 }
 
+/// Whether a track with this id exists.
+pub fn track_exists(conn: &Connection, id: i64) -> Result<bool, DbError> {
+    Ok(conn
+        .prepare_cached("SELECT EXISTS (SELECT 1 FROM tracks WHERE id = ?1)")?
+        .query_row([id], |r| r.get(0))?)
+}
+
+/// When each album's files last changed: the newest mtime among its tracks,
+/// 0 where none has one. What a cover's URL carries, so the URL changes
+/// whenever the art might have. Albums with no tracks are absent.
+pub fn album_file_versions(
+    conn: &Connection,
+    album_ids: &[i64],
+) -> Result<HashMap<i64, i64>, DbError> {
+    if album_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut stmt = conn.prepare_cached(
+        "SELECT album_id, MAX(COALESCE(mtime, 0)) FROM tracks
+         WHERE album_id IN (SELECT value FROM json_each(?1)) GROUP BY album_id",
+    )?;
+    let rows = stmt.query_map([super::json_list(album_ids)], |r| {
+        Ok((r.get(0)?, r.get(1)?))
+    })?;
+    rows.collect::<Result<_, _>>().map_err(Into::into)
+}
+
+/// Every album with a track on disk here, in the order of its first file's
+/// path: an album's covers are read from beside its files, so walking in this
+/// order keeps each directory's reads together.
+pub fn albums_with_files(conn: &Connection) -> Result<Vec<i64>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT album_id FROM tracks
+          WHERE path IS NOT NULL AND album_id IS NOT NULL
+          GROUP BY album_id ORDER BY MIN(path)",
+    )?;
+    let rows = stmt.query_map([], |r| r.get(0))?;
+    rows.collect::<Result<_, _>>().map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4574,5 +4614,48 @@ mod tests {
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         assert_eq!(titles, ["Renaissance"], "named as the files name it");
+    }
+
+    #[test]
+    fn album_file_versions_are_the_newest_mtime_per_album() {
+        let db = test_db();
+        let mut old = sample_meta("Old", "Artist", "Record");
+        old.mtime = Some(10);
+        let mut new = sample_meta("New", "Artist", "Record");
+        new.track_number = Some(2);
+        new.mtime = Some(30);
+        let id = upsert_track(&db.conn, &old).unwrap();
+        upsert_track(&db.conn, &new).unwrap();
+        let album = tracks_by_ids(&db.conn, &[id]).unwrap()[0].album_id.unwrap();
+        assert!(track_exists(&db.conn, id).unwrap());
+        assert!(!track_exists(&db.conn, id + 100).unwrap());
+        assert_eq!(
+            album_file_versions(&db.conn, &[album, album + 100]).unwrap(),
+            HashMap::from([(album, 30)])
+        );
+        assert!(album_file_versions(&db.conn, &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn albums_with_files_leave_out_streamed_albums_and_follow_their_paths() {
+        let db = test_db();
+        let mut later = sample_meta("B", "Artist", "Zebra");
+        later.path = Some("/music/b/1.flac".into());
+        let mut first = sample_meta("A", "Artist", "Aardvark");
+        first.path = Some("/music/a/1.flac".into());
+        let mut streamed = sample_meta("S", "Artist", "Streamed");
+        streamed.path = None;
+        streamed.source = "remote".into();
+        streamed.remote_id = Some("s".into());
+        let ids: Vec<i64> = [later, first, streamed]
+            .iter()
+            .map(|m| upsert_track(&db.conn, m).unwrap())
+            .collect();
+        let rows = tracks_by_ids(&db.conn, &ids).unwrap();
+        let album = |id: i64| rows.iter().find(|t| t.id == id).unwrap().album_id.unwrap();
+        assert_eq!(
+            albums_with_files(&db.conn).unwrap(),
+            [album(ids[1]), album(ids[0])]
+        );
     }
 }

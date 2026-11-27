@@ -170,12 +170,8 @@ pub(super) async fn get_starred2(
             // own an album: a favourited guest artist would drop out.
             let artist_ids = queries::favourite_artist_id_set(&db.conn, user)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            let artists = by_id(
-                db,
-                "SELECT id, name FROM artists WHERE id IN (SELECT value FROM json_each(?1)) ORDER BY id",
-                [json_ids(artist_ids)],
-                |r| Ok((r.get(0)?, r.get::<_, String>(1)?)),
-            )?;
+            let artist_ids: Vec<i64> = artist_ids.into_iter().collect();
+            let artists = queries::artist_names(&db.conn, &artist_ids)?;
             let album_extras = album_extras(db, user, &albums, None)?;
             let artist_extras = artist_extras(db, user, artists.iter().map(|(id, _)| *id))?;
 
