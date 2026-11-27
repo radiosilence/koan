@@ -996,7 +996,6 @@ None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek
       data-text="$_kitconfirm.yes" data-on:click="$_kitconfirm.form ? @post($_kitconfirm.url, {contentType: 'form', selector: '#' + CSS.escape($_kitconfirm.form)}) : @post($_kitconfirm.url)"></button>
   </footer>
 </dialog>
-
 <div id="flash-failures" hidden data-failed="That did not work. Try again." data-unreachable="The storybook&#39;s server could not be reached."
   data-on:datastar-fetch__document="(d => d.type == 'error' &amp;&amp; d.argsRaw.status == '401' &amp;&amp; el.dataset.signIn ? location.assign(el.dataset.signIn) : (m => m &amp;&amp; dispatchEvent(new CustomEvent('kit-flash', {detail: {message: m, bad: true}})))(d.type == 'error' ? el.dataset.failed : d.type == 'retries-failed' ? el.dataset.unreachable : ''))(evt.detail)"></div>
 <div id="flash" role="status"
