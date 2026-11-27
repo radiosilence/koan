@@ -5,7 +5,7 @@ use super::*;
 /// A pairing as an approver sees it: the device's name, the address it asked
 /// from, and whether that address is on a private network.
 pub(in crate::subsonic) fn pair_node(info: &crate::pair::PairInfo) -> XmlNode {
-    let node = XmlNode::new("pair")
+    let node = XmlNode::new(Tag::Pair)
         .attr("device", &info.device)
         .attr("from", &info.from.to_string())
         .attr_bool("local", info.local());

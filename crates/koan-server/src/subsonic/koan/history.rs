@@ -35,13 +35,13 @@ pub(in crate::subsonic) async fn koan_history(
             let page = queries::history_since(&db.conn, user, since, count)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b.child(
-                XmlNode::new("koanHistory")
+                XmlNode::new(Tag::KoanHistory)
                     .attr("cursor", &page.cursor.to_string())
                     .attr_bool("more", page.more)
                     .list(
-                        "play",
+                        Tag::Play,
                         page.plays.iter().map(|p| {
-                            XmlNode::new("play")
+                            XmlNode::new(Tag::Play)
                                 .attr("id", &p.track_uid)
                                 .attr_int("seq", p.seq)
                                 .attr_int("played", p.played_at * 1000)
@@ -49,9 +49,9 @@ pub(in crate::subsonic) async fn koan_history(
                         }),
                     )
                     .list(
-                        "forgotten",
+                        Tag::Forgotten,
                         page.forgotten.iter().map(|f| {
-                            XmlNode::new("forgotten")
+                            XmlNode::new(Tag::Forgotten)
                                 .attr_opt("id", f.track_uid.as_deref())
                                 .attr_int("played", f.played_at * 1000)
                         }),

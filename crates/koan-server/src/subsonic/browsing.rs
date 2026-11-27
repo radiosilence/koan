@@ -12,13 +12,13 @@ pub(super) async fn get_artists(
             let index_map = artist_index(db)?;
             let extras = artist_extras(db, user, index_map.values().flatten().map(|a| a.id))?;
 
-            let mut artists_node = XmlNode::new("artists")
+            let mut artists_node = XmlNode::new(Tag::Artists)
                 .attr("ignoredArticles", IGNORED_ARTICLES)
-                .array_of("index");
+                .array_of(Tag::Index);
             for (letter, group) in &index_map {
-                let mut index_node = XmlNode::new("index")
+                let mut index_node = XmlNode::new(Tag::Index)
                     .attr("name", letter)
-                    .array_of("artist");
+                    .array_of(Tag::Artist);
                 for artist in group {
                     index_node = index_node.child(
                         artist_id3_node(artist.id, &artist.name, &extras)
@@ -58,7 +58,7 @@ pub(super) async fn get_indexes(
                 .is_some_and(|since| since >= last_modified)
             {
                 return Ok(b.child(
-                    XmlNode::new("indexes")
+                    XmlNode::new(Tag::Indexes)
                         .attr_int("lastModified", last_modified)
                         .attr("ignoredArticles", IGNORED_ARTICLES),
                 ));
@@ -66,17 +66,17 @@ pub(super) async fn get_indexes(
             let index_map = artist_index(db)?;
             let extras = artist_extras(db, user, index_map.values().flatten().map(|a| a.id))?;
 
-            let mut indexes_node = XmlNode::new("indexes")
+            let mut indexes_node = XmlNode::new(Tag::Indexes)
                 .attr_int("lastModified", last_modified)
                 .attr("ignoredArticles", IGNORED_ARTICLES)
-                .array_of("index");
+                .array_of(Tag::Index);
             for (letter, group) in &index_map {
-                let mut index_node = XmlNode::new("index")
+                let mut index_node = XmlNode::new(Tag::Index)
                     .attr("name", letter)
-                    .array_of("artist");
+                    .array_of(Tag::Artist);
                 for artist in group {
                     index_node = index_node.child(
-                        XmlNode::new("artist")
+                        XmlNode::new(Tag::Artist)
                             .attr("id", &extras.uids.artist(artist.id))
                             .attr("name", &artist.name)
                             .attr_opt(
@@ -121,10 +121,10 @@ pub(super) async fn get_music_directory(
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
                     let extras = album_extras(db, user, &albums, None)?;
                     let uids = &extras.uids;
-                    let mut dir = XmlNode::new("directory")
+                    let mut dir = XmlNode::new(Tag::Directory)
                         .attr("id", &uids.artist(artist.id))
                         .attr("name", &artist.name)
-                        .array_of("child");
+                        .array_of(Tag::Child);
                     for album in &albums {
                         dir = dir.child(album_child_node(album, &extras));
                     }
@@ -139,14 +139,14 @@ pub(super) async fn get_music_directory(
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
             let uids = Uids::load(db, [album.artist_id], [album.id], [])?;
-            let mut dir = XmlNode::new("directory")
+            let mut dir = XmlNode::new(Tag::Directory)
                 .attr("id", &uids.album(album.id))
                 .attr("parent", &uids.artist(album.artist_id))
                 .attr("name", &album.title)
-                .array_of("child");
+                .array_of(Tag::Child);
             let extras = song_extras(db, caller, &tracks)?;
             for track in &tracks {
-                dir = dir.child(track_node(track, "child", &extras));
+                dir = dir.child(track_node(track, Tag::Child, &extras));
             }
             Ok(b.child(dir))
         })
@@ -175,7 +175,7 @@ pub(super) async fn get_artist(
                 artist_id3_node(artist.id, &artist.name, &artists)
                     .attr_int("albumCount", albums.len() as i64)
                     .list(
-                        "album",
+                        Tag::Album,
                         albums.iter().map(|album| album_to_xml_node(album, &extras)),
                     ),
             ))
@@ -218,28 +218,28 @@ pub(super) fn artist_info_node(
     info: &koan_core::artist_info::ArtistInfo,
     mbid: Option<&str>,
 ) -> XmlNode {
-    let text = |tag: &str, value: &str| XmlNode::scalar(tag, AttrValue::Str(value.into()));
-    let mut node = XmlNode::new("artistInfo2");
+    let text = |tag: Tag, value: &str| XmlNode::scalar(tag, AttrValue::Str(value.into()));
+    let mut node = XmlNode::new(Tag::ArtistInfo2);
     if let Some(bio) = &info.bio {
-        node = node.child(text("biography", bio));
+        node = node.child(text(Tag::Biography, bio));
     }
     if let Some(mbid) = mbid {
-        node = node.child(text("musicBrainzId", mbid));
+        node = node.child(text(Tag::MusicBrainzId, mbid));
     }
     let image = info.image_url.as_deref().filter(|u| !u.is_empty());
     if let Some(url) = image {
-        for tag in ["smallImageUrl", "mediumImageUrl", "largeImageUrl"] {
+        for tag in [Tag::SmallImageUrl, Tag::MediumImageUrl, Tag::LargeImageUrl] {
             node = node.child(text(tag, url));
         }
     }
     if let Some(url) = &info.bio_url {
-        node = node.child(text("koanBioUrl", url));
+        node = node.child(text(Tag::KoanBioUrl, url));
     }
     if let Some(credit) = image.and(info.image_credit.as_deref()) {
-        node = node.child(text("koanImageCredit", credit));
+        node = node.child(text(Tag::KoanImageCredit, credit));
     }
     node.child(XmlNode::scalar(
-        "koanImage",
+        Tag::KoanImage,
         AttrValue::Bool(image.is_some()),
     ))
 }
@@ -298,10 +298,10 @@ pub(super) async fn get_album(
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             let albums = album_extras(db, user, [&album], Some(&tracks))?;
             let songs = song_extras(db, caller, &tracks)?;
-            Ok(b.child(
-                album_to_xml_node(&album, &albums)
-                    .list("song", tracks.iter().map(|t| track_to_xml_node(t, &songs))),
-            ))
+            Ok(b.child(album_to_xml_node(&album, &albums).list(
+                Tag::Song,
+                tracks.iter().map(|t| track_to_xml_node(t, &songs)),
+            )))
         })
     })
     .await
@@ -313,7 +313,7 @@ pub(super) fn album_list(
     db: &Database,
     user: i64,
     params: &AlbumListParams,
-    tag: &str,
+    tag: Tag,
 ) -> Result<XmlNode, SubsonicError> {
     let limit = params.size.unwrap_or(20).clamp(0, 500) as u32;
     let offset = params.offset.unwrap_or(0).clamp(0, u32::MAX as i64) as u32;
@@ -338,7 +338,7 @@ pub(super) fn album_list(
     };
     let extras = album_extras(db, user, &page, None)?;
     Ok(XmlNode::new(tag).list(
-        "album",
+        Tag::Album,
         page.iter().map(|album| album_to_xml_node(album, &extras)),
     ))
 }
@@ -412,7 +412,7 @@ pub(super) async fn get_album_list(
 ) -> Response {
     offload_response(move || {
         respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
-            Ok(b.child(album_list(db, user, &params, "albumList")?))
+            Ok(b.child(album_list(db, user, &params, Tag::AlbumList)?))
         })
     })
     .await
@@ -424,7 +424,7 @@ pub(super) async fn get_album_list2(
 ) -> Response {
     offload_response(move || {
         respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
-            Ok(b.child(album_list(db, user, &params, "albumList2")?))
+            Ok(b.child(album_list(db, user, &params, Tag::AlbumList2)?))
         })
     })
     .await
@@ -463,7 +463,7 @@ pub(super) async fn get_lyrics_by_song_id(
             let cached = queries::get_cached_lyrics(&db.conn, track_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             let entries = cached.map(|c| structured_lyrics(&track, &c.content, c.synced));
-            Ok(b.child(XmlNode::new("lyricsList").list("structuredLyrics", entries)))
+            Ok(b.child(XmlNode::new(Tag::LyricsList).list(Tag::StructuredLyrics, entries)))
         })
     })
     .await
@@ -476,7 +476,7 @@ pub(super) fn structured_lyrics(track: &queries::TrackRow, content: &str, synced
         koan_core::lyrics::parse_lrc(content)
             .into_iter()
             .map(|l| {
-                XmlNode::new("line")
+                XmlNode::new(Tag::Line)
                     .attr_int("start", (l.time_secs * 1000.0).round() as i64)
                     .text(&l.text)
             })
@@ -484,16 +484,16 @@ pub(super) fn structured_lyrics(track: &queries::TrackRow, content: &str, synced
     } else {
         content
             .lines()
-            .map(|l| XmlNode::new("line").text(l.trim_end()))
+            .map(|l| XmlNode::new(Tag::Line).text(l.trim_end()))
             .collect()
     };
-    XmlNode::new("structuredLyrics")
+    XmlNode::new(Tag::StructuredLyrics)
         .attr("displayArtist", &track.artist_name)
         .attr("displayTitle", &track.title)
         // LRCLIB does not say which language a text is in.
         .attr("lang", "und")
         .attr_bool("synced", synced)
-        .list("line", lines)
+        .list(Tag::Line, lines)
 }
 
 pub(super) async fn get_random_songs(
@@ -513,10 +513,10 @@ pub(super) async fn get_random_songs(
             let tracks = queries::random_tracks_where(&db.conn, size, &filter)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             let extras = song_extras(db, caller, &tracks)?;
-            Ok(b.child(
-                XmlNode::new("randomSongs")
-                    .list("song", tracks.iter().map(|t| track_to_xml_node(t, &extras))),
-            ))
+            Ok(b.child(XmlNode::new(Tag::RandomSongs).list(
+                Tag::Song,
+                tracks.iter().map(|t| track_to_xml_node(t, &extras)),
+            )))
         })
     })
     .await

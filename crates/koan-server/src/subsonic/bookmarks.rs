@@ -20,18 +20,18 @@ pub(super) async fn get_bookmarks(
                 .map(|t| (t.id, t))
                 .collect();
             let extras = song_extras(db, caller, tracks.values())?;
-            Ok(b.child(XmlNode::new("bookmarks").list(
-                "bookmark",
+            Ok(b.child(XmlNode::new(Tag::Bookmarks).list(
+                Tag::Bookmark,
                 marks.iter().filter_map(|m| {
                     let track = tracks.get(&m.track_id)?;
                     Some(
-                        XmlNode::new("bookmark")
+                        XmlNode::new(Tag::Bookmark)
                             .attr_int("position", m.position_ms)
                             .attr("username", &caller.username)
                             .attr_opt("comment", m.comment.as_deref())
                             .attr("created", &iso(m.created_at))
                             .attr("changed", &iso(m.changed_at))
-                            .child(track_node(track, "entry", &extras)),
+                            .child(track_node(track, Tag::Entry, &extras)),
                     )
                 }),
             )))
@@ -137,9 +137,9 @@ pub(super) fn play_queue_response(
                 .collect();
         let extras = song_extras(db, caller, rows.values())?;
         let tag = if by_index {
-            "playQueueByIndex"
+            Tag::PlayQueueByIndex
         } else {
-            "playQueue"
+            Tag::PlayQueue
         };
         let mut node = XmlNode::new(tag)
             .attr_int("position", queue.position_ms)
@@ -156,12 +156,12 @@ pub(super) fn play_queue_response(
         };
         Ok(b.child(
             node.list(
-                "entry",
+                Tag::Entry,
                 queue
                     .track_ids
                     .iter()
                     .filter_map(|id| rows.get(id))
-                    .map(|track| track_node(track, "entry", &extras)),
+                    .map(|track| track_node(track, Tag::Entry, &extras)),
             ),
         ))
     })

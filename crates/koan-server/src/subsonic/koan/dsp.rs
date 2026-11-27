@@ -98,14 +98,14 @@ pub(in crate::subsonic) fn dsp_saved_node(
     saved: queries::dsp::Saved,
     missing: &[String],
 ) -> XmlNode {
-    XmlNode::new("koanDspSaved")
+    XmlNode::new(Tag::KoanDspSaved)
         .attr_int("rev", saved.rev)
         .attr_bool("stored", saved.stored)
         .list(
-            "missing",
+            Tag::Missing,
             missing
                 .iter()
-                .map(|sha| XmlNode::new("missing").attr("sha256", sha)),
+                .map(|sha| XmlNode::new(Tag::Missing).attr("sha256", sha)),
         )
 }
 
@@ -128,12 +128,12 @@ pub(in crate::subsonic) async fn koan_dsp_profiles(
                 queries::dsp::changes(&db.conn, user, since).map_err(dsp_failed)?;
             let dismissed = queries::dsp::dismissed(&db.conn, user).map_err(dsp_failed)?;
             Ok(b.child(
-                XmlNode::new("koanDspProfiles")
+                XmlNode::new(Tag::KoanDspProfiles)
                     .attr_int("cursor", cursor)
                     .list(
-                        "profile",
+                        Tag::Profile,
                         changed.iter().map(|p| {
-                            XmlNode::new("profile")
+                            XmlNode::new(Tag::Profile)
                                 .attr("uid", &p.uid)
                                 .attr_int("rev", p.rev)
                                 .attr_int("editedAt", p.edited_at)
@@ -141,10 +141,10 @@ pub(in crate::subsonic) async fn koan_dsp_profiles(
                         }),
                     )
                     .list(
-                        "dismissed",
+                        Tag::Dismissed,
                         dismissed
                             .iter()
-                            .map(|o| XmlNode::new("dismissed").attr("output", o)),
+                            .map(|o| XmlNode::new(Tag::Dismissed).attr("output", o)),
                     ),
             ))
         })
@@ -278,12 +278,12 @@ pub(in crate::subsonic) async fn koan_dsp_deleted(
             let user = dsp_account(caller)?;
             let since = chrono::Utc::now().timestamp_millis() - queries::dsp::DELETED_KEPT_MS;
             let deleted = queries::dsp::deleted_docs(&db.conn, user, since).map_err(dsp_failed)?;
-            Ok(b.child(XmlNode::new("koanDspDeleted").list(
-                "profile",
+            Ok(b.child(XmlNode::new(Tag::KoanDspDeleted).list(
+                Tag::Profile,
                 deleted.iter().filter_map(|(uid, at, json)| {
                     let doc = SyncDoc::parse(json).ok()?;
                     Some(
-                        XmlNode::new("profile")
+                        XmlNode::new(Tag::Profile)
                             .attr("uid", uid)
                             .attr("name", &doc.profile.name)
                             .attr_int("deletedAt", *at)

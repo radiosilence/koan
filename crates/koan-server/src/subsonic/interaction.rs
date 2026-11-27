@@ -176,18 +176,21 @@ pub(super) async fn get_starred2(
             let artist_extras = artist_extras(db, user, artists.iter().map(|(id, _)| *id))?;
 
             Ok(b.child(
-                XmlNode::new("starred2")
+                XmlNode::new(Tag::Starred2)
                     .list(
-                        "artist",
+                        Tag::Artist,
                         artists
                             .iter()
                             .map(|(id, name)| artist_id3_node(*id, name, &artist_extras)),
                     )
                     .list(
-                        "album",
+                        Tag::Album,
                         albums.iter().map(|a| album_to_xml_node(a, &album_extras)),
                     )
-                    .list("song", tracks.iter().map(|t| track_to_xml_node(t, &extras))),
+                    .list(
+                        Tag::Song,
+                        tracks.iter().map(|t| track_to_xml_node(t, &extras)),
+                    ),
             ))
         })
     })

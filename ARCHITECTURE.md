@@ -490,9 +490,9 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 | File | Purpose |
 |---|---|
 | `graphql/` | async-graphql schema, resolvers, axum HTTP server. Relay pagination, rich filters, mutations for playback/queue/library/favourites/playlists. rusqlite is blocking, so resolvers run their DB and HTTP work on `spawn_blocking` with a pooled connection; parent → child edges go through dataloaders. |
-| `subsonic.rs` | Subsonic REST API endpoints for compatibility with existing clients (DSub, Symfonium, play:Sub), plus koan's `/rest/koanLink` WebSocket. |
+| `subsonic/` | Subsonic REST API endpoints for compatibility with existing clients (DSub, Symfonium, play:Sub). The router and shared state in `mod.rs`; a file per concern (auth, parameters, ids, the response tree in `response/`, whose element names are the `Tag` enum) and per endpoint group; koan's own extensions, the `/rest/koanLink` WebSocket among them, under `koan/`. Tests sit beside the code they test. |
 | `mcp.rs` | MCP server on stdio -- exposes `schema_sdl` and `graphql` tools for Claude Desktop integration. |
-| `clients.rs` | Linked apps by account. Sends each link that asks the account's other devices whenever one changes, relays commands between them, and pushes Live Activity updates for a device a phone is controlling. |
+| `clients/` | Linked apps by account. Sends each link that asks the account's other devices whenever one changes (`registry.rs`), relays commands between them and wakes the absent by push (`relay.rs`), pushes Live Activity updates for a device a phone is controlling (`activity.rs`), carries out standing orders (`orders.rs`) and tells devices the library moved (`notify.rs`). What it keeps across restarts is `koan_core::db::queries::link`. |
 | `auth/` | JWT middleware (cookie or bearer), password checks for transports that send credentials with every request, and the `/auth/login`, `/auth/refresh`, `/auth/logout` routes. |
 
 ## Picker actions

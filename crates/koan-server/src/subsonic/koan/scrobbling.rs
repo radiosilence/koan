@@ -7,10 +7,10 @@ use super::*;
 pub(in crate::subsonic) fn scrobbling_node(
     services: &[koan_core::db::queries::scrobbling::ScrobbleService],
 ) -> XmlNode {
-    XmlNode::new("koanScrobbling").list(
-        "service",
+    XmlNode::new(Tag::KoanScrobbling).list(
+        Tag::Service,
         services.iter().map(|s| {
-            XmlNode::new("service")
+            XmlNode::new(Tag::Service)
                 .attr("name", &s.service)
                 .attr("account", &s.account_name)
                 .attr_int("connected", s.connected_at * 1000)

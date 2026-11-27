@@ -76,7 +76,7 @@ pub(in crate::subsonic) fn invite_node(
         koan_core::invite::QR_TOKEN_TTL_SECS,
     )
     .map_err(account_error)?;
-    let node = XmlNode::new("invite")
+    let node = XmlNode::new(Tag::Invite)
         .attr("username", username)
         .attr("token", &token)
         .attr("qrToken", &qr_token);
@@ -95,10 +95,10 @@ pub(in crate::subsonic) async fn koan_users(
         respond_admin(&state, &params.auth(), |db, _, b| {
             let users = queries::auth::list_users(&db.conn)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            Ok(b.child(XmlNode::new("users").list(
-                "user",
+            Ok(b.child(XmlNode::new(Tag::Users).list(
+                Tag::User,
                 users.iter().map(|u| {
-                    XmlNode::new("user")
+                    XmlNode::new(Tag::User)
                         .attr("username", &u.username)
                         .attr("role", u.role.as_str())
                 }),
@@ -247,7 +247,7 @@ pub(in crate::subsonic) async fn koan_set_user_password(
             let (_, api_key) = queries::api_keys::replace_api_key(&db.conn, caller.user_id, &name)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b.child(
-                XmlNode::new("join")
+                XmlNode::new(Tag::Join)
                     .attr("username", &caller.username)
                     .attr("apiKey", &api_key),
             ))
@@ -271,7 +271,7 @@ pub(in crate::subsonic) async fn koan_mcp(
                 .filter(|_| state.host_key.is_none())
                 .ok_or_else(|| SubsonicError::not_found("An address for assistants"))?;
             Ok(b.child(
-                XmlNode::new("mcp")
+                XmlNode::new(Tag::Mcp)
                     .attr("url", &format!("{base}/mcp"))
                     .attr("connect", &format!("{base}/connect")),
             ))
@@ -298,8 +298,8 @@ pub(in crate::subsonic) async fn koan_api_keys(
                 Some(key) => queries::api_keys::id_of(&db.conn, key).map_err(internal)?,
                 None => None,
             };
-            Ok(b.child(XmlNode::new("apiKeys").list(
-                "apiKey",
+            Ok(b.child(XmlNode::new(Tag::ApiKeys).list(
+                Tag::ApiKey,
                 keys.iter().map(|k| api_key_node(k, current == Some(k.id))),
             )))
         })
@@ -311,7 +311,7 @@ pub(in crate::subsonic) fn api_key_node(
     key: &queries::api_keys::ApiKeyRow,
     current: bool,
 ) -> XmlNode {
-    XmlNode::new("apiKey")
+    XmlNode::new(Tag::ApiKey)
         .attr_int("id", key.id)
         .attr("name", &key.name)
         .attr("created", &iso(key.created_at))
@@ -336,7 +336,7 @@ pub(in crate::subsonic) async fn koan_create_api_key(
             let (id, key) = queries::api_keys::create_api_key(&db.conn, caller.user_id, &name)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b.child(
-                XmlNode::new("apiKey")
+                XmlNode::new(Tag::ApiKey)
                     .attr_int("id", id)
                     .attr("name", &name)
                     .attr("key", &key),
@@ -404,8 +404,8 @@ pub(in crate::subsonic) async fn koan_app_passwords(
             let passwords = queries::app_passwords::list_app_passwords(&db.conn, caller.user_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b.child(
-                XmlNode::new("appPasswords")
-                    .list("appPassword", passwords.iter().map(app_password_node)),
+                XmlNode::new(Tag::AppPasswords)
+                    .list(Tag::AppPassword, passwords.iter().map(app_password_node)),
             ))
         })
     })
@@ -415,7 +415,7 @@ pub(in crate::subsonic) async fn koan_app_passwords(
 pub(in crate::subsonic) fn app_password_node(
     row: &queries::app_passwords::AppPasswordRow,
 ) -> XmlNode {
-    XmlNode::new("appPassword")
+    XmlNode::new(Tag::AppPassword)
         .attr_int("id", row.id)
         .attr("name", &row.name)
         .attr("created", &iso(row.created_at))
@@ -448,7 +448,7 @@ pub(in crate::subsonic) async fn koan_create_app_password(
                     CreateAppPasswordError::Db(e) => SubsonicError::internal(e.to_string()),
                 })?;
             Ok(b.child(
-                XmlNode::new("appPassword")
+                XmlNode::new(Tag::AppPassword)
                     .attr_int("id", id)
                     .attr("name", &name)
                     .attr("password", &password),
@@ -538,7 +538,7 @@ pub(in crate::subsonic) async fn koan_sign_in(
             };
             let (_, api_key) = made.map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b.child(
-                XmlNode::new("join")
+                XmlNode::new(Tag::Join)
                     .attr("username", &caller.username)
                     .attr("apiKey", &api_key),
             ))
@@ -573,7 +573,7 @@ pub(in crate::subsonic) async fn koan_join(
         match joined {
             Ok(j) => SubsonicResponse::ok(json)
                 .child(
-                    XmlNode::new("join")
+                    XmlNode::new(Tag::Join)
                         .attr("username", &j.username)
                         .attr("apiKey", &j.api_key),
                 )

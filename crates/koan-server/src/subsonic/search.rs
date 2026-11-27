@@ -130,19 +130,19 @@ pub(super) async fn search3(
             let artist_extras = artist_extras(db, user, artists.iter().map(|(id, _)| *id))?;
             let album_extras = album_extras(db, user, &albums, None)?;
             let song_extras = song_extras(db, caller, &songs)?;
-            let result_node = XmlNode::new("searchResult3")
+            let result_node = XmlNode::new(Tag::SearchResult3)
                 .list(
-                    "artist",
+                    Tag::Artist,
                     artists
                         .iter()
                         .map(|(id, name)| artist_id3_node(*id, name, &artist_extras)),
                 )
                 .list(
-                    "album",
+                    Tag::Album,
                     albums.iter().map(|a| album_to_xml_node(a, &album_extras)),
                 )
                 .list(
-                    "song",
+                    Tag::Song,
                     songs.iter().map(|t| track_to_xml_node(t, &song_extras)),
                 );
 

@@ -18,8 +18,8 @@ pub(in crate::subsonic) fn share_node(
 ) -> Result<XmlNode, SubsonicError> {
     let rows = queries::tracks_by_ids(&db.conn, &share.track_ids)
         .map_err(|e| SubsonicError::internal(e.to_string()))?;
-    let mut node = XmlNode::new("share")
-        .array_of("entry")
+    let mut node = XmlNode::new(Tag::Share)
+        .array_of(Tag::Entry)
         .attr("id", &share.id)
         .attr("url", &koan_core::helpers::share_url(base, &share.id))
         .attr("username", username)
@@ -35,7 +35,7 @@ pub(in crate::subsonic) fn share_node(
     let extras = song_extras(db, caller, &rows)?;
     for id in &share.track_ids {
         if let Some(t) = rows.iter().find(|t| t.id == *id) {
-            node = node.child(track_node(t, "entry", &extras));
+            node = node.child(track_node(t, Tag::Entry, &extras));
         }
     }
     Ok(node)
@@ -126,15 +126,11 @@ pub(in crate::subsonic) async fn create_share(
                 expires_param(&params),
             )
             .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            Ok(
-                b.child(XmlNode::new("shares").array_of("share").child(share_node(
-                    db,
-                    caller,
-                    &share,
-                    &base,
-                    &state.username,
-                )?)),
-            )
+            Ok(b.child(
+                XmlNode::new(Tag::Shares)
+                    .array_of(Tag::Share)
+                    .child(share_node(db, caller, &share, &base, &state.username)?),
+            ))
         })
     })
     .await
@@ -147,7 +143,7 @@ pub(in crate::subsonic) async fn get_shares(
     offload_response(move || {
         respond_db_caller(&state, &params, Role::Readonly, |db, caller, b| {
             let base = share_base(&state)?;
-            let mut node = XmlNode::new("shares").array_of("share");
+            let mut node = XmlNode::new(Tag::Shares).array_of(Tag::Share);
             for share in queries::shares::list_shares(&db.conn, caller.share_owner())
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
             {

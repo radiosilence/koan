@@ -26,7 +26,7 @@ pub(super) async fn get_license(
     offload_response(move || {
         respond(&state, &params, |_, b| {
             Ok(b.child(
-                XmlNode::new("license")
+                XmlNode::new(Tag::License)
                     .attr_bool("valid", true)
                     .attr("email", "koan@localhost"),
             ))
@@ -42,9 +42,9 @@ pub(super) async fn get_music_folders(
     offload_response(move || {
         respond(&state, &params, |_, b| {
             Ok(b.child(
-                XmlNode::new("musicFolders").list(
-                    "musicFolder",
-                    [XmlNode::new("musicFolder")
+                XmlNode::new(Tag::MusicFolders).list(
+                    Tag::MusicFolder,
+                    [XmlNode::new(Tag::MusicFolder)
                         .attr_int("id", 1)
                         .attr("name", "Music")],
                 ),
@@ -65,7 +65,7 @@ pub(super) async fn get_user(
             let role = caller.role;
             let writes = role.has_permission(Role::User);
             Ok(b.child(
-                XmlNode::new("user")
+                XmlNode::new(Tag::User)
                     .attr("username", &caller.username)
                     .attr_bool("scrobblingEnabled", writes)
                     .attr_bool("adminRole", role == Role::Admin)
@@ -116,7 +116,7 @@ pub(super) async fn get_open_subsonic_extensions(
     };
     SubsonicResponse::ok(params.wants_json())
         .list(
-            "openSubsonicExtensions",
+            Tag::OpenSubsonicExtensions,
             EXTENSIONS
                 .iter()
                 .chain(transcode)
@@ -124,13 +124,13 @@ pub(super) async fn get_open_subsonic_extensions(
                 .chain(app_passwords)
                 .chain(push)
                 .map(|(name, versions)| {
-                    XmlNode::new("openSubsonicExtensions")
+                    XmlNode::new(Tag::OpenSubsonicExtensions)
                         .attr("name", name)
                         .list(
-                            "versions",
+                            Tag::Versions,
                             versions
                                 .iter()
-                                .map(|v| XmlNode::scalar("versions", AttrValue::Int(*v))),
+                                .map(|v| XmlNode::scalar(Tag::Versions, AttrValue::Int(*v))),
                         )
                 }),
         )
@@ -144,7 +144,7 @@ pub(super) async fn token_info(
 ) -> Response {
     offload_response(move || {
         respond(&state, &params, |caller, b| {
-            Ok(b.child(XmlNode::new("tokenInfo").attr("username", &caller.username)))
+            Ok(b.child(XmlNode::new(Tag::TokenInfo).attr("username", &caller.username)))
         })
     })
     .await
@@ -161,7 +161,7 @@ pub(super) async fn get_scan_status(
             // Clients poll this; the track count is all it reports.
             let count = queries::count_tracks(&db.conn, &queries::TrackFilter::default())?;
             Ok(b.child(
-                XmlNode::new("scanStatus")
+                XmlNode::new(Tag::ScanStatus)
                     .attr_bool("scanning", false)
                     .attr_int("count", i64::try_from(count).unwrap_or(i64::MAX)),
             ))
@@ -176,10 +176,10 @@ pub(super) async fn get_genres(
 ) -> Response {
     offload_response(move || {
         respond_db(&state, &params, |db, b| {
-            let mut genres_node = XmlNode::new("genres").array_of("genre");
+            let mut genres_node = XmlNode::new(Tag::Genres).array_of(Tag::Genre);
             for genre in queries::genre_counts(&db.conn)? {
                 genres_node = genres_node.child(
-                    XmlNode::new("genre")
+                    XmlNode::new(Tag::Genre)
                         .attr_int("songCount", genre.tracks)
                         .attr_int("albumCount", genre.albums)
                         // The XSD carries the name as element text; `value` is the

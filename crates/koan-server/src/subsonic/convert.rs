@@ -10,7 +10,7 @@ use super::*;
 /// The OpenSubsonic fields koan has data for are always present, empty when a
 /// track has no value, so a client can tell a supported field from a missing
 /// one; `played` is the exception, absent until the track has been played.
-pub(super) fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlNode {
+pub(super) fn track_node(track: &queries::TrackRow, tag: Tag, extras: &SongExtras) -> XmlNode {
     let duration_secs = track.duration_ms.map(|ms| ms / 1000);
     let (suffix, content_type) = track
         .codec
@@ -77,9 +77,9 @@ pub(super) fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtr
             "userRating",
             extras.rating.get(&track.id).map(|&r| r.into()),
         )
-        .list("genres", track.genre.iter().map(|g| genre_node(g)))
+        .list(Tag::Genres, track.genre.iter().map(|g| genre_node(g)))
         .list(
-            "artists",
+            Tag::Artists,
             credited_or_filed(
                 extras.credits.get(&track.id),
                 track.artist_id.map(|id| (id, track.artist_name.as_str())),
@@ -89,27 +89,27 @@ pub(super) fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtr
     // Only where the album credits its artists one by one: an album filed
     // under one artist names it in `artist` already.
     let album_artists = credit_refs(
-        "albumArtists",
+        Tag::AlbumArtists,
         track.album_id.and_then(|a| extras.album_credits.get(&a)),
         &extras.uids,
     );
     if album_artists.is_empty() {
         node
     } else {
-        node.list("albumArtists", album_artists)
+        node.list(Tag::AlbumArtists, album_artists)
     }
 }
 
 pub(super) fn track_to_xml_node(track: &queries::TrackRow, extras: &SongExtras) -> XmlNode {
-    track_node(track, "song", extras)
+    track_node(track, Tag::Song, extras)
 }
 
 pub(super) fn genre_node(name: &str) -> XmlNode {
-    XmlNode::new("genres").attr("name", name)
+    XmlNode::new(Tag::Genres).attr("name", name)
 }
 
 /// An `ArtistID3` inside a list field, with only its required fields.
-pub(super) fn artist_ref(tag: &str, id: &str, name: &str) -> XmlNode {
+pub(super) fn artist_ref(tag: Tag, id: &str, name: &str) -> XmlNode {
     XmlNode::new(tag).attr("id", id).attr("name", name)
 }
 
@@ -119,7 +119,7 @@ pub(super) fn year_from_date(date: Option<&str>) -> Option<i64> {
 
 /// An OpenSubsonic `ItemDate` from a tag date: `2020`, `2020-05` or
 /// `2020-05-17`, each part given only when it and those before it parse.
-pub(super) fn item_date(tag: &str, date: Option<&str>) -> XmlNode {
+pub(super) fn item_date(tag: Tag, date: Option<&str>) -> XmlNode {
     let mut node = XmlNode::new(tag);
     let date = date.unwrap_or_default();
     let fields = ["year", "month", "day"]
@@ -150,7 +150,7 @@ pub(super) fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras)
         .get(&album.id)
         .map(Vec::as_slice)
         .unwrap_or_default();
-    XmlNode::new("album")
+    XmlNode::new(Tag::Album)
         .attr("id", &extras.uids.album(album.id))
         .attr("name", &album.title)
         .attr("title", &album.title)
@@ -179,10 +179,10 @@ pub(super) fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras)
             "userRating",
             extras.rating.get(&album.id).map(|&r| r.into()),
         )
-        .child(item_date("releaseDate", album.date.as_deref()))
-        .list("genres", genres.iter().map(|g| genre_node(g)))
+        .child(item_date(Tag::ReleaseDate, album.date.as_deref()))
+        .list(Tag::Genres, genres.iter().map(|g| genre_node(g)))
         .list(
-            "artists",
+            Tag::Artists,
             credited_or_filed(
                 extras.credits.get(&album.id),
                 Some((album.artist_id, album.artist_name.as_str())),
@@ -190,19 +190,19 @@ pub(super) fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras)
             ),
         )
         .list(
-            "recordLabels",
+            Tag::RecordLabels,
             album
                 .label
                 .iter()
-                .map(|l| XmlNode::new("recordLabels").attr("name", l)),
+                .map(|l| XmlNode::new(Tag::RecordLabels).attr("name", l)),
         )
         .list(
-            "releaseTypes",
+            Tag::ReleaseTypes,
             album
                 .release_types
                 .iter()
                 .flat_map(|t| t.split(';'))
-                .map(|t| XmlNode::scalar("releaseTypes", AttrValue::Str(t.into()))),
+                .map(|t| XmlNode::scalar(Tag::ReleaseTypes, AttrValue::Str(t.into()))),
         )
 }
 
@@ -215,7 +215,7 @@ pub(super) fn artist_id3_node(id: i64, name: &str, extras: &ArtistExtras) -> Xml
         .map(|(m, s)| (m.as_deref(), s.as_deref()))
         .unwrap_or_default();
     let uid = extras.uids.artist(id);
-    XmlNode::new("artist")
+    XmlNode::new(Tag::Artist)
         .attr("id", &uid)
         .attr("name", name)
         .attr("coverArt", &uid)
@@ -320,18 +320,18 @@ pub(super) fn credited_or_filed(
     filed: Option<(i64, &str)>,
     uids: &Uids,
 ) -> Vec<XmlNode> {
-    let credited = credit_refs("artists", credits, uids);
+    let credited = credit_refs(Tag::Artists, credits, uids);
     if !credited.is_empty() {
         return credited;
     }
     filed
-        .map(|(id, name)| artist_ref("artists", &uids.artist(id), name))
+        .map(|(id, name)| artist_ref(Tag::Artists, &uids.artist(id), name))
         .into_iter()
         .collect()
 }
 
 /// Each credited artist of a song or album, as `tag` elements.
-pub(super) fn credit_refs(tag: &str, credits: Option<&Vec<Credited>>, uids: &Uids) -> Vec<XmlNode> {
+pub(super) fn credit_refs(tag: Tag, credits: Option<&Vec<Credited>>, uids: &Uids) -> Vec<XmlNode> {
     credits
         .into_iter()
         .flatten()
@@ -465,7 +465,7 @@ pub(super) fn artist_extras(
 /// caller's own marks on it as `AlbumID3` carries them.
 pub(super) fn album_child_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode {
     let uids = &extras.uids;
-    XmlNode::new("child")
+    XmlNode::new(Tag::Child)
         .attr("id", &uids.album(album.id))
         .attr("parent", &uids.artist(album.artist_id))
         .attr("title", &album.title)

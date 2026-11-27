@@ -13,10 +13,10 @@ pub(super) async fn get_playlists(
             let lists = queries::list_playlists(&db.conn, user)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-            let mut playlists_node = XmlNode::new("playlists").array_of("playlist");
+            let mut playlists_node = XmlNode::new(Tag::Playlists).array_of(Tag::Playlist);
             for list in &lists {
                 playlists_node = playlists_node.child(playlist_attrs(
-                    XmlNode::new("playlist"),
+                    XmlNode::new(Tag::Playlist),
                     list,
                     &state.username,
                 ));
@@ -58,7 +58,7 @@ pub(super) fn playlist_node(
     list: &queries::PlaylistRow,
     owner: &str,
 ) -> Result<XmlNode, SubsonicError> {
-    let mut node = playlist_attrs(XmlNode::new("playlist"), list, owner).array_of("entry");
+    let mut node = playlist_attrs(XmlNode::new(Tag::Playlist), list, owner).array_of(Tag::Entry);
 
     // Playlist members are `<entry>`, not `<song>` — an XML client shown
     // `<song>` sees an empty playlist.
@@ -66,7 +66,7 @@ pub(super) fn playlist_node(
         .map_err(|e| SubsonicError::internal(e.to_string()))?;
     let extras = song_extras(db, caller, &tracks)?;
     for track in &tracks {
-        node = node.child(track_node(track, "entry", &extras));
+        node = node.child(track_node(track, Tag::Entry, &extras));
     }
 
     Ok(node)

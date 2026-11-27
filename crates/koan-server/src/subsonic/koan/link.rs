@@ -220,7 +220,7 @@ pub(in crate::subsonic) const COMMAND_ANSWER: Duration = Duration::from_secs(4);
 /// An answer as `koanCommand` gives it, the same shape as the link's.
 pub(in crate::subsonic) fn ack_node(outcome: &koan_core::remote::acks::AckOutcome) -> XmlNode {
     use koan_core::remote::acks::AckOutcome;
-    let node = XmlNode::new("koanCommand");
+    let node = XmlNode::new(Tag::KoanCommand);
     match outcome {
         AckOutcome::Done => node.attr("result", "done"),
         AckOutcome::Queued => node.attr("result", "queued"),
