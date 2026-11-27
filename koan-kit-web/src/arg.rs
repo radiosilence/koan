@@ -437,6 +437,7 @@ impl From<&&Markup> for Content<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Wrap as _;
 
     fn text<'a>(text: impl Into<Text<'a>>) -> String {
         text.into().to_string()
@@ -509,7 +510,6 @@ mod tests {
 
     #[test]
     fn a_loop_over_markup_hands_each_to_a_slot() {
-        use crate::Wrap as _;
         let rows = Rows {
             rows: vec![Markup::kit("<b>a</b>".into())],
         };

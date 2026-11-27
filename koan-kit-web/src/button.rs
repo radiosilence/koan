@@ -790,7 +790,7 @@ mod tests {
             button.contains(&format!("data-attr:disabled=\"${busy}\"")),
             "{button}"
         );
-        let other = Button::bordered("retry").post("/scan").to_string();
+        let other = Button::bordered("retry").post("/scan?again").to_string();
         assert_ne!(
             busy,
             signal(&other),
