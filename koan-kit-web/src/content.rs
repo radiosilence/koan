@@ -1,4 +1,5 @@
-//! Content in the kit's shapes: labelled [`Pairs`], a [`Disclosure`] that opens, a [`CopyField`] to take a value from.
+//! Content in the kit's shapes: labelled [`Pairs`], a bulleted [`List`], a [`Disclosure`] that opens, a [`CopyField`] to
+//! take a value from.
 
 use askama::Template;
 
@@ -60,6 +61,59 @@ impl<'a, L: Into<Text<'a>>, V: Into<Content<'a>>> FromIterator<(L, V)> for Pairs
 }
 
 component!(Pairs);
+
+/// Values in a bulleted list, each wrapped anywhere: `kit::List::new(scopes)`.
+///
+/// For values someone else chose, such as the hosts and scopes a consent screen asks about: the marker is what shows
+/// where one value ends and the next begins, so a crafted value cannot pass as two, and a value with no spaces wraps
+/// rather than running off the page. Items a template builds with a loop are the markup of a
+/// `{% filter kit::wrap(list) %}` block, `<li>` elements, after those given. With nothing in it, it draws its
+/// [`empty`](Self::empty) words, if given, as a compact [`Empty`](crate::Empty).
+#[must_use = "a list draws nothing until it is rendered"]
+#[derive(Clone, Debug, Default, Template)]
+#[template(path = "list.html")]
+pub struct List<'a> {
+    items: Vec<Text<'a>>,
+    rows: Markup,
+    strong: bool,
+    empty: Text<'a>,
+    attrs: Attrs<'a>,
+}
+
+impl<'a> List<'a> {
+    /// `items`, in order.
+    pub fn new<T: Into<Text<'a>>>(items: impl IntoIterator<Item = T>) -> Self {
+        Self {
+            items: items.into_iter().map(Into::into).collect(),
+            ..Self::default()
+        }
+    }
+
+    /// Each item in the strong ink, for the values the reader must not miss: where access goes.
+    pub fn strong(mut self) -> Self {
+        self.strong = true;
+        self
+    }
+
+    /// What it says when it holds nothing: `"no scopes"`.
+    pub fn empty(mut self, words: impl Into<Text<'a>>) -> Self {
+        self.empty = words.into();
+        self
+    }
+
+    fn is_empty(&self) -> bool {
+        self.items.is_empty() && self.rows.as_str().trim().is_empty()
+    }
+}
+
+impl Wrap for List<'_> {
+    fn wrap(mut self, content: Markup) -> Self {
+        self.rows = content;
+        self
+    }
+}
+
+component!(List);
 
 /// A summary that opens onto more: `kit::Disclosure::new("files")`.
 ///
@@ -174,6 +228,9 @@ impl Wrap for Disclosure<'_> {
 component!(Disclosure);
 
 /// A value to read or copy, beside the button that copies it: a token, a URL, a command.
+///
+/// A [`description`](Self::description) says what the value is for and where to paste it, above the field, which it
+/// describes as a field's note does.
 #[must_use = "a copy field draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "copy.html")]
@@ -182,6 +239,7 @@ pub struct CopyField<'a> {
     value: Text<'a>,
     button: Text<'a>,
     copied: Text<'a>,
+    description: Text<'a>,
     name: Text<'a>,
     icon: bool,
     compact: bool,
@@ -200,6 +258,7 @@ impl<'a> CopyField<'a> {
             value: value.into(),
             button: button.into(),
             copied: Text::default(),
+            description: Text::default(),
             name: Text::default(),
             icon: false,
             compact: false,
@@ -211,6 +270,13 @@ impl<'a> CopyField<'a> {
     /// meanwhile, as a tick stands in for the glyph.
     pub fn copied(mut self, label: impl Into<Text<'a>>) -> Self {
         self.copied = label.into();
+        self
+    }
+
+    /// What the value is for and where it goes, above the field: `"Paste this URL under Settings → Connectors."`. The
+    /// field is described by it, so a screen reader reads it with the value.
+    pub fn description(mut self, words: impl Into<Text<'a>>) -> Self {
+        self.description = words.into();
         self
     }
 
@@ -237,6 +303,17 @@ impl<'a> CopyField<'a> {
     fn input_id(&self) -> Option<String> {
         (!self.attrs.id().is_empty()).then(|| format!("{}-value", self.attrs.id()))
     }
+
+    /// The description's id: built on the component's id, or else on what it copies, so two on a page differ.
+    fn description_id(&self) -> String {
+        if self.attrs.id().is_empty() {
+            let mut hash = std::hash::DefaultHasher::new();
+            std::hash::Hash::hash(&(self.label.as_str(), self.value.as_str()), &mut hash);
+            format!("kit-copy-{:x}", std::hash::Hasher::finish(&hash))
+        } else {
+            format!("{}-description", self.attrs.id())
+        }
+    }
 }
 
 component!(CopyField);
@@ -256,6 +333,21 @@ mod tests {
         let html = pairs.to_string();
         assert!(html.contains("<dt>size</dt><dd>4 GB</dd>"), "{html}");
         assert!(html.contains("<dd><a href=\"/x\">x</a></dd>"), "{html}");
+    }
+
+    #[test]
+    fn a_list_marks_where_each_value_ends() {
+        let html = List::new(["mail.read", "a<b"]).strong().to_string();
+        assert_eq!(
+            html,
+            "<ul class=\"list\"><li><strong>mail.read</strong></li><li><strong>a&#60;b</strong></li></ul>"
+        );
+        let none: Vec<String> = Vec::new();
+        let empty = List::new(none).empty("no scopes").to_string();
+        assert_eq!(
+            empty,
+            "<div class=\"empty compact\"><strong>no scopes</strong></div>"
+        );
     }
 
     #[test]
@@ -346,6 +438,30 @@ mod tests {
             .to_string();
         assert!(html.contains("id=\"mcp-value\" name=\"url\""), "{html}");
         assert!(html.contains("aria-label=\"copy\""), "{html}");
+    }
+
+    #[test]
+    fn a_copy_field_is_described_by_its_description() {
+        let html = CopyField::new("connector url", "https://x", "copy")
+            .id("connector")
+            .description("Paste it under Settings → Connectors.")
+            .to_string();
+        assert!(
+            html.contains("<p id=\"connector-description\" class=\"description\">Paste it under"),
+            "{html}"
+        );
+        assert!(
+            html.contains("aria-describedby=\"connector-description\""),
+            "{html}"
+        );
+        let anonymous = CopyField::new("a", "b", "copy")
+            .description("c")
+            .to_string();
+        let id = CopyField::new("a", "b", "copy").description_id();
+        assert!(
+            anonymous.contains(&format!("aria-describedby=\"{id}\"")),
+            "{anonymous}"
+        );
     }
 
     #[test]

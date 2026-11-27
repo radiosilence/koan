@@ -1,0 +1,5 @@
+{% filter kit::wrap(kit::TopBar::new("dither", "#frame").home_label("dither: your albums")) %}
+  {{ kit::Link::new("accounts", "#frame") }}
+  {{ kit::Link::new("jc", "#frame").current(true) }}
+  {{ kit::Link::new("sign out", "#frame") }}
+{% endfilter %}

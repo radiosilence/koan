@@ -262,6 +262,24 @@
     @apply text-warn;
   }
 
+  /* A field of rows of one input: the rows stacked, each input filling its row, the add button at its own width under
+   * them. The only row cannot be removed. */
+  .field.repeat > div {
+    @apply grid gap-2;
+  }
+
+  .field.repeat > div > .controls > input {
+    @apply min-w-0 flex-1;
+  }
+
+  .field.repeat > div > .controls:only-child > [data-repeat="remove"] {
+    @apply hidden;
+  }
+
+  .field.repeat > [data-repeat="add"] {
+    @apply justify-self-start;
+  }
+
   /* A field joined to the action it feeds: the two share a border and read as one control. The field takes the spare
    * width and the action keeps its own; a focused part is lifted so its outline is not hidden under its neighbour. */
   .combo {
@@ -281,6 +299,15 @@
   /* Its outline inside it, so it does not cross the neighbour it is joined to. */
   .combo > :focus-visible {
     @apply relative z-10 -outline-offset-2;
+  }
+
+  /* A value to copy with what it is for above it, in a field's note's type but leading, since it is read first. */
+  .copy {
+    @apply grid gap-1.5;
+  }
+
+  .copy > .description {
+    @apply m-0 text-fine text-muted;
   }
 
   /* A toggle in a form: the label leads, the box sits at the trailing edge, where a switch would. */
@@ -358,6 +385,12 @@
 
   :is(.status, .meter).wait {
     --tone: var(--muted);
+  }
+
+  /* Settled but not verified: not `ok`, which would claim it works, and not `wait`, which reads as still checking once
+   * reduced motion stills the ensō. */
+  :is(.status, .meter).neutral {
+    --tone: var(--ink);
   }
 
   /* The progress meter: a hairline, the part done thicker in its tone (the accent unless a status says otherwise).
@@ -504,6 +537,98 @@
     @apply flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 py-2;
   }
 
+  /* Values someone else chose, each behind a square marker and wrapped anywhere, so where one ends and the next begins
+   * is never in doubt. */
+  ul.list {
+    @apply m-0 list-[square] space-y-1 ps-[2ch];
+  }
+
+  ul.list > li {
+    @apply wrap-anywhere marker:text-muted;
+  }
+
+  /* Markdown rendered to HTML, such as a description: headings, lists, quotes, code and tables in the kit's scale. A
+   * heading inside keeps its case, since a person wrote it. */
+  .prose {
+    @apply wrap-anywhere;
+  }
+
+  .prose > :first-child {
+    @apply mt-0;
+  }
+
+  .prose > :last-child {
+    @apply mb-0;
+  }
+
+  .prose :is(h1, h2, h3, h4, h5, h6) {
+    @apply mt-[1.5em] mb-[0.5em] text-body font-normal text-strong normal-case;
+  }
+
+  .prose :is(h1, h2) {
+    @apply text-title-sm font-light;
+  }
+
+  .prose :is(ul, ol) {
+    @apply my-[1em] ps-[2ch];
+  }
+
+  .prose ul {
+    @apply list-[square];
+  }
+
+  .prose ol {
+    @apply list-decimal;
+  }
+
+  .prose li > :is(ul, ol) {
+    @apply my-0;
+  }
+
+  .prose li:has(> input[type="checkbox"]) {
+    @apply -ms-[2ch] list-none;
+  }
+
+  .prose blockquote {
+    @apply my-[1em] border-s-2 border-rule ps-[2ch] text-muted;
+  }
+
+  .prose :is(code, pre) {
+    @apply bg-surface text-[0.92em];
+  }
+
+  .prose code {
+    @apply px-[0.3ch];
+  }
+
+  .prose pre {
+    @apply my-[1em] overflow-x-auto p-3 wrap-normal;
+  }
+
+  .prose pre code {
+    @apply bg-transparent p-0 text-[1em];
+  }
+
+  .prose hr {
+    @apply my-[1.5em] border-rule;
+  }
+
+  .prose table {
+    @apply my-[1em] block overflow-x-auto border-collapse;
+  }
+
+  .prose :is(th, td) {
+    @apply border border-rule px-2 py-1 text-start;
+  }
+
+  .prose th {
+    @apply font-normal text-strong;
+  }
+
+  .prose a {
+    @apply underline;
+  }
+
   /* Technical data read across rows: compact, figures right-aligned in the `.num` columns. */
   table.dense {
     @apply w-full border-collapse text-meta;
@@ -554,8 +679,8 @@
   }
 
   /* A dialog that rises from the bottom on a phone and is a centred panel wherever there is a pointer. iOS shrinks the
-   * visual viewport for its keyboard and not the layout one fixed elements sit in, so a page script that measures the
-   * difference sets `--keyboard-inset` to keep the sheet above the keyboard. */
+   * visual viewport for its keyboard and not the layout one fixed elements sit in, so the kit's sheets measure the
+   * difference and set `--keyboard-inset` to keep the sheet above the keyboard. */
   dialog.sheet {
     position: fixed;
     inset: auto 0 var(--keyboard-inset, 0px) 0;
@@ -653,6 +778,23 @@
   /* The link a keyboard reaches first: out of sight until it is focused, then over the page's top-left corner. */
   .skip {
     @apply sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-bg focus:px-3 focus:py-2;
+  }
+
+  /* The bar over an app's pages: the wordmark leads, everything after it sits at the far end. It stays at the top as the
+   * page scrolls, on the ground so the page passes under it, and clear of a phone's notch. */
+  .topbar {
+    @apply sticky top-0 z-20 flex items-center gap-4 border-b border-rule bg-bg px-[22px] py-3 text-meta sm:px-8;
+    padding-top: max(12px, env(safe-area-inset-top));
+  }
+
+  .topbar > .wordmark {
+    @apply me-auto text-title-sm font-extralight text-strong lowercase hover:no-underline;
+  }
+
+  /* The foot of an app's pages: centred fine print, padded clear of a phone's home indicator. */
+  .footer {
+    @apply pt-6 text-center text-fine;
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
   }
 
   /* The release a page was built from: fine print that leads somewhere, receding until it is hovered. */

@@ -54,6 +54,7 @@ async fn main() -> std::io::Result<()> {
         .route("/stub/model", get(model))
         .route("/stub/error", get(error))
         .route("/stub/files", get(files))
+        .route("/stub/sheet", get(sheet))
         .route("/stub/search", get(search));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     println!("the storybook, live, on http://127.0.0.1:{port}");
@@ -155,6 +156,20 @@ async fn files() -> Response {
         .id("story-files")
         .patch()
         .into()])
+}
+
+/// The sheet that loads, filled once it has read its body.
+async fn sheet() -> Response {
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    let list = Rows {
+        id: "",
+        rows: vec!["Holiday, 2024", "Untitled", "Garden"],
+    };
+    events([kit::Sheet::fill(
+        "story-loads",
+        kit::Markup::render(&list).expect("rows render"),
+    )
+    .into()])
 }
 
 /// A live search's answer: the albums whose name holds the query.

@@ -1,0 +1,2 @@
+{#- A sheet's body alone, replacing the one inside it: what it read, or empty as it closes. -#}
+<section{% if close %} data-init="el.closest('dialog').close()"{% endif %}>{{ body }}</section>

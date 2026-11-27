@@ -1,0 +1,20 @@
+{#- Rows of one input, a group named by the label and described by the note. The rows are the same markup, so a new one
+    is a clone of the last, emptied; nothing in a row carries an expression, since the group's listeners act for every
+    row, cloned ones too. A paste holding several values fills its row and the rows after it; a row's paste button
+    reads the clipboard into that row, the whole text when it does not split. Remove is hidden on the only row. -#}
+<div class="field repeat{{ attrs.classes() }}" role="group" aria-labelledby="{{ self.base() }}-label"{% if !hint.is_empty() %} aria-describedby="{{ self.base() }}-note"{% endif %}{{ attrs }}
+  data-split="{% if words %}words{% else %}lines{% endif %}"
+  data-init="el._kitrow = r => (n => (n.querySelector('input').value = '', r.after(n), n))(r.cloneNode(true)), el._kitsplit = t => t.split(el.dataset.split == 'words' ? /\s+/ : /\r?\n/).map(v => v.trim()).filter(Boolean), el._kitfill = (r, v) => v.slice(1).reduce((p, x) => (p = el._kitrow(p), p.querySelector('input').value = x, p), (r.querySelector('input').value = v[0] ?? '', r))"
+  data-on:click="(b => b &amp;&amp; (r => b.dataset.repeat == 'remove' ? r.remove() : b.dataset.repeat == 'paste' ? navigator.clipboard?.readText().then(t => el._kitfill(r, (v => v.length ? v : [t.trim()])(el._kitsplit(t))), () => 0) : el._kitrow(el.querySelector(':scope > div').lastElementChild).querySelector('input').focus())(b.closest('[data-repeat-row]')))(evt.target.closest('[data-repeat]'))"
+  data-on:paste="(r => r &amp;&amp; (v => v.length > 1 &amp;&amp; (evt.preventDefault(), el._kitfill(r, v)))(el._kitsplit(evt.clipboardData?.getData('text') ?? '')))(evt.target.closest('[data-repeat-row]'))">
+  <span id="{{ self.base() }}-label">{{ label }}</span>
+  <div>
+  {%- for row in self.rows() %}
+    <div class="controls" data-repeat-row>{{ row }}{% if let Some(paste) = self.paste_button() %}{{ paste }}{% endif %}{{ self.remove_button() }}</div>
+  {%- endfor %}
+  </div>
+  {{ self.add_button() }}
+  {%- if let Some(text) = hint.present() %}
+  <small id="{{ self.base() }}-note">{{ text }}</small>
+  {%- endif %}
+</div>

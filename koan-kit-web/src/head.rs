@@ -1,5 +1,6 @@
 //! What every page carries around its content: the [`Head`] inside the app's `<head>`, an [`ImportMap`] for its
-//! scripts, the [`SkipLink`] that opens its body, and the [`Release`] link its footer shows.
+//! scripts, the [`SkipLink`] that opens its body, the [`TopBar`] over it, and the [`Footer`] under it with the
+//! [`Release`] link.
 //!
 //! askama resolves `{% extends %}` against the app's own templates, so an app keeps its own base template and places
 //! these in it.
@@ -11,9 +12,10 @@ use askama::filters::HtmlSafe;
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
 
-use crate::arg::Text;
+use crate::arg::{Content, Markup, Text};
 use crate::attrs::{Attrs, component};
 use crate::font;
+use crate::slot::Wrap;
 
 /// The page's `<head>` contents, before the app's own: `<head>{{ head }}</head>`.
 ///
@@ -201,6 +203,84 @@ impl<'a> Release<'a> {
 
 component!(Release);
 
+/// The bar along the top of an app's pages: its name, leading home, and its navigation and actions at the far end.
+///
+/// What follows the name is the markup of a `{% filter kit::wrap(bar) %}` block: links and buttons, laid out in a row.
+/// It stays at the top as the page scrolls, clear of a phone's notch.
+#[must_use = "a top bar draws nothing until it is rendered"]
+#[derive(Clone, Debug, Template)]
+#[template(path = "topbar.html")]
+pub struct TopBar<'a> {
+    name: Text<'a>,
+    home: Text<'a>,
+    home_label: Text<'a>,
+    items: Markup,
+    attrs: Attrs<'a>,
+}
+
+impl<'a> TopBar<'a> {
+    /// The app's `name`, its wordmark, linking to `home`.
+    pub fn new(name: impl Into<Text<'a>>, home: impl Into<Text<'a>>) -> Self {
+        Self {
+            name: name.into(),
+            home: home.into(),
+            home_label: Text::default(),
+            items: Markup::default(),
+            attrs: Attrs::default(),
+        }
+    }
+
+    /// What the wordmark's link is named for a screen reader, when the name alone does not say where it goes:
+    /// `"dither: your albums"`.
+    pub fn home_label(mut self, label: impl Into<Text<'a>>) -> Self {
+        self.home_label = label.into();
+        self
+    }
+}
+
+impl Wrap for TopBar<'_> {
+    fn wrap(mut self, content: Markup) -> Self {
+        self.items = content;
+        self
+    }
+}
+
+component!(TopBar);
+
+/// The foot of an app's pages: what it holds, centred, and padded clear of a phone's home indicator.
+///
+/// Its content is [`body`](Self::body), or the markup of a `{% filter kit::wrap(footer) %}` block, usually the
+/// [`Release`]: `kit::Footer::new().body(kit::Release::new(…))`.
+#[must_use = "a footer draws nothing until it is rendered"]
+#[derive(Clone, Debug, Default, Template)]
+#[template(path = "footer.html")]
+pub struct Footer<'a> {
+    body: Content<'a>,
+    attrs: Attrs<'a>,
+}
+
+impl<'a> Footer<'a> {
+    /// An empty footer.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// What it holds.
+    pub fn body(mut self, body: impl Into<Content<'a>>) -> Self {
+        self.body = body.into();
+        self
+    }
+}
+
+impl Wrap for Footer<'_> {
+    fn wrap(mut self, content: Markup) -> Self {
+        self.body = content.into();
+        self
+    }
+}
+
+component!(Footer);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +348,31 @@ mod tests {
                 "{head}"
             );
         }
+    }
+
+    #[test]
+    fn a_top_bar_leads_home_and_holds_the_rest() {
+        let bar = TopBar::new("dither", "/")
+            .home_label("dither: your albums")
+            .wrap(Markup::kit("<a href=\"/account\">jc</a>".into()))
+            .to_string();
+        assert!(bar.starts_with("<header class=\"topbar\">"), "{bar}");
+        assert!(
+            bar.contains(
+                "<a class=\"wordmark\" href=\"/\" aria-label=\"dither: your albums\">dither</a>"
+            ),
+            "{bar}"
+        );
+        assert!(bar.contains("<a href=\"/account\">jc</a>"), "{bar}");
+    }
+
+    #[test]
+    fn a_footer_holds_the_release() {
+        let footer = Footer::new()
+            .body(Release::new("slsk", "1.0.0", "https://x"))
+            .to_string();
+        assert!(footer.starts_with("<footer class=\"footer\">"), "{footer}");
+        assert!(footer.contains("class=\"release\""), "{footer}");
     }
 
     #[test]

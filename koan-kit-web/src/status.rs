@@ -11,7 +11,7 @@ use crate::action::Busy;
 use crate::arg::{Amount, Flag, Text};
 use crate::attrs::{Attrs, component};
 
-/// The tone of a state: fine, a warning, an error, or waiting.
+/// The tone of a state: fine, a warning, an error, waiting, or settled but unverified.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tone {
     /// Connected, done, moving: the theme's mint in every app, whatever its accent.
@@ -23,6 +23,9 @@ pub enum Tone {
     /// Queued, unknown, not started: muted.
     #[default]
     Wait,
+    /// Settled but not verified, such as a connector that is configured but whose health is unknown: in the ink, so
+    /// it reads neither as working nor as still being found out.
+    Neutral,
 }
 
 impl Tone {
@@ -34,6 +37,7 @@ impl Tone {
             Self::Warn => "warn",
             Self::Bad => "bad",
             Self::Wait => "wait",
+            Self::Neutral => "neutral",
         }
     }
 }
@@ -90,6 +94,11 @@ impl<'a> Status<'a> {
     /// Queued, unknown, not started.
     pub fn wait(word: impl Into<Text<'a>>) -> Self {
         Self::new(Tone::Wait, word)
+    }
+
+    /// Settled but not verified: configured, its health unknown.
+    pub fn neutral(word: impl Into<Text<'a>>) -> Self {
+        Self::new(Tone::Neutral, word)
     }
 
     /// Still being found out: the mark is the ensō, turning, or under reduced motion standing still.
@@ -189,6 +198,10 @@ mod tests {
         assert_eq!(
             Status::ok("connected").to_string(),
             "<span class=\"status ok\">connected</span>"
+        );
+        assert_eq!(
+            Status::neutral("configured").to_string(),
+            "<span class=\"status neutral\">configured</span>"
         );
         let busy = Status::wait("checking").busy(true).to_string();
         assert_eq!(busy, "<span class=\"status wait busy\">checking</span>");

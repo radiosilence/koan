@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.0
+
+### Breaking
+
+- **`Tone` has a fifth variant, `Neutral`,** so a `match` over it needs an arm for it.
+
+### Added
+
+- **`Time`, an instant in the reader's zone.** Drawn as a `<time>` with an ISO 8601 `datetime` and the UTC reading as its text, then rewritten by the browser in the reader's zone and language: date and time, `date`, `clock` (to the second, 24-hour, for a log line) or `relative` ("3 days ago"), which is worked out against the reader's clock and recomputed each minute. The server needs no knowledge of the reader's zone, and an app no expression of its own.
+- **`List`, a bulleted list for values someone else chose.** Each value behind a square marker and wrapped anywhere, so a crafted value cannot pass as two and an unbroken one cannot run off the page; `strong` for the values the reader must not miss, `empty` for what it says when there are none.
+- **`.prose`, for rendered Markdown:** headings, lists, quotes, code, rules and tables in the kit's scale.
+- **`RepeatField`, a field of any number of one value.** Rows of one input sent under one name, which the kit adds, removes and fills from a paste holding several values (split on lines, or on spaces with `split_words`), with an optional button per row that reads the clipboard into it.
+- **`CopyField::description`.** What the value is for and where to paste it, above the field, which it describes through `aria-describedby`.
+- **`Status::neutral`, for a state that is settled but not verified,** drawn in the ink: neither `ok`, which would claim it works, nor `wait`, which reads as still checking.
+- **`TopBar` and `Footer`, the frame of an app's pages.** The bar holds the wordmark leading home and the app's links and actions at the far end, stays at the top and clears a phone's notch; the footer clears its home indicator.
+- **`Sheet::loads(url)`, a sheet whose body the server draws as it opens.** Each opening empties it, shows the ensō and fetches; the handler answers with `Sheet::fill(id, body)`, and an action done with it with `Sheet::dismiss(id)`, which closes it.
+
+### Changed
+
+- **Every sheet keeps above an on-screen keyboard by itself.** `Sheet` and `Confirm` publish `--keyboard-inset` from `visualViewport`, which the stylesheet already read, so an app no longer measures it.
+
 ## 0.8.1
 
 ### Fixed

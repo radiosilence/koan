@@ -137,6 +137,14 @@ pub fn sections() -> Vec<Section> {
             ],
         },
         Section {
+            title: "frame",
+            intro: "The bar over an app's pages and the foot under them, each clear of a phone's notch and home indicator.",
+            entries: vec![
+                story!(Frame, "story/topbar.html"),
+                entry!(kit::Footer::new().body(kit::Release::new("koan-kit-web", "0.9.0", "https://github.com/radiosilence/koan"))),
+            ],
+        },
+        Section {
             title: "navigation",
             intro: "Tabs, cards and lists whose links load in place. One Navigation in the shell loads every link of a marked region in place, and Back and Forward with them.",
             entries: vec![
@@ -185,6 +193,10 @@ pub fn sections() -> Vec<Section> {
                     .action(kit::Button::primary("add").closes("story-sheet"))),
                 entry!(kit::Button::bordered("open a wrapped sheet").opens("story-wrapped")),
                 story!(Wrapped, "story/wrap.html"),
+                entry!(kit::Button::bordered("move to…").opens("story-loads")),
+                entry!(kit::Sheet::new("story-loads", "move to")
+                    .loads("/stub/sheet")
+                    .action(kit::Button::quiet("cancel").closes("story-loads"))),
             ],
         },
         Section {
@@ -211,6 +223,12 @@ pub fn sections() -> Vec<Section> {
                     kit::Input::search("query").value("Artist Album").label("search"),
                     kit::Button::primary("grab")
                 )),
+                entry!(kit::RepeatField::new(
+                    "magnet links",
+                    kit::Input::url("magnet").placeholder("paste a magnet link"),
+                    "add another",
+                    "remove this link"
+                ).values(["magnet:?xt=urn:btih:1", "magnet:?xt=urn:btih:2"]).paste("paste from the clipboard").split_words().hint("Paste several at once and each takes a row.")),
             ],
         },
         Section {
@@ -253,6 +271,7 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Status::warn("not configured")),
                 entry!(kit::Status::bad("rejected")),
                 entry!(kit::Status::wait("queued")),
+                entry!(kit::Status::neutral("configured")),
                 entry!(kit::Status::wait("checking").busy(true)),
                 entry!(kit::Status::wait("checking").loads("/stub/status").id("story-status")),
                 entry!(kit::Spinner::new()),
@@ -282,7 +301,7 @@ pub fn sections() -> Vec<Section> {
         },
         Section {
             title: "content",
-            intro: "Labelled pairs, a disclosure that opens or loads, and a value to copy.",
+            intro: "Labelled pairs, a bulleted list of values, times in the reader's zone, rendered Markdown, a disclosure that opens or loads, and a value to copy.",
             entries: vec![
                 entry!(kit::Pairs::new()
                     .pair("format", "FLAC 24/96")
@@ -294,10 +313,21 @@ pub fn sections() -> Vec<Section> {
                     "story/pairs.html",
                     referrers: Vec<(&'static str, u32)> = vec![("example.com", 30), ("other sites", 12)]
                 ),
+                entry!(kit::List::new(["mail.example.com", "calendar.read", "an.unbroken.value.that.wraps.anywhere.rather.than.running.off.the.page"]).strong()),
+                entry!(kit::List::new(Vec::<&str>::new()).empty("no scopes asked for")),
+                entry!(kit::Time::millis(1_795_791_315_000)),
+                entry!(kit::Time::millis(1_795_791_315_000).date()),
+                entry!(kit::Time::millis(1_795_791_315_000).clock()),
+                entry!(kit::Time::millis(1_795_791_315_000).relative()),
+                story!(Prose, "story/prose.html"),
                 entry!(kit::Disclosure::new("connection details").body("What only some readers need.")),
                 entry!(kit::Disclosure::new("files").loads("/stub/files", "Reading…").id("story-files")),
                 story!(Summary, "story/summary.html"),
                 entry!(kit::CopyField::new("mcp url", "https://mcp.example.com/mcp/github", "copy").copied("copied")),
+                entry!(kit::CopyField::new("connector url", "https://mcp.example.com/mcp/github", "copy")
+                    .copied("copied")
+                    .description("Settings → Connectors → Add custom connector, paste this URL, and sign in when prompted.")
+                    .id("story-connector")),
                 entry!(kit::Qr::new("https://koan.rocks/join/x1").expect("fits").label("invite link")),
                 entry!(kit::CopyField::new("share link", "https://dither.example/a/x1", "copy").copied("copied").icon_only().name("link").id("story-share")),
             ],
