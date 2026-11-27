@@ -102,7 +102,8 @@ component!(Notice);
 /// Datastar drops the body of an answer that is not a success and retries a lost connection quietly, so a request that
 /// failed would say nothing. The region says it: [`failed`](Self::failed) for an answer that is an error,
 /// [`unreachable`](Self::unreachable) once the retries are spent, and [`sign_in`](Self::sign_in) for a 401, which goes
-/// to the sign-in page rather than saying anything.
+/// to the sign-in page rather than saying anything. These listen from a hidden element placed beside the region, which
+/// no flash replaces, so they are given to the region in the shell alone.
 #[must_use = "a flash draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "flash.html")]

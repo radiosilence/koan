@@ -17,6 +17,10 @@
 - **`TopBar` and `Footer`, the frame of an app's pages.** The bar holds the wordmark leading home and the app's links and actions at the far end, stays at the top and clears a phone's notch; the footer clears its home indicator.
 - **`Sheet::loads(url)`, a sheet whose body the server draws as it opens.** Each opening empties it, shows the ensō and fetches; the handler answers with `Sheet::fill(id, body)`, and an action done with it with `Sheet::dismiss(id)`, which closes it.
 
+### Fixed
+
+- **A flash no longer strips the region's failure handlers.** `Flash::region().failed(…).unreachable(…).sign_in(…)` listened on `#flash`, which every `Flash::ok` or `Flash::bad` answer replaces, so after the first flash a failed request, a lost connection or a 401 said nothing. The handlers now listen from `#flash-failures`, a hidden element beside the region that no flash touches; an app that redrew them on every flash can stop.
+
 ### Changed
 
 - **Every sheet keeps above an on-screen keyboard by itself.** `Sheet` and `Confirm` publish `--keyboard-inset` from `visualViewport`, which the stylesheet already read, so an app no longer measures it.

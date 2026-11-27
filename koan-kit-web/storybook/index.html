@@ -996,8 +996,10 @@ None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek
       data-text="$_kitconfirm.yes" data-on:click="$_kitconfirm.form ? @post($_kitconfirm.url, {contentType: 'form', selector: '#' + CSS.escape($_kitconfirm.form)}) : @post($_kitconfirm.url)"></button>
   </footer>
 </dialog>
-<div id="flash" role="status" data-failed="That did not work. Try again." data-unreachable="The storybook&#39;s server could not be reached."
-  data-on:datastar-fetch__document="(d => d.type == 'error' &amp;&amp; d.argsRaw.status == '401' &amp;&amp; el.dataset.signIn ? location.assign(el.dataset.signIn) : (m => m &amp;&amp; dispatchEvent(new CustomEvent('kit-flash', {detail: {message: m, bad: true}})))(d.type == 'error' ? el.dataset.failed : d.type == 'retries-failed' ? el.dataset.unreachable : ''))(evt.detail)"
+
+<div id="flash-failures" hidden data-failed="That did not work. Try again." data-unreachable="The storybook&#39;s server could not be reached."
+  data-on:datastar-fetch__document="(d => d.type == 'error' &amp;&amp; d.argsRaw.status == '401' &amp;&amp; el.dataset.signIn ? location.assign(el.dataset.signIn) : (m => m &amp;&amp; dispatchEvent(new CustomEvent('kit-flash', {detail: {message: m, bad: true}})))(d.type == 'error' ? el.dataset.failed : d.type == 'retries-failed' ? el.dataset.unreachable : ''))(evt.detail)"></div>
+<div id="flash" role="status"
   data-on:kit-flash__window="(d => (el.replaceChildren(Object.assign(document.createElement('p'), {id: 'flash-' + Date.now(), className: d.bad ? 'toast bad' : d.stays || d.href ? 'toast' : 'toast brief', textContent: d.message})), d.bad &amp;&amp; el.firstChild.setAttribute('role', 'alert'), d.href &amp;&amp; el.firstChild.append(' ', Object.assign(document.createElement('a'), {href: d.href, textContent: d.link || d.href})), (d.bad || d.stays || d.href) &amp;&amp; el.firstChild.addEventListener('click', e => e.target.closest('a') || e.currentTarget.remove())))(evt.detail)"></div>
 <div hidden id="kit-navigation" data-indicator="_kitnavbusy"
   data-init="el._kitshown = location.pathname + location.search"
