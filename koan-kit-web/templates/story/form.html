@@ -1,0 +1,6 @@
+{% let form = kit::Form::post("/stub/slow").id("story-form") %}
+<form {{ form.attrs() }}>
+  {{ form.field(kit::Field::text("name", "name").required().hint("What the server calls itself.")) }}
+  {{ kit::Toggle::new("public", "listed publicly") }}
+  {{ form.submit(kit::Button::primary("save")) }}
+</form>

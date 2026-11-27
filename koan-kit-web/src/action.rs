@@ -1,10 +1,11 @@
 //! What a control asks of the server, and the signal that says it is asking.
 //!
 //! A control that sends a request shows busy for exactly as long as its own request runs. Datastar's
-//! `data-indicator` counts only requests raised by the element that carries it, so the signal can be named for the
-//! request: two controls posting the same thing share it, and any other two never do. The name is a hash of the
-//! method and the URL, in lowercase hex, since HTML lowercases attribute names and a key with capitals would declare
-//! one signal and read another. Its leading `_` keeps it out of every request Datastar sends.
+//! `data-indicator` counts only requests raised by the element that carries it, so the signal is named for the
+//! control: a hash of what it is (its method, URL, form, group, id and label), in lowercase hex, since HTML lowercases
+//! attribute names and a key with capitals would declare one signal and read another. The same control drawn twice
+//! names the same signal, so a fragment a live stream draws again is byte for byte the one it drew before, and a redraw
+//! landing while a request runs leaves its spinner alone. Its leading `_` keeps it out of every request Datastar sends.
 
 use std::cell::Cell;
 use std::collections::hash_map::RandomState;
@@ -40,11 +41,12 @@ impl Method {
 
 /// The signal a request's control is busy by: `_busy` and twelve hex digits.
 ///
-/// Each control has a signal of its own by default. Datastar's indicator sets its signal false whenever an element
-/// carrying it is bound or removed, so two controls sharing one would clear each other's busy state mid-request when a
-/// patch adds or removes either. A key names a signal several controls share on purpose; those send their requests
-/// with Datastar's cancellation off, since it keys running requests by method and URL, and one row's press would
-/// otherwise abort another's.
+/// Each control has a signal of its own, named by what it is. Datastar's indicator sets its signal false whenever an
+/// element carrying it is bound or removed, so two controls sharing one would clear each other's busy state mid-request
+/// when a patch adds or removes either; two controls on a page that are alike in every part (one label, one URL) are
+/// told apart by an id. A key names a signal several controls share on purpose; those send their requests with
+/// Datastar's cancellation off, since it keys running requests by method and URL, and one row's press would otherwise
+/// abort another's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Busy {
     /// This control's alone.
@@ -54,9 +56,12 @@ pub(crate) enum Busy {
 }
 
 impl Busy {
-    /// A signal no other control on the page has.
-    pub(crate) fn own() -> Self {
-        Self::Own(serial() & 0xffff_ffff_ffff)
+    /// The signal of the control made of `parts`: the same parts name the same signal on every render.
+    pub(crate) fn own(parts: &[&str]) -> Self {
+        let bytes = parts
+            .iter()
+            .flat_map(|part| part.as_bytes().iter().chain(std::iter::once(&0)));
+        Self::Own(fnv1a(b"own ".iter().chain(bytes)) & 0xffff_ffff_ffff)
     }
 
     /// The signal named by `key`, shared by every control given it.
@@ -82,8 +87,8 @@ impl fmt::Display for Busy {
 }
 
 thread_local! {
-    /// A per-thread random seed and a count, so names differ across renders, threads and server restarts, a tab
-    /// kept open across a restart included.
+    /// A per-thread random seed and a count, so a flash's id differs across renders, threads and server restarts, a
+    /// tab kept open across a restart included.
     static SERIAL: Cell<(u64, u64)> = Cell::new((RandomState::new().build_hasher().finish(), 0));
 }
 
@@ -96,7 +101,7 @@ pub(crate) fn serial() -> u64 {
     })
 }
 
-/// Makes this thread's names repeat from the start: the storybook is written the same way every time.
+/// Makes this thread's serials repeat from the start: the storybook is written the same way every time.
 #[cfg(any(test, feature = "storybook"))]
 pub(crate) fn repeat_serials() {
     SERIAL.with(|serial| serial.set((0, 0)));
@@ -115,15 +120,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn two_controls_never_share_a_busy_signal_unless_keyed() {
-        assert_ne!(Busy::own(), Busy::own());
+    fn a_control_is_named_by_what_it_is() {
+        assert_eq!(Busy::own(&["post", "/scan"]), Busy::own(&["post", "/scan"]));
+        assert_ne!(
+            Busy::own(&["post", "/scan"]),
+            Busy::own(&["post", "/scan", "again"])
+        );
+        assert_ne!(
+            Busy::own(&["post", "/a", "b"]),
+            Busy::own(&["post", "/a b"]),
+            "parts are kept apart"
+        );
         assert_eq!(Busy::keyed("card-1"), Busy::keyed("card-1"));
         assert_ne!(Busy::keyed("card-1"), Busy::keyed("card-2"));
     }
 
     #[test]
     fn a_busy_signal_survives_html_lowercasing() {
-        for busy in [Busy::own(), Busy::keyed("Row-ABC")] {
+        for busy in [Busy::own(&["POST", "/A"]), Busy::keyed("Row-ABC")] {
             let name = busy.to_string();
             assert_eq!(
                 name,
@@ -143,6 +157,6 @@ mod tests {
             Busy::keyed("x").options(),
             "requestCancellation: 'disabled'"
         );
-        assert_eq!(Busy::own().options(), "");
+        assert_eq!(Busy::own(&[]).options(), "");
     }
 }

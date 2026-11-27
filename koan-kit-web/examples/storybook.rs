@@ -9,12 +9,13 @@
 //! talks to the stub handlers here, which wait a moment so a busy button, a question, a preview and a live search can
 //! be watched. Serving reads the compiled stylesheet, `storybook/out.css`, which `mise run storybook` makes.
 
-use std::fmt::Write as _;
 use std::time::Duration;
+
+use askama::Template;
 
 use askama_datastar::{Html, events, require_datastar_on_post, script};
 use axum::Router;
-use axum::extract::Query;
+use axum::extract::{OriginalUri, Query};
 use axum::http::header;
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
@@ -50,6 +51,8 @@ async fn main() -> std::io::Result<()> {
         .route("/stub/place", get(place))
         .route("/stub/preview", get(preview))
         .route("/stub/status", get(status))
+        .route("/stub/model", get(model))
+        .route("/stub/error", get(error))
         .route("/stub/files", get(files))
         .route("/stub/search", get(search));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
@@ -89,9 +92,13 @@ async fn moved() -> Response {
 }
 
 /// A page read in place: its answer, a moment later, says so.
-async fn place() -> Response {
+async fn place(OriginalUri(uri): OriginalUri) -> Response {
     tokio::time::sleep(Duration::from_millis(900)).await;
-    events([kit::Flash::ok("Loaded in place.").patch().into()])
+    let url = serde_json::json!({ "url": askama_datastar::address(&uri) });
+    events([
+        kit::Flash::ok("Loaded in place.").patch().into(),
+        askama_datastar::PatchSignals::new(url.to_string()).into(),
+    ])
 }
 
 async fn failed() -> Response {
@@ -119,14 +126,31 @@ async fn status() -> Response {
         .into()])
 }
 
+/// The field that loads, answered with itself, settled.
+async fn model() -> Response {
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    events([
+        kit::Field::select("model", "model", ["opus", "sonnet", "haiku"])
+            .id("story-model")
+            .patch()
+            .into(),
+    ])
+}
+
+/// A request the server fails, which the page's flash region says over the page.
+async fn error() -> Response {
+    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "failed").into_response()
+}
+
 /// The disclosure that loads, answered with itself: open, and holding what it read.
 async fn files() -> Response {
     tokio::time::sleep(Duration::from_millis(800)).await;
-    let list = Html::trusted(
-        r#"<ul class="rows"><li>01 Held on the Tips of Fingers.flac</li><li>02 Fluffy.flac</li></ul>"#,
-    );
+    let list = Rows {
+        id: "",
+        rows: vec!["01 Held on the Tips of Fingers.flac", "02 Fluffy.flac"],
+    };
     events([kit::Disclosure::new("files")
-        .body(list)
+        .body(kit::Markup::render(&list).expect("rows render"))
         .open(true)
         .id("story-files")
         .patch()
@@ -146,17 +170,23 @@ async fn search(Query(query): Query<serde_json::Map<String, Value>>) -> Response
         "Phace — Impulse",
         "Burial — Untrue",
     ];
-    let mut rows = String::new();
-    for album in albums
-        .iter()
-        .filter(|album| !words.is_empty() && album.to_lowercase().contains(&words))
-    {
-        // Content escapes words as it writes them.
-        let _ = write!(rows, "<li>{}</li>", kit::Content::from(*album));
-    }
-    events([Html::trusted(format!(
-        "<ul id=\"story-results\" class=\"rows\">{rows}</ul>"
-    ))
-    .patch()
-    .into()])
+    let rows = Rows {
+        id: "story-results",
+        rows: albums
+            .into_iter()
+            .filter(|album| !words.is_empty() && album.to_lowercase().contains(&words))
+            .collect(),
+    };
+    events([Html::render(&rows).expect("rows render").patch().into()])
+}
+
+/// A list of rows, escaped as askama escapes every value.
+#[derive(Template)]
+#[template(
+    ext = "html",
+    source = r#"<ul{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="rows">{% for row in rows %}<li>{{ row }}</li>{% endfor %}</ul>"#
+)]
+struct Rows {
+    id: &'static str,
+    rows: Vec<&'static str>,
 }

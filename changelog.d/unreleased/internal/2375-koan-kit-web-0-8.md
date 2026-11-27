@@ -1,0 +1,1 @@
+- **koan-kit-web 0.8.** The web kit makes markup only from its templates and components, names a request's busy signal by what the control is, and adds in-place navigation, tabs, fields that load, a region covered while busy, cards, QR codes and a flash for failed requests, which the web UI's rework draws with.

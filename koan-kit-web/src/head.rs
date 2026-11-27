@@ -72,7 +72,7 @@ impl<'a> Head<'a> {
     /// The head's markup.
     #[must_use]
     pub fn html(&self) -> askama_datastar::Html {
-        askama_datastar::Html::trusted(self.to_string())
+        crate::attrs::render(self)
     }
 
     fn font(&self) -> String {

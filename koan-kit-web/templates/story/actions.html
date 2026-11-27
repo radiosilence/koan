@@ -1,0 +1,6 @@
+{% let form = kit::Form::post("/stub/slow").id("story-actions") %}
+<form {{ form.attrs() }} class="controls">
+  {{ kit::Input::text("tag").label("tag").placeholder("tag").required() }}
+  {{ kit::Button::bordered("add").post("/stub/slow").sends("story-actions").busy_key("story-actions") }}
+  {{ kit::Button::bordered("remove").post("/stub/slow?remove").sends("story-actions").busy_key("story-actions") }}
+</form>

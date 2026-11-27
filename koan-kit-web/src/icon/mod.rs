@@ -7,12 +7,10 @@
 
 mod glyphs;
 
-use std::fmt;
-
 pub use glyphs::*;
 
 use crate::arg::{Amount, Text};
-use crate::attrs::{Attrs, attribute, component};
+use crate::attrs::{Attrs, component};
 
 /// One glyph: its stroked outline, and the outline of its fill layer (the heart of a favourite, the tick of a
 /// selection) where it has one.
@@ -47,7 +45,8 @@ impl Glyph {
 
 /// A glyph drawn at a size: `kit::icon::HEART.svg(15)`.
 #[must_use = "an icon draws nothing until it is rendered"]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, askama::Template)]
+#[template(path = "icon.html")]
 pub struct Icon<'a> {
     glyph: Glyph,
     px: Amount,
@@ -72,37 +71,10 @@ impl<'a> Icon<'a> {
     }
 }
 
-impl fmt::Display for Icon<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let px = self.px.to_string();
-        write!(f, "<svg class=\"icon{}\"", self.attrs.classes())?;
-        attribute(f, "width", &px)?;
-        attribute(f, "height", &px)?;
-        write!(
-            f,
-            " viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"{:.2}\" \
-             stroke-linecap=\"square\" stroke-linejoin=\"miter\"",
-            self.stroke_width()
-        )?;
-        match self.label.present() {
-            Some(label) => {
-                f.write_str(" role=\"img\"")?;
-                attribute(f, "aria-label", label)?;
-            }
-            None => f.write_str(" aria-hidden=\"true\"")?,
-        }
-        write!(f, "{}>", self.attrs)?;
-        if !self.glyph.strokes.is_empty() {
-            write!(f, "<path d=\"{}\"/>", self.glyph.strokes)?;
-        }
-        if !self.glyph.fills.is_empty() {
-            write!(
-                f,
-                "<path d=\"{}\" fill=\"currentColor\" stroke=\"none\"/>",
-                self.glyph.fills
-            )?;
-        }
-        f.write_str("</svg>")
+impl Icon<'_> {
+    /// The stroke width as the template writes it.
+    fn stroke(&self) -> String {
+        format!("{:.2}", self.stroke_width())
     }
 }
 

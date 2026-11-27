@@ -1,0 +1,6 @@
+{#- The answer when a change or its preview failed, inside the page's Confirm: words in a paragraph, markup in a block. -#}
+{%- if message.is_markup() -%}
+<div id="kit-confirm-error" class="notice bad" role="alert">{{ message }}</div>
+{%- else -%}
+<p id="kit-confirm-error" class="notice bad" role="alert">{{ message }}</p>
+{%- endif -%}

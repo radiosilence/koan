@@ -1,0 +1,166 @@
+//! Tabs: a row of addresses, the one shown marked, each loading in place, with actions of its own.
+
+use askama::Template;
+
+use crate::arg::{Flag, Markup, Text};
+use crate::attrs::{Attrs, component};
+use crate::button::Button;
+use crate::link::Link;
+use crate::slot::Wrap;
+
+/// A row of tabs, named for a screen reader: `kit::Tabs::new("searches").tab(kit::Tab::new("Burial", url))`.
+///
+/// Each tab is an address, so it is a link: the one shown carries `aria-current="page"`, a modified click opens a tab
+/// of the browser's, and an [`in_place`](Tab::in_place) tab loads its page in place. The row wraps when it runs out of
+/// room.
+#[must_use = "tabs draw nothing until they are rendered"]
+#[derive(Clone, Debug, Template)]
+#[template(path = "tabs.html")]
+pub struct Tabs<'a> {
+    label: Text<'a>,
+    each: Vec<Tab<'a>>,
+    attrs: Attrs<'a>,
+}
+
+impl<'a> Tabs<'a> {
+    /// No tabs yet, the row named `label`.
+    pub fn new(label: impl Into<Text<'a>>) -> Self {
+        Self {
+            label: label.into(),
+            each: Vec::new(),
+            attrs: Attrs::default(),
+        }
+    }
+
+    /// A tab, after those already given.
+    pub fn tab(mut self, tab: Tab<'a>) -> Self {
+        self.each.push(tab);
+        self
+    }
+
+    /// Tabs, after those already given: `searches.iter().map(…)`.
+    pub fn tabs(mut self, tabs: impl IntoIterator<Item = Tab<'a>>) -> Self {
+        self.each.extend(tabs);
+        self
+    }
+}
+
+impl<'a> FromIterator<Tab<'a>> for Tabs<'a> {
+    fn from_iter<I: IntoIterator<Item = Tab<'a>>>(tabs: I) -> Self {
+        Tabs::new("").tabs(tabs)
+    }
+}
+
+impl Wrap for Tabs<'_> {
+    /// Tabs a template builds with a loop, after those given as props.
+    fn wrap(mut self, content: Markup) -> Self {
+        self.each.push(Tab::markup(content));
+        self
+    }
+}
+
+component!(Tabs);
+
+/// One tab of [`Tabs`]: an address and what it says, with actions after it, such as pin and close.
+#[must_use = "a tab draws nothing until it is rendered"]
+#[derive(Clone, Debug, Template)]
+#[template(path = "tab.html")]
+pub struct Tab<'a> {
+    link: Option<Link<'a>>,
+    current: bool,
+    count: Text<'a>,
+    actions: Vec<Button<'a>>,
+    /// Tabs a template wrote, standing in for this one.
+    markup: Markup,
+    attrs: Attrs<'a>,
+}
+
+impl<'a> Tab<'a> {
+    /// A tab saying `label`, for the page at `href`.
+    pub fn new(label: impl Into<Text<'a>>, href: impl Into<Text<'a>>) -> Self {
+        Self {
+            link: Some(Link::new(label, href)),
+            current: false,
+            count: Text::default(),
+            actions: Vec::new(),
+            markup: Markup::default(),
+            attrs: Attrs::default(),
+        }
+    }
+
+    fn markup(markup: Markup) -> Self {
+        Self {
+            link: None,
+            current: false,
+            count: Text::default(),
+            actions: Vec::new(),
+            markup,
+            attrs: Attrs::default(),
+        }
+    }
+
+    /// The page being shown.
+    pub fn current(mut self, on: impl Into<Flag>) -> Self {
+        let on = on.into().get();
+        self.current = on;
+        self.link = self.link.map(|link| link.current(on));
+        self
+    }
+
+    /// Loads its page in place, as [`Link::in_place`] does.
+    pub fn in_place(mut self) -> Self {
+        self.link = self.link.map(Link::in_place);
+        self
+    }
+
+    /// Joins the busy group `key` names, as [`Link::busy_key`] does: a row of tabs loads one page at a time.
+    pub fn busy_key(mut self, key: impl Into<Text<'a>>) -> Self {
+        self.link = self.link.map(|link| link.busy_key(key));
+        self
+    }
+
+    /// A figure after its words: how many results it holds.
+    pub fn count(mut self, count: impl Into<Text<'a>>) -> Self {
+        self.count = count.into();
+        self
+    }
+
+    /// An action after it, such as pin or close: a quiet button, compact and usually a glyph alone, posting where the
+    /// tab's handler is.
+    pub fn action(mut self, button: Button<'a>) -> Self {
+        self.actions.push(button);
+        self
+    }
+}
+
+component!(Tab);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::icon;
+
+    #[test]
+    fn the_tab_shown_is_marked_and_each_is_a_link() {
+        let html = Tabs::new("searches")
+            .tab(Tab::new("Burial", "/search/1").current(true).in_place())
+            .tab(
+                Tab::new("Phace", "/search/2").count(12).in_place().action(
+                    Button::quiet("close")
+                        .icon_only(icon::CLOSE)
+                        .compact()
+                        .post("/search/2/close"),
+                ),
+            )
+            .to_string();
+        assert!(
+            html.starts_with("<nav class=\"tabs\" aria-label=\"searches\">"),
+            "{html}"
+        );
+        assert!(html.contains("<span class=\"tab current\">"), "{html}");
+        assert_eq!(html.matches("aria-current=\"page\"").count(), 1, "{html}");
+        assert!(html.contains("@get(el.getAttribute('href')"), "{html}");
+        assert!(html.contains("<small>12</small>"), "{html}");
+        assert!(html.contains("data-url=\"/search/2/close\""), "{html}");
+    }
+}

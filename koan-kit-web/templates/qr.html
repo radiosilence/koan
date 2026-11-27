@@ -1,0 +1,3 @@
+{#- Dark modules on white, inside the quiet zone, each a whole square; named by its label or hidden beside words. -#}
+<div class="qr{{ attrs.classes() }}"{{ attrs }}><svg viewBox="0 0 {{ side }} {{ side }}" shape-rendering="crispEdges"
+{%- if let Some(label) = label.present() %} role="img" aria-label="{{ label }}"{% else %} aria-hidden="true"{% endif %}><rect width="{{ side }}" height="{{ side }}" fill="#fff"/><path d="{{ modules }}" fill="#000"/></svg></div>

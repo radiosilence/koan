@@ -1,0 +1,5 @@
+{% let search = kit::Form::get("/stub/search").live() %}
+<form {{ search.attrs() }}>
+  {{ kit::Input::search("q").label("search").placeholder("polar bear") }}
+</form>
+<ul id="story-results" class="rows"></ul>

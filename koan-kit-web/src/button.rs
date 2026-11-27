@@ -10,7 +10,7 @@ use std::fmt;
 
 use crate::action::{Busy, Method};
 use crate::arg::{Flag, Text};
-use crate::attrs::{Attrs, Escaped, attribute, component, escape};
+use crate::attrs::{Attrs, attribute, component};
 use crate::icon::Glyph;
 use crate::sheet::{CONFIRM_ID, OPEN_CONFIRM};
 
@@ -90,7 +90,8 @@ struct Ask<'a> {
 /// [`opens`](Self::opens), [`closes`](Self::closes) or [`submit`](Self::submit). A request can ask first, with
 /// [`confirm`](Self::confirm) or [`preview`](Self::preview).
 #[must_use = "a button draws nothing until it is rendered"]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, askama::Template)]
+#[template(path = "button.html")]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each is a prop of its own, as HTML's boolean attributes are"
@@ -467,6 +468,19 @@ impl<'a> Button<'a> {
 }
 
 impl Button<'_> {
+    /// Its own busy signal, named by what it is: how it goes and where, the form it sends, its group, its id and its
+    /// label. Two buttons alike in all of these are told apart by an [`id`](Self::id).
+    fn own_busy(&self, method: &str, url: &str) -> Busy {
+        Busy::own(&[
+            method,
+            url,
+            self.form.as_str(),
+            self.busy_key.as_str(),
+            self.attrs.id(),
+            self.label.as_str(),
+        ])
+    }
+
     /// Busy and disabled while `signal`'s request runs. What the server set (`.busy(true)`, `.disabled(true)`) is
     /// folded into the expressions, since Datastar's class and attr plugins own the attribute once they bind and would
     /// strip a static one as the signal starts false.
@@ -512,14 +526,19 @@ pub(crate) const FOLLOW_GUARD: &str = "evt.metaKey || evt.ctrlKey || evt.shiftKe
 /// What a link that loaded in place does once its request is sent: the address becomes its `href`, in a history entry
 /// of its own, and the entry it left is marked too, so that Back, Forward, a reload and a copied address all name the
 /// page shown. A step through the history to a marked entry reloads it, since the page holds whatever was loaded in
-/// place last; the listener is the window's, added once, so it outlives the link a patch may remove.
+/// place last, unless the page has a [`Navigation`](crate::Navigation), which loads it in place instead; the listener
+/// is the window's, added once, so it outlives the link a patch may remove.
 pub(crate) const FOLLOW_HISTORY: &str = "history.state?.kit || history.replaceState({kit: 1}, ''), \
 history.pushState({kit: 1}, '', el.href), \
-window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; location.reload()), 1)";
+window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)";
 
 /// Writes the attributes that make a link load in place, busy by its own signal and ignored while its group's runs.
-pub(crate) fn in_place_attributes(f: &mut fmt::Formatter<'_>, key: &Text<'_>) -> fmt::Result {
-    let (own, group) = indicators(f, key)?;
+pub(crate) fn in_place_attributes(
+    f: &mut fmt::Formatter<'_>,
+    own: Busy,
+    key: &Text<'_>,
+) -> fmt::Result {
+    let (own, group) = indicators(f, own, key)?;
     write!(
         f,
         " data-class:busy=\"${own}\" data-on:click=\"{FOLLOW_GUARD}${group} || (@get(el.getAttribute('href'){}), {FOLLOW_HISTORY}))\"",
@@ -527,54 +546,93 @@ pub(crate) fn in_place_attributes(f: &mut fmt::Formatter<'_>, key: &Text<'_>) ->
     )
 }
 
-impl fmt::Display for Button<'_> {
+impl<'a> Button<'a> {
+    /// Whether it is drawn as a link.
+    fn is_link(&self) -> bool {
+        matches!(self.act, Act::Link(_))
+    }
+
+    /// Whether it sends a form's fields with its request.
+    fn sends_form(&self) -> bool {
+        !self.form.is_empty() && matches!(self.act, Act::Request { .. })
+    }
+
+    /// Its `type`: a submit when it submits or sends a form.
+    fn kind(&self) -> &'static str {
+        if self.sends_form() || matches!(self.act, Act::Submit(_)) {
+            "submit"
+        } else {
+            "button"
+        }
+    }
+
+    /// Its `class`: the kit's, then the app's.
+    fn class_attr(&self) -> Option<String> {
+        let class = format!(
+            "{}{}",
+            self.classes(self.is_link()).join(" "),
+            self.attrs.classes()
+        );
+        let class = class.trim_start();
+        (!class.is_empty()).then(|| class.to_owned())
+    }
+
+    /// The size its glyphs are drawn at.
+    fn px(&self) -> f64 {
+        if self.compact {
+            15.6
+        } else if self.icon_only {
+            18.0
+        } else {
+            self.weight.glyph_px()
+        }
+    }
+
+    /// What it does, as attributes.
+    fn wiring(&self) -> Wiring<'_, 'a> {
+        Wiring(self)
+    }
+}
+
+/// A button's attributes between its class and the common props: what it does, its name and value, and its state.
+struct Wiring<'b, 'a>(&'b Button<'a>);
+
+impl askama::filters::HtmlSafe for Wiring<'_, '_> {}
+
+impl fmt::Display for Wiring<'_, '_> {
     #[expect(
         clippy::too_many_lines,
-        reason = "one element, its attributes written in order, read top to bottom"
+        reason = "one element's attributes written in order, read top to bottom"
     )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let link = matches!(self.act, Act::Link(_));
-        let sends = !self.form.is_empty() && matches!(self.act, Act::Request { .. });
-        if link {
-            f.write_str("<a")?;
-        } else {
-            let kind = if sends || matches!(self.act, Act::Submit(_)) {
-                "submit"
-            } else {
-                "button"
-            };
-            write!(f, "<button type=\"{kind}\"")?;
-        }
-        let classes = self.classes(link);
-        if !classes.is_empty() || !self.attrs.classes().is_empty() {
-            write!(
-                f,
-                " class=\"{}{}\"",
-                Escaped(&classes.join(" ")),
-                self.attrs.classes()
-            )?;
-        }
-        if sends && let Act::Request { method, url, .. } = &self.act {
+        let button = self.0;
+        let link = button.is_link();
+        let sends = button.sends_form();
+        if sends && let Act::Request { method, url, .. } = &button.act {
             // The form's own submit, should one be made before Datastar loads: refused by `require_datastar_on_post`,
             // as a Form's is, or read as a page.
-            attribute(f, "form", self.form.as_str())?;
+            attribute(f, "form", button.form.as_str())?;
             attribute(f, "formaction", url.as_str())?;
             if *method == Method::Get {
                 f.write_str(" formmethod=\"get\"")?;
             }
         }
-        match &self.act {
+        match &button.act {
             // A disabled link has no href, so it neither navigates nor takes focus.
-            Act::Link(href) if !self.disabled => {
+            Act::Link(href) if !button.disabled => {
                 attribute(f, "href", href.as_str())?;
-                if self.in_place {
-                    in_place_attributes(f, &self.busy_key)?;
+                if button.in_place {
+                    in_place_attributes(
+                        f,
+                        button.own_busy("link", href.as_str()),
+                        &button.busy_key,
+                    )?;
                 }
             }
             Act::Nothing | Act::Link(_) => {}
             Act::Submit(signal) => {
                 if let Some(busy) = signal {
-                    self.busy_attributes(f, *busy)?;
+                    button.busy_attributes(f, *busy)?;
                 }
             }
             Act::Command { command, target } => {
@@ -587,8 +645,12 @@ impl fmt::Display for Button<'_> {
                 ask: None,
             } => {
                 attribute(f, "data-url", url.as_str())?;
-                let (own, group) = indicators(f, &self.busy_key)?;
-                self.busy_by(f, own, group)?;
+                let (own, group) = indicators(
+                    f,
+                    button.own_busy(method.form(), url.as_str()),
+                    &button.busy_key,
+                )?;
+                button.busy_by(f, own, group)?;
                 // A form left invalid would start a request Datastar abandons unsettled, keeping the button busy for
                 // good, so the form is checked here first, its messages shown, as a Form's submit does.
                 let prevent = if sends {
@@ -614,10 +676,10 @@ impl fmt::Display for Button<'_> {
                 if let Some(preview) = ask.preview.present() {
                     attribute(f, "data-preview", preview)?;
                 }
-                if let Some(detail) = self.detail.present() {
+                if let Some(detail) = button.detail.present() {
                     attribute(f, "data-detail", detail)?;
                 }
-                if self.yes_bad {
+                if button.yes_bad {
                     f.write_str(" data-yes-bad")?;
                 }
                 if sends {
@@ -636,51 +698,37 @@ impl fmt::Display for Button<'_> {
                 }
             }
         }
-        if let Some((name, value)) = &self.named {
+        if let Some((name, value)) = &button.named {
             write!(f, " name=\"{name}\"")?;
             attribute(f, "value", value.as_str())?;
         }
-        if self.icon_only {
-            attribute(f, "aria-label", self.label.as_str())?;
+        if button.icon_only {
+            attribute(f, "aria-label", button.label.as_str())?;
         }
-        if let Some((_, pressed)) = self.toggle {
+        if let Some((_, pressed)) = button.toggle {
             write!(f, " aria-pressed=\"{pressed}\"")?;
         }
-        if self.disabled {
+        if button.disabled {
             f.write_str(if link {
                 " aria-disabled=\"true\""
             } else {
                 " disabled"
             })?;
         }
-        if self.autofocus {
+        if button.autofocus {
             f.write_str(" autofocus")?;
         }
-        write!(f, "{}>", self.attrs)?;
-        let px = if self.compact {
-            15.6
-        } else if self.icon_only {
-            18.0
-        } else {
-            self.weight.glyph_px()
-        };
-        if let Some(glyph) = self.icon {
-            write!(f, "{}", glyph.svg(px))?;
-        }
-        if let Some((glyph, _)) = self.toggle {
-            write!(f, "{}", glyph.svg(px).class("pressed"))?;
-        }
-        if !self.icon_only {
-            escape(f, self.label.as_str())?;
-        }
-        f.write_str(if link { "</a>" } else { "</button>" })
+        Ok(())
     }
 }
 
 /// Declares the signals a request is busy by, as the indicators of the element that sends it: its own, which spins
 /// it, and its group's, which disables every control in the group, or its own again when it has none.
-fn indicators(f: &mut fmt::Formatter<'_>, key: &Text<'_>) -> Result<(Busy, Busy), fmt::Error> {
-    let own = Busy::own();
+fn indicators(
+    f: &mut fmt::Formatter<'_>,
+    own: Busy,
+    key: &Text<'_>,
+) -> Result<(Busy, Busy), fmt::Error> {
     write!(f, " data-indicator=\"{own}\"")?;
     let group = match key.present() {
         Some(key) => {
@@ -699,6 +747,7 @@ component!(Button);
 mod tests {
     use super::*;
     use crate::icon;
+    use crate::link::Link;
 
     #[test]
     fn a_post_carries_its_url_as_data_and_the_expression_is_constant() {
@@ -743,6 +792,28 @@ mod tests {
             signal(&other),
             "a patch adding or removing one would clear the other's busy state"
         );
+        let twin = Button::primary("scan")
+            .post("/scan")
+            .id("scan-2")
+            .to_string();
+        assert_ne!(busy, signal(&twin), "an id tells two alike apart");
+    }
+
+    #[test]
+    fn the_same_button_draws_the_same_markup() {
+        let draw = || {
+            Button::bordered("retry")
+                .post("/jobs/1/retry")
+                .busy_key("card-1")
+                .to_string()
+        };
+        assert_eq!(
+            draw(),
+            draw(),
+            "a stream that sends a region only when it differs would resend it"
+        );
+        let link = || Link::new("next", "/p/2").in_place().to_string();
+        assert_eq!(link(), link());
     }
 
     #[test]

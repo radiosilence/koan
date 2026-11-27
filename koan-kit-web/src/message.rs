@@ -4,7 +4,7 @@
 use askama::Template;
 
 use crate::arg::{Content, Markup, Text};
-use crate::attrs::{Attrs, component};
+use crate::attrs::{Attrs, assert_on_origin, component};
 use crate::button::Button;
 use crate::icon::Glyph;
 use crate::slot::Wrap;
@@ -98,6 +98,11 @@ component!(Notice);
 ///
 /// `message` is the words, `bad` an error, `href` and `link` a link after the words, and `stays` an ok flash that waits
 /// to be dismissed. The words are set as text, never as markup.
+///
+/// Datastar drops the body of an answer that is not a success and retries a lost connection quietly, so a request that
+/// failed would say nothing. The region says it: [`failed`](Self::failed) for an answer that is an error,
+/// [`unreachable`](Self::unreachable) once the retries are spent, and [`sign_in`](Self::sign_in) for a 401, which goes
+/// to the sign-in page rather than saying anything.
 #[must_use = "a flash draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "flash.html")]
@@ -107,6 +112,9 @@ pub struct Flash<'a> {
     stays: bool,
     link: Option<(Text<'a>, Text<'a>)>,
     dismiss: Text<'a>,
+    failed: Text<'a>,
+    unreachable: Text<'a>,
+    sign_in: Text<'a>,
     attrs: Attrs<'a>,
 }
 
@@ -126,6 +134,9 @@ impl<'a> Flash<'a> {
             stays: false,
             link: None,
             dismiss: Text::default(),
+            failed: Text::default(),
+            unreachable: Text::default(),
+            sign_in: Text::default(),
             attrs,
         }
     }
@@ -162,6 +173,39 @@ impl<'a> Flash<'a> {
     /// Whether it waits to be dismissed rather than fading.
     fn lasting(&self) -> bool {
         self.bad || self.stays || self.link.is_some()
+    }
+
+    /// For the region: says `message` as an error over the page whenever a request's answer is an error (a status of
+    /// 400 or more), whose body Datastar drops: "That did not work. Try again."
+    pub fn failed(mut self, message: impl Into<Text<'a>>) -> Self {
+        self.failed = message.into();
+        self
+    }
+
+    /// For the region: says `message` as an error over the page once Datastar has given up retrying a request it could
+    /// not send: "The server could not be reached."
+    pub fn unreachable(mut self, message: impl Into<Text<'a>>) -> Self {
+        self.unreachable = message.into();
+        self
+    }
+
+    /// For the region: a request answered 401, a session that has ended, goes to `path`, the sign-in page, rather
+    /// than saying it failed.
+    ///
+    /// # Panics
+    ///
+    /// When `path` is not a path on this origin: it must start with `/`, not with `//` or `/\\`, and hold no
+    /// whitespace or control character.
+    pub fn sign_in(mut self, path: impl Into<Text<'a>>) -> Self {
+        let path = path.into();
+        assert_on_origin(path.as_str());
+        self.sign_in = path;
+        self
+    }
+
+    /// Whether it listens for failed requests.
+    fn hears_failures(&self) -> bool {
+        !(self.failed.is_empty() && self.unreachable.is_empty() && self.sign_in.is_empty())
     }
 
     /// A button dismissing it, saying `label`. Without one a lasting flash is dismissed by pressing it.
@@ -241,6 +285,35 @@ component!(Empty);
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_region_says_a_failed_request() {
+        let region = Flash::region()
+            .failed("That did not work.")
+            .unreachable("The server could not be reached.")
+            .sign_in("/login")
+            .to_string();
+        assert!(
+            region.contains("data-failed=\"That did not work.\""),
+            "{region}"
+        );
+        assert!(region.contains("data-sign-in=\"/login\""), "{region}");
+        assert!(
+            region.contains("data-on:datastar-fetch__document="),
+            "{region}"
+        );
+        assert!(
+            !Flash::region().to_string().contains("datastar-fetch"),
+            "a region told nothing hears nothing"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "is not a path on this origin")]
+    fn sign_in_is_a_path_here() {
+        let _ = Flash::region().sign_in("javascript:alert(1)");
+    }
+
     use super::*;
 
     #[test]

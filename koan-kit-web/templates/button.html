@@ -1,0 +1,8 @@
+{#- A button, or a link drawn as one: its class, what it does (written by the button), its glyphs and its label, which
+    names a glyph alone instead of being drawn. -#}
+{%- let link = self.is_link() -%}
+<{% if link %}a{% else %}button type="{{ self.kind() }}"{% endif %}{% if let Some(class) = self.class_attr() %} class="{{ class }}"{% endif %}{{ self.wiring() }}{{ attrs }}>
+{%- if let Some(glyph) = icon %}{{ glyph.svg(self.px()) }}{% endif -%}
+{%- if let Some((glyph, _)) = toggle %}{{ glyph.svg(self.px()).class("pressed") }}{% endif -%}
+{%- if !icon_only %}{{ label }}{% endif -%}
+</{% if link %}a{% else %}button{% endif %}>
