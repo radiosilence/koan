@@ -1,0 +1,14 @@
+{#- Values each behind a marker and wrapped anywhere, so a crafted value cannot pass as two or run off the page; rows a
+    template wrote follow those given. Empty, the words it was given in place of the list. -#}
+{%- if self.is_empty() -%}
+{%- if let Some(words) = empty.present() -%}
+<div class="empty compact{{ attrs.classes() }}"{{ attrs }}><strong>{{ words }}</strong></div>
+{%- endif -%}
+{%- else -%}
+<ul class="list{{ attrs.classes() }}"{{ attrs }}>
+{%- for item in items -%}
+<li>{% if strong %}<strong>{{ item }}</strong>{% else %}{{ item }}{% endif %}</li>
+{%- endfor -%}
+{{- rows -}}
+</ul>
+{%- endif -%}

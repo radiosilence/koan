@@ -881,6 +881,20 @@
   .field > small.warn, .field.warn > small {
     color: var(--warn);
   }
+  .field.repeat > div {
+    display: grid;
+    gap: calc(var(--spacing) * 2);
+  }
+  .field.repeat > div > .controls > input {
+    min-width: 0px;
+    flex: 1;
+  }
+  .field.repeat > div > .controls:only-child > [data-repeat="remove"] {
+    display: none;
+  }
+  .field.repeat > [data-repeat="add"] {
+    justify-self: flex-start;
+  }
   .combo {
     display: inline-flex;
     align-items: stretch;
@@ -896,6 +910,16 @@
     position: relative;
     z-index: 10;
     outline-offset: calc(2px * -1);
+  }
+  .copy {
+    display: grid;
+    gap: calc(var(--spacing) * 1.5);
+  }
+  .copy > .description {
+    margin: 0px;
+    font-size: var(--text-fine);
+    line-height: var(--tw-leading, var(--text-fine--line-height));
+    color: var(--muted);
   }
   .toggle {
     display: flex;
@@ -978,6 +1002,9 @@
   }
   :is(.status, .meter).wait {
     --tone: var(--muted);
+  }
+  :is(.status, .meter).neutral {
+    --tone: var(--ink);
   }
   progress.meter {
     --tone: var(--brand);
@@ -1137,6 +1164,125 @@
     column-gap: calc(var(--spacing) * 3);
     row-gap: var(--spacing);
     padding-block: calc(var(--spacing) * 2);
+  }
+  ul.list {
+    margin: 0px;
+    list-style-type: square;
+    :where(& > :not(:last-child)) {
+      --tw-space-y-reverse: 0;
+      margin-block-start: calc(var(--spacing) * var(--tw-space-y-reverse));
+      margin-block-end: calc(var(--spacing) * calc(1 - var(--tw-space-y-reverse)));
+    }
+    padding-inline-start: 2ch;
+  }
+  ul.list > li {
+    overflow-wrap: anywhere;
+    & *::marker {
+      color: var(--muted);
+    }
+    &::marker {
+      color: var(--muted);
+    }
+    & *::-webkit-details-marker {
+      color: var(--muted);
+    }
+    &::-webkit-details-marker {
+      color: var(--muted);
+    }
+  }
+  .prose {
+    overflow-wrap: anywhere;
+  }
+  .prose > :first-child {
+    margin-top: 0px;
+  }
+  .prose > :last-child {
+    margin-bottom: 0px;
+  }
+  .prose :is(h1, h2, h3, h4, h5, h6) {
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    font-size: var(--text-body);
+    line-height: var(--tw-leading, var(--text-body--line-height));
+    --tw-font-weight: var(--font-weight-normal);
+    font-weight: var(--font-weight-normal);
+    color: var(--strong);
+    text-transform: none;
+  }
+  .prose :is(h1, h2) {
+    font-size: var(--text-title-sm);
+    line-height: var(--tw-leading, var(--text-title-sm--line-height));
+    --tw-font-weight: var(--font-weight-light);
+    font-weight: var(--font-weight-light);
+  }
+  .prose :is(ul, ol) {
+    margin-block: 1em;
+    padding-inline-start: 2ch;
+  }
+  .prose ul {
+    list-style-type: square;
+  }
+  .prose ol {
+    list-style-type: decimal;
+  }
+  .prose li > :is(ul, ol) {
+    margin-block: 0px;
+  }
+  .prose li:has(> input[type="checkbox"]) {
+    margin-inline-start: calc(2ch * -1);
+    list-style-type: none;
+  }
+  .prose blockquote {
+    margin-block: 1em;
+    border-inline-start-style: var(--tw-border-style);
+    border-inline-start-width: 2px;
+    border-color: var(--rule);
+    padding-inline-start: 2ch;
+    color: var(--muted);
+  }
+  .prose :is(code, pre) {
+    background-color: var(--surface);
+    font-size: 0.92em;
+  }
+  .prose code {
+    padding-inline: 0.3ch;
+  }
+  .prose pre {
+    margin-block: 1em;
+    overflow-x: auto;
+    padding: calc(var(--spacing) * 3);
+    overflow-wrap: normal;
+  }
+  .prose pre code {
+    background-color: transparent;
+    padding: 0px;
+    font-size: 1em;
+  }
+  .prose hr {
+    margin-block: 1.5em;
+    border-color: var(--rule);
+  }
+  .prose table {
+    margin-block: 1em;
+    display: block;
+    border-collapse: collapse;
+    overflow-x: auto;
+  }
+  .prose :is(th, td) {
+    border-style: var(--tw-border-style);
+    border-width: 1px;
+    border-color: var(--rule);
+    padding-inline: calc(var(--spacing) * 2);
+    padding-block: var(--spacing);
+    text-align: start;
+  }
+  .prose th {
+    --tw-font-weight: var(--font-weight-normal);
+    font-weight: var(--font-weight-normal);
+    color: var(--strong);
+  }
+  .prose a {
+    text-decoration-line: underline;
   }
   table.dense {
     width: 100%;
@@ -1365,6 +1511,47 @@
       padding-block: calc(var(--spacing) * 2);
     }
   }
+  .topbar {
+    position: sticky;
+    top: 0px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 4);
+    border-bottom-style: var(--tw-border-style);
+    border-bottom-width: 1px;
+    border-color: var(--rule);
+    background-color: var(--bg);
+    padding-inline: 22px;
+    padding-block: calc(var(--spacing) * 3);
+    font-size: var(--text-meta);
+    line-height: var(--tw-leading, var(--text-meta--line-height));
+    @media (width >= 40rem) {
+      padding-inline: calc(var(--spacing) * 8);
+    }
+    padding-top: max(12px, env(safe-area-inset-top));
+  }
+  .topbar > .wordmark {
+    margin-inline-end: auto;
+    font-size: var(--text-title-sm);
+    line-height: var(--tw-leading, var(--text-title-sm--line-height));
+    --tw-font-weight: var(--font-weight-extralight);
+    font-weight: var(--font-weight-extralight);
+    color: var(--strong);
+    text-transform: lowercase;
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-line: none;
+      }
+    }
+  }
+  .footer {
+    padding-top: calc(var(--spacing) * 6);
+    text-align: center;
+    font-size: var(--text-fine);
+    line-height: var(--tw-leading, var(--text-fine--line-height));
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+  }
   a.release {
     font-size: var(--text-fine);
     line-height: var(--tw-leading, var(--text-fine--line-height));
@@ -1588,6 +1775,11 @@
   syntax: "*";
   inherits: false;
 }
+@property --tw-space-y-reverse {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
 @property --tw-duration {
   syntax: "*";
   inherits: false;
@@ -1621,6 +1813,7 @@
       --tw-outline-style: solid;
       --tw-border-style: solid;
       --tw-leading: initial;
+      --tw-space-y-reverse: 0;
       --tw-duration: initial;
     }
   }

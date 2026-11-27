@@ -106,16 +106,18 @@ Text is escaped wherever it lands. Markup is a separate type, built from a compo
 | `Input`, `Select`, `Textarea` | The controls, alone or in a field |
 | `Combo` | A control joined to the button it feeds |
 | `Check`, `Toggle` | A box leading its words inline, alone (`bare`), or as a row of a list with a picture and a detail; a settings row with the box trailing. Each a checkbox or a radio |
-| `Status`, `Meter`, `Spinner` | A state in a tone, in words; progress as a hairline, named for a screen reader; the ensō, for anything on its way |
+| `RepeatField` | Rows of one input, sent under one name, which the kit adds, removes and fills from a paste of several values |
+| `Status`, `Meter`, `Spinner` | A state in a tone, in words (`neutral` for one settled but not verified); progress as a hairline, named for a screen reader; the ensō, for anything on its way |
 | `Notice`, `Flash`, `Empty` | A message in place; one over the page; what stands where a list would be |
-| `Sheet`, `Confirm` | A dialog opened through `commandfor`; the page's one sheet for asking before a change |
-| `Pairs`, `Disclosure`, `CopyField` | Labels and values, optional or from a template's loops; a summary, words or markup, that opens or loads; a value to copy, with a word or a glyph |
-| `Head`, `ImportMap`, `SkipLink`, `Release` | The page around the content |
+| `Sheet`, `Confirm` | A dialog opened through `commandfor`, kept above an on-screen keyboard, whose body can load as it opens; the page's one sheet for asking before a change |
+| `Pairs`, `List`, `Disclosure`, `CopyField` | Labels and values, optional or from a template's loops; values someone else chose, each behind a marker; a summary, words or markup, that opens or loads; a value to copy, with a word or a glyph and what it is for |
+| `Time` | An instant, drawn in UTC and rewritten in the reader's zone: a date, a time, a clock or how long ago |
+| `Head`, `ImportMap`, `SkipLink`, `TopBar`, `Footer`, `Release` | The page around the content |
 | `icon::*` | The kōan icon set, `kit::icon::HEART.svg(15)` |
 
 The common props, on every component: `id`, `class` for the app's own layout utilities, `data`, `attr`, and `datastar` for a Datastar attribute the kit does not write. Every component also has `html` and `patch`, so a handler answers with one: `events([kit::Flash::ok("Saved.").patch().into()])`.
 
-Containers whose markup is one element and a class stay classes: `panel`, `rows`, `dense`, `code`, `codes` (one-time codes to keep, selected whole), `qr` (a QR code's `<svg>`, dark on white in either scheme), `skeleton`, `controls` (a row of controls as tall as the tallest) and `compact` (every control inside at the compact size).
+Containers whose markup is one element and a class stay classes: `panel`, `rows`, `dense`, `code`, `codes` (one-time codes to keep, selected whole), `qr` (a QR code's `<svg>`, dark on white in either scheme), `skeleton`, `prose` (Markdown rendered to HTML), `controls` (a row of controls as tall as the tallest) and `compact` (every control inside at the compact size).
 
 ### The compact size
 
@@ -159,7 +161,7 @@ Every expression a component writes is the kit's own constant. A URL, a question
 @import "@radiosilence/koan-kit-web";
 ```
 
-Plain elements come out in the theme, and the classes the components use give the rest: the button weights, `field`, `combo`, `check`, `toggle`, `panel`, `notice`, `status`, `meter`, `spinner`, `pairs`, `empty`, `qr`, `codes`, `tabs` and `tab`, `card`, `cover`, `skeleton`, `sheet` and its parts, `actions`, `controls`, `compact`, `skip`. A static site with markup of its own imports `@radiosilence/koan-kit-web/tokens.css` for the tokens alone. The package is published to GitHub Packages, so installing it needs a token with `read:packages`.
+Plain elements come out in the theme, and the classes the components use give the rest: the button weights, `field`, `combo`, `check`, `toggle`, `panel`, `notice`, `status`, `meter`, `spinner`, `pairs`, `list`, `prose`, `empty`, `qr`, `codes`, `tabs` and `tab`, `card`, `cover`, `skeleton`, `sheet` and its parts, `copy`, `repeat`, `topbar`, `footer`, `actions`, `controls`, `compact`, `skip`. A static site with markup of its own imports `@radiosilence/koan-kit-web/tokens.css` for the tokens alone. The package is published to GitHub Packages, so installing it needs a token with `read:packages`.
 
 Tailwind's palette, radii, shadows, blurs and type sizes are removed: `rounded-lg`, `shadow-xl`, `text-sm` and `bg-red-500` compile to nothing. What that cannot reach, such as `rounded-full` and arbitrary values, kit-check reports.
 

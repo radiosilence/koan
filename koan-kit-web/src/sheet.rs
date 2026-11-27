@@ -12,12 +12,20 @@ use askama_datastar::{ElementPatchMode, Html, PatchElements, PatchSignals};
 use axum::response::sse::Event;
 
 use crate::arg::{Content, Markup, Text};
-use crate::attrs::{Attrs, component, render};
+use crate::attrs::{Attrs, component, css_ident, render};
 use crate::button::Button;
 use crate::slot::Wrap;
 
 /// The id of the page's [`Confirm`].
 pub(crate) const CONFIRM_ID: &str = "kit-confirm";
+
+/// What every sheet runs as it starts, once for the page: it publishes how much of the viewport an on-screen keyboard
+/// covers as `--keyboard-inset` on the root, which the stylesheet lifts a sheet by. iOS shrinks the visual viewport for
+/// its keyboard and leaves the layout viewport a fixed sheet sits in alone, and nothing in CSS exposes the gap. A
+/// browser that resizes the layout viewport instead measures zero, the stylesheet's fallback; one without
+/// `visualViewport` is left alone. The value is written only when it changes, since the viewport's scroll fires on
+/// every pan.
+pub(crate) const KEYBOARD_INSET: &str = "(r => !r || r._kitkeyboard || (r._kitkeyboard = () => (n => n != r._kitinset && (r._kitinset = n, r.style.setProperty('--keyboard-inset', n + 'px')))(Math.round(Math.max(0, r.clientHeight - visualViewport.height - visualViewport.offsetTop))), visualViewport.addEventListener('resize', r._kitkeyboard), visualViewport.addEventListener('scroll', r._kitkeyboard), r._kitkeyboard()))(window.visualViewport && document.documentElement)";
 
 /// What a button that asks does when pressed, alongside opening the sheet: it hands the sheet its question, yes, URL,
 /// preview, tone and form from its own attributes and class, so no text reaches the expression; marks the sheet ready
@@ -37,8 +45,9 @@ pub const CONFIRMED: &str = "kit-confirmed";
 
 /// A sheet: `kit::Sheet::new("add", "add a download")`, opened by `kit::Button::primary("add").opens("add")`.
 ///
-/// Its body is [`body`](Self::body), or the markup of a `{% filter kit::wrap(sheet) %}` block; its
-/// [`actions`](Self::action) sit along its foot.
+/// Its body is [`body`](Self::body), or the markup of a `{% filter kit::wrap(sheet) %}` block, or what it
+/// [`loads`](Self::loads) as it opens; its [`actions`](Self::action) sit along its foot. On a phone it rises above
+/// the on-screen keyboard with no script of the app's.
 #[must_use = "a sheet draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "sheet.html")]
@@ -46,6 +55,7 @@ pub struct Sheet<'a> {
     title: Text<'a>,
     close: Text<'a>,
     body: Content<'a>,
+    loads: Text<'a>,
     actions: Vec<Button<'a>>,
     attrs: Attrs<'a>,
 }
@@ -59,9 +69,19 @@ impl<'a> Sheet<'a> {
             title: title.into(),
             close: Text::default(),
             body: Content::default(),
+            loads: Text::default(),
             actions: Vec::new(),
             attrs,
         }
+    }
+
+    /// Reads its body from `url` each time a button's [`opens`](crate::Button::opens) opens it, for a body that
+    /// depends on the server, such as a list of albums to move images into: it empties, shows the ensō, and fetches.
+    /// The handler answers with [`Sheet::fill`]; an action that is done with it answers with [`Sheet::dismiss`]. The
+    /// page's own script may change the address, `data-url` on the sheet, before it opens.
+    pub fn loads(mut self, url: impl Into<Text<'a>>) -> Self {
+        self.loads = url.into();
+        self
     }
 
     /// A close button in its header, saying `label`. Without one it closes from its actions, a press outside it, or
@@ -82,6 +102,35 @@ impl<'a> Sheet<'a> {
         self.actions.push(button);
         self
     }
+}
+
+impl Sheet<'_> {
+    /// A loading handler's answer: `body` in the sheet `id`, in place of the ensō. Words are escaped.
+    pub fn fill<'c>(id: &str, body: impl Into<Content<'c>>) -> PatchElements {
+        Self::answer(id, body.into(), false)
+    }
+
+    /// An action handler's answer once the sheet `id` has done its work: it closes, its body emptied, so it reads its
+    /// body again when next opened.
+    #[must_use]
+    pub fn dismiss(id: &str) -> PatchElements {
+        Self::answer(id, Content::default(), true)
+    }
+
+    fn answer(id: &str, body: Content<'_>, close: bool) -> PatchElements {
+        render(&SheetBody { body, close })
+            .patch()
+            .selector(format!("#{} > section", css_ident(id)))
+            .mode(ElementPatchMode::Replace)
+    }
+}
+
+/// A sheet's body alone, as [`Sheet::fill`] and [`Sheet::dismiss`] send it.
+#[derive(Template)]
+#[template(path = "sheet_body.html")]
+struct SheetBody<'c> {
+    body: Content<'c>,
+    close: bool,
 }
 
 impl Wrap for Sheet<'_> {
@@ -198,6 +247,42 @@ mod tests {
             "{sheet}"
         );
         assert!(sheet.contains("closedby=\"any\""), "{sheet}");
+    }
+
+    #[test]
+    fn a_sheet_that_loads_reads_its_body_as_it_opens() {
+        let sheet = Sheet::new("mover", "move to")
+            .loads("/albums/1/mover?x='y'")
+            .to_string();
+        assert!(
+            sheet.contains("data-url=\"/albums/1/mover?x=&#39;y&#39;\""),
+            "{sheet}"
+        );
+        assert!(
+            sheet.contains("data-on:command=\"evt.command == 'show-modal' &amp;&amp;"),
+            "{sheet}"
+        );
+        assert!(sheet.contains("@get(el.dataset.url)"), "{sheet}");
+        assert!(sheet.contains("<section></section>"), "{sheet}");
+        let fill = format!("{:?}", Sheet::fill("mover", "<b>"));
+        assert!(fill.contains("#mover > section"), "{fill}");
+        assert!(fill.contains("&#60;b&#62;"), "{fill}");
+        let dismiss = format!("{:?}", Sheet::dismiss("mover"));
+        assert!(dismiss.contains("close()"), "{dismiss}");
+    }
+
+    #[test]
+    fn every_sheet_keeps_above_the_keyboard() {
+        for sheet in [
+            Sheet::new("a", "a").to_string(),
+            Confirm::new("cancel").to_string(),
+        ] {
+            assert!(sheet.contains("--keyboard-inset"), "{sheet}");
+        }
+        assert!(
+            !KEYBOARD_INSET.contains('"') && !KEYBOARD_INSET.contains(';'),
+            "one expression, in a double-quoted attribute"
+        );
     }
 
     #[test]

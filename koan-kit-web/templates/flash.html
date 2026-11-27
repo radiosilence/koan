@@ -2,14 +2,16 @@
     one with a link wait to be dismissed, by pressing them or their dismiss button. The page's own script raises one
     with a `kit-flash` event on window, whose detail is set as text: nothing in it is read as markup. A region that hears
     failures raises one itself when a request's answer is an error or its retries are spent, its words read from its
-    own data, and sends a 401 to the sign-in page. -#}
-<div{{ attrs }}{% if !attrs.classes().is_empty() %} class="{{ attrs.classes() }}"{% endif %} role="status"
-{%- if self.hears_failures() %}
+    own data, and sends a 401 to the sign-in page; it listens from a hidden element beside the region, which no flash
+    replaces, so a flash patch cannot strip it. -#}
+{%- if self.hears_failures() -%}
+<div id="flash-failures" hidden
   {%- if let Some(words) = failed.present() %} data-failed="{{ words }}"{% endif %}
   {%- if let Some(words) = unreachable.present() %} data-unreachable="{{ words }}"{% endif %}
   {%- if let Some(path) = sign_in.present() %} data-sign-in="{{ path }}"{% endif %}
-  data-on:datastar-fetch__document="(d => d.type == 'error' &amp;&amp; d.argsRaw.status == '401' &amp;&amp; el.dataset.signIn ? location.assign(el.dataset.signIn) : (m => m &amp;&amp; dispatchEvent(new CustomEvent('kit-flash', {detail: {message: m, bad: true}})))(d.type == 'error' ? el.dataset.failed : d.type == 'retries-failed' ? el.dataset.unreachable : ''))(evt.detail)"
-{%- endif %}
+  data-on:datastar-fetch__document="(d => d.type == 'error' &amp;&amp; d.argsRaw.status == '401' &amp;&amp; el.dataset.signIn ? location.assign(el.dataset.signIn) : (m => m &amp;&amp; dispatchEvent(new CustomEvent('kit-flash', {detail: {message: m, bad: true}})))(d.type == 'error' ? el.dataset.failed : d.type == 'retries-failed' ? el.dataset.unreachable : ''))(evt.detail)"></div>
+{% endif -%}
+<div{{ attrs }}{% if !attrs.classes().is_empty() %} class="{{ attrs.classes() }}"{% endif %} role="status"
   data-on:kit-flash__window="(d => (el.replaceChildren(Object.assign(document.createElement('p'), {id: 'flash-' + Date.now(), className: d.bad ? 'toast bad' : d.stays || d.href ? 'toast' : 'toast brief', textContent: d.message})), d.bad &amp;&amp; el.firstChild.setAttribute('role', 'alert'), d.href &amp;&amp; el.firstChild.append(' ', Object.assign(document.createElement('a'), {href: d.href, textContent: d.link || d.href})), (d.bad || d.stays || d.href) &amp;&amp; el.firstChild.addEventListener('click', e => e.target.closest('a') || e.currentTarget.remove())))(evt.detail)">
 {%- if let Some(message) = message.present() -%}
 {%- if self.lasting() %}

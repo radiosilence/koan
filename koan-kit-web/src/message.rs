@@ -102,7 +102,8 @@ component!(Notice);
 /// Datastar drops the body of an answer that is not a success and retries a lost connection quietly, so a request that
 /// failed would say nothing. The region says it: [`failed`](Self::failed) for an answer that is an error,
 /// [`unreachable`](Self::unreachable) once the retries are spent, and [`sign_in`](Self::sign_in) for a 401, which goes
-/// to the sign-in page rather than saying anything.
+/// to the sign-in page rather than saying anything. These listen from a hidden element placed beside the region, which
+/// no flash replaces, so they are given to the region in the shell alone.
 #[must_use = "a flash draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "flash.html")]
@@ -305,6 +306,32 @@ mod tests {
         assert!(
             !Flash::region().to_string().contains("datastar-fetch"),
             "a region told nothing hears nothing"
+        );
+    }
+
+    #[test]
+    fn a_flash_leaves_the_regions_failure_handlers_alone() {
+        let region = Flash::region()
+            .failed("failed")
+            .sign_in("/login")
+            .to_string();
+        let (handlers, rest) = region
+            .split_once("</div>")
+            .expect("the handlers stand beside the region");
+        assert!(
+            handlers.starts_with("<div id=\"flash-failures\" hidden"),
+            "{region}"
+        );
+        assert!(
+            handlers.contains("data-on:datastar-fetch__document"),
+            "{region}"
+        );
+        assert!(rest.contains("id=\"flash\""), "{region}");
+        let ok = Flash::ok("Saved.").to_string();
+        assert!(ok.starts_with("<div id=\"flash\""), "{ok}");
+        assert!(
+            !ok.contains("flash-failures"),
+            "a flash patch must not touch the handlers: {ok}"
         );
     }
 

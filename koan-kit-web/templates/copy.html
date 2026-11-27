@@ -1,8 +1,15 @@
 {#- A read-only field joined to the button that copies it. The value and the labels travel in attributes the
     expressions read, so nothing in them reaches script. Where the clipboard is refused, the value is selected to copy by
-    hand. In the glyph form a tick stands in for the glyph while it is copied. -#}
+    hand. In the glyph form a tick stands in for the glyph while it is copied. A description leads, above the field it
+    describes, the two in a block that takes the component's attributes. -#}
+{%- if let Some(words) = description.present() %}
+<div class="copy{{ attrs.classes() }}"{{ attrs }}>
+<p id="{{ self.description_id() }}" class="description">{{ words }}</p>
+<span class="combo{% if compact %} compact{% endif %}">
+{%- else %}
 <span class="combo{% if compact %} compact{% endif %}{{ attrs.classes() }}"{{ attrs }}>
-  <input readonly value="{{ value }}"{% if let Some(id) = self.input_id() %} id="{{ id }}"{% endif %}{% if let Some(name) = name.present() %} name="{{ name }}"{% endif %} aria-label="{{ label }}" data-on:focus="el.select()">
+{%- endif %}
+  <input readonly value="{{ value }}"{% if let Some(id) = self.input_id() %} id="{{ id }}"{% endif %}{% if let Some(name) = name.present() %} name="{{ name }}"{% endif %} aria-label="{{ label }}"{% if !description.is_empty() %} aria-describedby="{{ self.description_id() }}"{% endif %} data-on:focus="el.select()">
 {%- if icon %}
   <button type="button" class="icon-button"{% if let Some(copied) = copied.present() %} data-copied="{{ copied }}"{% endif %} data-label="{{ button }}" aria-label="{{ button }}"
     data-on:click="(navigator.clipboard?.writeText(el.previousElementSibling.value) ?? Promise.reject()).then(() => (el.classList.add('copied'), el.ariaLabel = el.dataset.copied || el.dataset.label, setTimeout(() => (el.classList.remove('copied'), el.ariaLabel = el.dataset.label), 2000))).catch(() => el.previousElementSibling.select())">{{ icon::COPY.svg(15.6) }}{{ icon::CHECK.svg(15.6).class("pressed") }}</button>
@@ -11,3 +18,6 @@
     data-on:click="(navigator.clipboard?.writeText(el.previousElementSibling.value) ?? Promise.reject()).then(() => el.dataset.copied &amp;&amp; (el.textContent = el.dataset.copied, setTimeout(() => el.textContent = el.dataset.label, 2000))).catch(() => el.previousElementSibling.select())">{{ button }}</button>
 {%- endif %}
 </span>
+{%- if !description.is_empty() %}
+</div>
+{%- endif %}

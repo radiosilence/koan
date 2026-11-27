@@ -384,6 +384,11 @@ impl<'a> Input<'a> {
         self
     }
 
+    /// The name it is sent under.
+    pub(crate) fn field_name(&self) -> &str {
+        self.common.name.as_str()
+    }
+
     fn write(
         &self,
         f: &mut fmt::Formatter<'_>,
