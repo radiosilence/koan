@@ -377,7 +377,7 @@ mod tests {
         for (uri, html) in rendered {
             let missing = crate::share::unstyled_classes(
                 &html,
-                super::UI_CSS,
+                crate::ui::UI_CSS,
                 &["page", "browse", "toolbar", "search", "group"],
             );
             assert!(
@@ -414,7 +414,7 @@ mod tests {
         assert!(crate::share::import_map_allowed(&full.body, csp), "{csp}");
         // The stylesheet's URL changes with its contents, so an upgrade never pairs
         // new markup with a cached stylesheet.
-        let css = &super::ASSETS.css;
+        let css = &crate::ui::ASSETS.css;
         assert!(css.starts_with("./ui/assets/ui.css?v=") && full.body.contains(css.as_str()));
         let served = send(&f.app, get(&css[1..]).body(Body::empty()).unwrap()).await;
         assert_eq!(served.status, StatusCode::OK);
@@ -425,7 +425,7 @@ mod tests {
                 .contains("immutable")
         );
         // Every page and patch names it too, so an open tab can catch up.
-        assert_eq!(full.headers["x-koan-css"], super::ASSETS.css_hash.as_str());
+        assert_eq!(full.headers["x-koan-css"], crate::ui::ASSETS.css_hash.as_str());
 
         let partial = send(
             &f.app,

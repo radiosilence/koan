@@ -103,10 +103,7 @@ impl Frame<'_> {
     }
 
     fn icons(&self) -> Html {
-        super::Icons {
-            under: "./ui/assets",
-        }
-        .html()
+        super::icons("./ui/assets")
     }
 
     fn passkey_js(&self) -> &'static str {
@@ -1126,7 +1123,7 @@ mod tests {
         ));
         assert_eq!(
             proxy.user(&headers, &ext),
-            super::session::Vouch::Named("alice")
+            crate::ui::sign_in::Vouch::Named("alice")
         );
     }
 
@@ -1145,7 +1142,7 @@ mod tests {
             ));
             ext
         };
-        use super::session::Vouch;
+        use crate::ui::sign_in::Vouch;
         assert_eq!(
             proxy.user(&headers, &at("172.18.0.5:1")),
             Vouch::Named("alice")

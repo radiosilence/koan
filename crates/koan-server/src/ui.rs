@@ -623,12 +623,11 @@ async fn cover(
 /// The icons every document links, under `/ui/assets` or `/share/assets`.
 #[derive(Template)]
 #[template(path = "layout/icons.html")]
-pub(crate) struct Icons {
-    pub(crate) under: &'static str,
+struct Icons {
+    under: &'static str,
 }
 
-impl Icons {
-    pub(crate) fn html(&self) -> Html {
-        Render::html(self)
-    }
+/// The `<link>`s naming the icons served under `under`.
+pub(crate) fn icons(under: &'static str) -> Html {
+    Icons { under }.html()
 }

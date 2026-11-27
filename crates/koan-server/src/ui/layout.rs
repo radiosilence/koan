@@ -43,10 +43,7 @@ impl Layout {
     }
 
     fn icons(&self) -> Html {
-        super::Icons {
-            under: "./ui/assets",
-        }
-        .html()
+        super::icons("./ui/assets")
     }
 
     /// The live stream, opened again whenever it ends or goes quiet, and
