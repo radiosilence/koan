@@ -846,12 +846,10 @@ mod tests {
             .unwrap()
             .unwrap()
             .id;
+        // With the table gone the delete fails too: it says its own failure,
+        // never that the account is not there.
         let r = send(&f.app, post(&format!("/users/{sarita}/delete"), "")).await;
+        assert!(r.body.contains("toast bad"), "{}", r.body);
         assert!(!r.body.contains("No such account."), "{}", r.body);
-        assert!(
-            queries::auth::get_user_by_username(&db.conn, "sarita")
-                .unwrap()
-                .is_none()
-        );
     }
 }
