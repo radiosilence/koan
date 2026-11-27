@@ -1736,6 +1736,9 @@
     height: calc(var(--spacing) * 4);
     background-color: var(--muted);
   }
+  .skeleton > * {
+    visibility: hidden;
+  }
   .code {
     display: block;
     border-style: var(--tw-border-style);
@@ -2089,6 +2092,76 @@
   dialog.sheet > footer {
     padding-inline: calc(var(--spacing) * 5);
     padding-bottom: calc(var(--spacing) * 5);
+  }
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    column-gap: calc(var(--spacing) * 5);
+    row-gap: var(--spacing);
+    border-bottom-style: var(--tw-border-style);
+    border-bottom-width: 1px;
+    border-color: var(--rule);
+  }
+  .tab {
+    margin-bottom: -1px;
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 1.5);
+    border-bottom-style: var(--tw-border-style);
+    border-bottom-width: 2px;
+    border-color: transparent;
+    padding-bottom: calc(var(--spacing) * 1.5);
+    font-size: var(--text-control);
+    line-height: var(--tw-leading, var(--text-control--line-height));
+  }
+  .tab > a {
+    color: var(--muted);
+    &:hover {
+      @media (hover: hover) {
+        color: var(--ink);
+      }
+    }
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-line: none;
+      }
+    }
+  }
+  .tab.current {
+    border-color: var(--brand);
+  }
+  .tab.current > a {
+    color: var(--strong);
+  }
+  .tab > small {
+    font-size: var(--text-fine);
+    line-height: var(--tw-leading, var(--text-fine--line-height));
+    color: var(--muted);
+    --tw-numeric-spacing: tabular-nums;
+    font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+  }
+  a.card {
+    display: block;
+    color: var(--ink);
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-line: none;
+      }
+    }
+  }
+  .cover {
+    position: relative;
+  }
+  .cover[aria-busy="true"] > :not(.spinner) {
+    pointer-events: none;
+    opacity: 40%;
+    transition-property: opacity;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+  .cover:not([aria-busy="true"]) > .spinner {
+    display: none;
   }
   .controls {
     display: flex;

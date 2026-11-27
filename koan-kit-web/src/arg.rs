@@ -267,11 +267,12 @@ impl From<&&bool> for Flag {
     }
 }
 
-/// Markup a template or the program made: rendered as it is.
+/// Markup a template made: rendered as it is.
 ///
-/// Built from an [`Html`], by value or by reference, from any of the kit's components, and from the content of a
-/// `{% filter kit::wrap(…) %}` block. Text from anyone else is a [`Text`], which is escaped; nothing converts a string
-/// into markup, so text cannot be passed where markup goes.
+/// Built from any of the kit's components, from a rendered template ([`Markup::render`]), from the content of a
+/// `{% filter kit::wrap(…) %}` block, and from several of these together (`collect`). Text from anyone else is a
+/// [`Text`], which is escaped. Nothing converts a string into markup, an `Html` included, since `Html::trusted` makes
+/// one of any string: text cannot be passed where markup goes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Markup(String);
 
@@ -279,6 +280,15 @@ impl Markup {
     /// Markup the kit itself wrote.
     pub(crate) fn kit(markup: String) -> Self {
         Self(markup)
+    }
+
+    /// What `template` renders: an app's own view, escaped as askama escapes it, for a slot that takes markup.
+    ///
+    /// # Errors
+    ///
+    /// The template's own, which askama reports with the value or filter that failed.
+    pub fn render(template: &impl askama::Template) -> askama::Result<Self> {
+        template.render().map(Self)
     }
 
     /// The markup.
@@ -302,21 +312,10 @@ impl fmt::Display for Markup {
 
 impl HtmlSafe for Markup {}
 
-impl From<Html> for Markup {
-    fn from(html: Html) -> Self {
-        Self(html.into())
-    }
-}
-
-impl From<&Html> for Markup {
-    fn from(html: &Html) -> Self {
-        Self(html.as_str().to_owned())
-    }
-}
-
-impl From<&&Html> for Markup {
-    fn from(html: &&Html) -> Self {
-        Self(html.as_str().to_owned())
+/// Pieces of markup, one after another: a row of buttons, a list of rows.
+impl FromIterator<Markup> for Markup {
+    fn from_iter<I: IntoIterator<Item = Markup>>(pieces: I) -> Self {
+        Self(pieces.into_iter().map(|piece| piece.0).collect())
     }
 }
 
@@ -335,7 +334,7 @@ impl From<Markup> for Html {
 /// What a region holds: words, or markup.
 ///
 /// A notice, a pair's value, a sheet's body and a hint each take either, from anything that converts into a [`Text`]
-/// or a [`Markup`]: `"Saved."` is escaped, an `Html` the handler rendered is kept.
+/// or a [`Markup`]: `"Saved."` is escaped, a component or a template the handler rendered is kept.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Content<'a> {
     /// Words, escaped where they land.
@@ -416,21 +415,9 @@ impl From<Markup> for Content<'_> {
     }
 }
 
-impl From<Html> for Content<'_> {
-    fn from(html: Html) -> Self {
-        Self::Markup(html.into())
-    }
-}
-
-impl From<&Html> for Content<'_> {
-    fn from(html: &Html) -> Self {
-        Self::Markup(html.into())
-    }
-}
-
-impl From<&&Html> for Content<'_> {
-    fn from(html: &&Html) -> Self {
-        Self::Markup(html.into())
+impl From<&Markup> for Content<'_> {
+    fn from(markup: &Markup) -> Self {
+        Self::Markup(markup.clone())
     }
 }
 
@@ -492,10 +479,24 @@ mod tests {
         );
     }
 
+    #[derive(askama::Template)]
+    #[template(ext = "html", source = "<b>{{ name }}</b>")]
+    struct Bold<'a> {
+        name: &'a str,
+    }
+
+    #[test]
+    fn markup_is_what_a_template_rendered() {
+        let markup = Markup::render(&Bold { name: "<i>" }).expect("renders");
+        assert_eq!(markup.as_str(), "<b>&#60;i&#62;</b>");
+        let both: Markup = [markup.clone(), markup].into_iter().collect();
+        assert_eq!(both.as_str().matches("<b>").count(), 2);
+    }
+
     #[test]
     fn content_escapes_words_and_keeps_markup() {
         let words = Content::from("<b>words</b>");
-        let markup = Content::from(Html::trusted("<b>markup</b>"));
+        let markup = Content::from(Markup::kit("<b>markup</b>".into()));
         assert_eq!(words.to_string(), "&#60;b&#62;words&#60;/b&#62;");
         assert_eq!(markup.to_string(), "<b>markup</b>");
     }

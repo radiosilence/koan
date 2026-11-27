@@ -66,6 +66,7 @@ mod attrs;
 mod button;
 mod choice;
 mod content;
+mod cover;
 mod field;
 pub mod font;
 mod form;
@@ -73,12 +74,15 @@ mod head;
 pub mod icon;
 mod link;
 mod message;
+mod navigation;
+mod qr;
 mod sheet;
 mod slot;
 mod spinner;
 mod status;
 #[cfg(any(test, feature = "storybook"))]
 pub mod storybook;
+mod tabs;
 
 pub use askama_datastar;
 
@@ -86,15 +90,19 @@ pub use arg::{Amount, AsText, Content, Flag, Markup, Text};
 pub use button::{Button, Weight};
 pub use choice::{Check, Toggle};
 pub use content::{CopyField, Disclosure, Pairs};
+pub use cover::Cover;
 pub use field::{Choice, Combo, Control, Field, Input, InputKind, Select, Textarea};
 pub use form::{Form, FormAttrs};
 pub use head::{Head, ImportMap, Release, SkipLink};
 pub use link::Link;
 pub use message::{Empty, Flash, Notice};
+pub use navigation::Navigation;
+pub use qr::Qr;
 pub use sheet::{CONFIRMED, Confirm, Sheet};
 pub use slot::{Wrap, wrap};
 pub use spinner::Spinner;
 pub use status::{Meter, Status, Tone};
+pub use tabs::{Tab, Tabs};
 
 #[cfg(test)]
 mod tests {

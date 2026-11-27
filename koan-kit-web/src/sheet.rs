@@ -12,7 +12,7 @@ use askama_datastar::{ElementPatchMode, Html, PatchElements, PatchSignals};
 use axum::response::sse::Event;
 
 use crate::arg::{Content, Markup, Text};
-use crate::attrs::{Attrs, component};
+use crate::attrs::{Attrs, component, render};
 use crate::button::Button;
 use crate::slot::Wrap;
 
@@ -138,11 +138,9 @@ impl Confirm<'_> {
     /// a flash would sit under the dimmed page. Words are escaped; markup a template rendered, such as a reason with a
     /// link, is kept. The next opening clears it.
     pub fn error<'m>(message: impl Into<Content<'m>>) -> PatchElements {
-        let message: Content<'m> = message.into();
-        let element = if message.is_markup() { "div" } else { "p" };
-        Html::trusted(format!(
-            "<{element} id=\"kit-confirm-error\" class=\"notice bad\" role=\"alert\">{message}</{element}>"
-        ))
+        render(&ConfirmError {
+            message: message.into(),
+        })
         .patch()
         .mode(ElementPatchMode::Replace)
     }
@@ -159,32 +157,26 @@ impl Confirm<'_> {
     /// browser goes to `href`, a path on this site. No [`close`](Self::close) is needed, since the page goes with the
     /// sheet. Any handler can answer with it.
     ///
+    /// It is `askama_datastar::go`, which the kit defers to.
+    ///
     /// # Panics
     ///
     /// When `href` is not a path on this origin: it must start with `/`, and not with `//` or `/\\`, which a browser
     /// reads as another host, and hold no whitespace or control character, which a browser strips before reading it,
     /// so `/\t/host` would be `//host`.
     pub fn go<'h>(href: impl Into<Text<'h>>) -> PatchElements {
-        let href: Text<'h> = href.into();
-        let path = href.as_str();
-        assert!(
-            path.starts_with('/')
-                && !path.starts_with("//")
-                && !path.starts_with("/\\")
-                && !path.chars().any(|c| c.is_control() || c.is_whitespace()),
-            "{path:?} is not a path on this site"
-        );
-        Html::trusted(format!(
-            "<div hidden data-href=\"{}\" data-init=\"location.assign(el.dataset.href)\"></div>",
-            crate::attrs::Escaped(path)
-        ))
-        .patch()
-        .selector("body")
-        .mode(ElementPatchMode::Append)
+        askama_datastar::go(href.into().as_str())
     }
 }
 
 component!(Confirm);
+
+/// A failure said inside the page's [`Confirm`]: words in a paragraph, markup in a block.
+#[derive(Template)]
+#[template(path = "confirm_error.html")]
+struct ConfirmError<'m> {
+    message: Content<'m>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -223,7 +215,7 @@ mod tests {
             sheet.contains("el._kitpreview?.abort(), el.replaceChildren()"),
             "every opening must abort the last one's preview, or a late answer could land under another question"
         );
-        let [_, ready] = Confirm::preview(Html::trusted("<p>two files</p>"));
+        let [_, ready] = Confirm::preview(Markup::kit("<p>two files</p>".into()));
         assert!(
             format!("{ready:?}").contains("ready"),
             "the preview's answer readies the sheet"
@@ -238,9 +230,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "is not a path on this site")]
+    #[should_panic(expected = "/\\t/evil.example")]
     fn go_refuses_a_path_a_browser_would_read_as_another_host() {
         let _ = Confirm::go("/\t/evil.example");
+    }
+
+    #[test]
+    fn markup_in_an_error_is_a_block() {
+        let patch = format!("{:?}", Confirm::error(Markup::kit("<p>a</p>".into())));
+        assert!(
+            patch.contains("<div id=\\\"kit-confirm-error\\\""),
+            "{patch}"
+        );
     }
 
     #[test]

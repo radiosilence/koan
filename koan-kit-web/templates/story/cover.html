@@ -1,0 +1,6 @@
+{% filter kit::wrap(kit::Cover::with("story-picker")) %}
+  <ul class="rows">
+    <li>{{ kit::Button::link("music").get("/stub/place?music").busy_key("story-picker") }}</li>
+    <li>{{ kit::Button::link("podcasts").get("/stub/place?podcasts").busy_key("story-picker") }}</li>
+  </ul>
+{% endfilter %}

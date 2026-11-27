@@ -14,16 +14,20 @@ use crate::action::{Busy, Method};
 use crate::arg::Text;
 use crate::attrs::{Attrs, attribute};
 use crate::button::Button;
+use crate::field::Field;
 
-/// A form's attributes and its submit:
+/// A form's attributes, its fields and its submit:
 ///
 /// ```html
-/// {% let form = kit::Form::post(save) %}
+/// {% let form = kit::Form::post(save).id(row.form_id()) %}
 /// <form {{ form.attrs() }} class="grid gap-4">
-///   {{ kit::Field::text("name", "name").required() }}
+///   {{ form.field(kit::Field::text("name", "name").required()) }}
 ///   {{ form.submit(kit::Button::primary("save")) }}
 /// </form>
 /// ```
+///
+/// A field placed through [`field`](Self::field) builds its ids on the form's, so a page holding the same form once per
+/// row gives only each form an id.
 #[must_use = "a form's attributes go in its <form> tag"]
 #[derive(Clone, Debug)]
 pub struct Form<'a> {
@@ -31,7 +35,7 @@ pub struct Form<'a> {
     method: Method,
     datastar: bool,
     live: bool,
-    busy: Busy,
+    busy_key: Text<'a>,
     attrs: Attrs<'a>,
 }
 
@@ -42,7 +46,7 @@ impl<'a> Form<'a> {
             method,
             datastar,
             live: false,
-            busy: Busy::own(),
+            busy_key: Text::default(),
             attrs: Attrs::default(),
         }
     }
@@ -69,10 +73,11 @@ impl<'a> Form<'a> {
         Self::of(Method::Get, action.into(), false)
     }
 
-    /// Names its busy signal by `key` rather than by its action, so forms posting one action row by row (each search
-    /// result's download) are busy apart; see [`Button::busy_key`](crate::Button::busy_key).
+    /// Joins the busy group `key` names, as [`Button::busy_key`](crate::Button::busy_key) does: while any request of
+    /// the group runs, its submit is disabled. Without one, its busy signal is named by its method, action and id, so
+    /// forms posting one action row by row are told apart by their ids.
     pub fn busy_key(mut self, key: impl Into<Text<'a>>) -> Self {
-        self.busy = Busy::keyed(key.into().as_str());
+        self.busy_key = key.into();
         self
     }
 
@@ -123,8 +128,24 @@ impl<'a> Form<'a> {
         }
     }
 
+    /// `field`, its ids built on this form's id when it has one and the field has none of its own.
+    pub fn field(&self, field: Field<'a>) -> Field<'a> {
+        match self.attrs.id() {
+            "" => field,
+            id => field.scope(Text::from(id.to_owned())),
+        }
+    }
+
     fn busy(&self) -> Busy {
-        self.busy
+        match self.busy_key.present() {
+            Some(key) => Busy::keyed(key),
+            None => Busy::own(&[
+                "form",
+                self.method.form(),
+                self.action.as_str(),
+                self.attrs.id(),
+            ]),
+        }
     }
 }
 
@@ -139,7 +160,7 @@ impl fmt::Display for FormAttrs<'_, '_> {
         if form.datastar {
             // A form left invalid would start a request Datastar abandons unsettled, keeping its submit busy for good;
             // one marked novalidate is the server's to check, as Datastar's own form fetch has it.
-            let options = match form.busy.options() {
+            let options = match form.busy().options() {
                 "" => String::new(),
                 more => format!(", {more}"),
             };
@@ -191,6 +212,40 @@ mod tests {
             "the submit is busy by the form's request: {submit}"
         );
         assert!(submit.contains("type=\"submit\""), "{submit}");
+    }
+
+    #[test]
+    fn a_repeated_form_names_its_fields_by_its_own_id() {
+        let form = Form::post("/mcp/credential").id("cred-github");
+        let field = form
+            .field(Field::text("value", "token").hint("Stored sealed."))
+            .to_string();
+        assert!(field.contains("id=\"cred-github-value-note\""), "{field}");
+        assert!(
+            field.contains("aria-describedby=\"cred-github-value-note\""),
+            "{field}"
+        );
+        let own = form
+            .field(Field::text("value", "token").hint("x").id("mine"))
+            .to_string();
+        assert!(
+            own.contains("id=\"mine-note\""),
+            "a field's own id wins: {own}"
+        );
+        let other = Form::post("/mcp/credential").id("cred-slack");
+        assert_ne!(
+            form.attrs().to_string(),
+            other.attrs().to_string(),
+            "two rows' forms are busy apart"
+        );
+        assert_eq!(
+            form.attrs().to_string(),
+            Form::post("/mcp/credential")
+                .id("cred-github")
+                .attrs()
+                .to_string(),
+            "and each draws the same markup every time"
+        );
     }
 
     #[test]

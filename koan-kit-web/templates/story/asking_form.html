@@ -1,0 +1,5 @@
+{% let form = kit::Form::post("/stub/slow").id("story-ban") %}
+<form {{ form.attrs() }} class="controls">
+  {{ kit::Input::text("username").label("username to ban").placeholder("username").required() }}
+  {{ kit::Button::primary("ban").bad().post("/stub/slow").sends("story-ban").confirm("ban this user?", "ban") }}
+</form>

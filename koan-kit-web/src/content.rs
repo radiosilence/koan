@@ -3,7 +3,7 @@
 use askama::Template;
 
 use crate::arg::{Content, Flag, Markup, Text};
-use crate::attrs::{Attrs, component};
+use crate::attrs::{Attrs, component, css_ident, render};
 use crate::icon;
 use crate::slot::Wrap;
 
@@ -133,12 +133,18 @@ impl Disclosure<'_> {
     pub fn fill<'c>(id: &str, body: impl Into<Content<'c>>) -> askama_datastar::PatchElements {
         // Replaced, not morphed: Datastar morphs nothing inside an element that keeps `data-ignore-morph`, as a
         // disclosure in a streamed list does, and a replacement it makes.
-        let body: Content<'c> = body.into();
-        askama_datastar::Html::trusted(format!("<div>{body}</div>"))
+        render(&DisclosureBody { body: body.into() })
             .patch()
-            .selector(format!("#{id} > div"))
+            .selector(format!("#{} > div", css_ident(id)))
             .mode(askama_datastar::ElementPatchMode::Replace)
     }
+}
+
+/// A disclosure's body alone, as [`Disclosure::fill`] sends it.
+#[derive(Template)]
+#[template(path = "disclosure_body.html")]
+struct DisclosureBody<'c> {
+    body: Content<'c>,
 }
 
 impl Disclosure<'_> {
@@ -237,15 +243,13 @@ component!(CopyField);
 
 #[cfg(test)]
 mod tests {
-    use askama_datastar::Html;
-
     use super::*;
 
     #[test]
     fn pairs_take_words_and_markup() {
         let pairs: Pairs<'_> = [
             ("size", Content::from("4 GB")),
-            ("source", Html::trusted("<a href=\"/x\">x</a>").into()),
+            ("source", Markup::kit("<a href=\"/x\">x</a>".into()).into()),
         ]
         .into_iter()
         .collect();
@@ -279,6 +283,11 @@ mod tests {
         assert!(
             !patch.contains("details"),
             "the element and its loads stay: {patch}"
+        );
+        let odd = format!("{:?}", Disclosure::fill("a, #b", "x"));
+        assert!(
+            odd.contains("#a\\\\,\\\\ \\\\#b > div"),
+            "an id cannot retarget the patch: {odd}"
         );
     }
 

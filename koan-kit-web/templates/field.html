@@ -1,13 +1,15 @@
 {#- A label leading, the control filling the width, and the note under it, which describes the control. The control is
     named by the label's words alone, so the note is read once. A control of the app's own sits in a `div` that is a
-    group named by the label and described by the note, since it may be several controls a `<label>` cannot hold. -#}
+    group named by the label and described by the note, since it may be several controls a `<label>` cannot hold. One
+    that loads stands as a skeleton until the answer replaces it. -#}
 {%- let note = self.note() -%}
 {%- let element = self.element() -%}
 {%- let label_id = self.label_id() -%}
 <{{ element }} class="field{% if let Some((Some(tone), _)) = note %} {{ tone }}{% endif %}{{ attrs.classes() }}"
+{%- if let Some(url) = loads.present() %} data-url="{{ url }}" data-init="@get(el.dataset.url)" aria-busy="true"{% endif %}
 {%- if self.is_custom() %} role="group"{% if let Some(id) = label_id %} aria-labelledby="{{ id }}"{% endif %}{% if note.is_some() %} aria-describedby="{{ self.note_id() }}"{% endif %}{% endif %}{{ attrs }}>
   <span{% if let Some(id) = label_id %} id="{{ id }}"{% endif %}>{{ label }}</span>
-  {{ self.control() }}
+  {% if loads.is_empty() %}{{ self.control() }}{% else %}<span class="skeleton">{{ self.control() }}</span>{% endif %}
   {%- if let Some((_, text)) = note %}
   <small id="{{ self.note_id() }}">{{ text }}</small>
   {%- endif %}
