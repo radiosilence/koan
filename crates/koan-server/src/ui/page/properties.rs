@@ -148,7 +148,7 @@ fn read(s: &UiState, id: i64, admin: bool) -> Option<Result<Body, Refusal>> {
     let page = PropertiesPage {
         title: &t.title,
         artist: &artist,
-        path: path.as_deref(),
+        path,
         lists,
     };
     Some(Ok(Body::of(format!("{} · Properties", t.title), &page)))

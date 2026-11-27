@@ -249,7 +249,7 @@ struct UsersPage {
 }
 
 impl UsersPage {
-    fn new(&self) -> Html {
+    fn new_user(&self) -> Html {
         New.html()
     }
 
