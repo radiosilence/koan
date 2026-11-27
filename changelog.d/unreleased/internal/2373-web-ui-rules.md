@@ -1,0 +1,1 @@
+- **The web UI's rules.** CLAUDE.md sets down the rules radiosilence's server-rendered apps follow after slsk-mcp, and no longer allows `|safe` for markup the server built.
