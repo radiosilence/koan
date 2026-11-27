@@ -163,6 +163,54 @@ val koanFfi = tasks.register<KoanFfi>("koanFfi") {
     outputs.upToDateWhen { false }
 }
 
+/**
+ * The Android framework jars Robolectric runs the tests on, resolved by
+ * Gradle rather than fetched by Robolectric at test time, so they come from
+ * Gradle's cache and repositories like any dependency. Every level is the
+ * same module at another version, so each has a configuration of its own:
+ * one configuration would resolve them to the newest alone.
+ */
+val robolectricSdks = mapOf(
+    33 to libs.robolectric.sdk33,
+    34 to libs.robolectric.sdk34,
+    35 to libs.robolectric.sdk35,
+).map { (level, jar) ->
+    configurations.create("robolectricSdk$level") {
+        isCanBeConsumed = false
+        isTransitive = false
+        dependencies.addLater(jar)
+    }
+}
+
+/** Robolectric's offline dependency directory: each jar named `<artifact>-<version>.jar`, as Gradle names them. */
+val robolectricJars = tasks.register<Sync>("robolectricJars") {
+    from(robolectricSdks)
+    into(layout.buildDirectory.dir("robolectric"))
+}
+
+/**
+ * Runs Robolectric offline against [jars]. A level the tests ask for with no
+ * jar there fails the test instead of downloading one.
+ */
+abstract class RobolectricOffline : CommandLineArgumentProvider {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val jars: DirectoryProperty
+
+    override fun asArguments() = listOf(
+        "-Drobolectric.offline=true",
+        "-Drobolectric.dependency.dir=${jars.get().asFile.path}",
+    )
+}
+
+tasks.withType<Test>().configureEach {
+    jvmArgumentProviders.add(
+        objects.newInstance<RobolectricOffline>().apply {
+            jars.fileProvider(robolectricJars.map { it.destinationDir })
+        },
+    )
+}
+
 androidComponents {
     onVariants { variant ->
         variant.sources.jniLibs?.addGeneratedSourceDirectory(koanFfi, KoanFfi::jniLibs)

@@ -18,6 +18,10 @@ CI builds the same APK on every pull request and push to main that touches the a
 
 The APK carries arm64-v8a only: phones, and emulators on Apple silicon.
 
+## Unit tests
+
+`./gradlew :app:testDebugUnitTest` runs the JVM tests, the Compose ones under Robolectric. Robolectric runs offline: Gradle resolves the Android framework jar for each SDK level the tests ask for (`robolectric-sdk*` in `gradle/libs.versions.toml`) and the test task points Robolectric at them, so nothing is downloaded while tests run, where a failed download used to fail CI. A test asking for a level with no jar there fails with "Unable to locate dependency"; add the level to the catalog and to `robolectricSdks` in `app/build.gradle.kts`, which gives each level a configuration of its own since one configuration would resolve the same module to a single version. A Robolectric upgrade changes the jars' versions too: they are in its `DefaultSdkProvider`.
+
 ## The walk
 
 `just android-walk`: `WalkTest` (under `androidTest`) opens every page with UI Automator and screenshots it, once for each look and appearance, into `target/android-walk/<look>-<appearance>`. The recipe serves a generated library from a throwaway koan server, reaches it through `adb reverse`, and signs the app in by writing its configuration with `run-as`, so nothing on the machine's own koan is touched. It runs on an emulator only, because it clears the app's data: the one adb already sees, or an AVD booted headless with `-gpu host` (`koan-walk` unless named; create it once with `avdmanager create avd -n koan-walk -d pixel_9 -k "system-images;android-36.1;google_apis_playstore;arm64-v8a"`), since software rendering is too slow to judge the wash by.

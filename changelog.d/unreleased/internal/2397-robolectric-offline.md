@@ -1,0 +1,1 @@
+- **Android unit tests no longer download at test time.** Gradle resolves the Robolectric framework jars as a dependency and the tests run Robolectric offline, so an unreachable Maven Central no longer fails the Android job.
