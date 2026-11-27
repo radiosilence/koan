@@ -2,12 +2,13 @@
     fragment of the page shown, reads its address in place; a link whose own listener already took the click (a
     `Link::in_place`) is left alone. The pressed link is busy until the load settles, and the next press abandons it,
     since a request from this element cancels the last. Back and Forward read the entry's address in place, unless only
-    the fragment moved. With a signal to follow, the address bar follows it, and the click leaves the address to the
-    answer that sets it. -#}
+    the fragment moved. With a signal to follow, the address bar follows it once each load has settled, and the click
+    leaves the address to the answer that sets it; Back and Forward load an address the bar already shows, so they push
+    nothing. Only the page's first navigation acts, so a second placed by mistake changes nothing. -#}
 <div hidden{% if !attrs.classes().is_empty() %} class="{{ attrs.classes().to_string().trim_start() }}"{% endif %}{{ attrs }} data-indicator="_kitnavbusy"
   data-init="el._kitshown = location.pathname + location.search"
-  data-effect="($_kitnavbusy || el._kitlink?.classList.remove('busy'))
-{%- if let Some(signal) = follows %}, ${{ signal }} &amp;&amp; ${{ signal }} != location.pathname + location.search &amp;&amp; (history.state?.kit || history.replaceState({kit: 1}, ''), el._kitshown = ${{ signal }}, history.pushState({kit: 1}, '', ${{ signal }})){% endif %}"
-  data-on:click__window="(a => a &amp;&amp; !evt.defaultPrevented &amp;&amp; !(evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button) &amp;&amp; a.origin == location.origin &amp;&amp; !(a.hash &amp;&amp; a.pathname + a.search == location.pathname + location.search) &amp;&amp; (evt.preventDefault(), el._kitlink?.classList.remove('busy'), el._kitlink = a, a.classList.add('busy'), el._kitshown = a.pathname + a.search,
+  data-effect="$_kitnavbusy || (el._kitlink?.classList.remove('busy')
+{%- if let Some(signal) = follows %}, ${{ signal }} &amp;&amp; ${{ signal }} != location.pathname + location.search &amp;&amp; (history.state?.kit || history.replaceState({kit: 1}, ''), el._kitshown = ${{ signal }}, history.pushState({kit: 1}, '', ${{ signal }})){% endif %})"
+  data-on:click__window="(a => a &amp;&amp; document.getElementById('kit-navigation') == el &amp;&amp; !evt.defaultPrevented &amp;&amp; !(evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button) &amp;&amp; a.origin == location.origin &amp;&amp; !(a.hash &amp;&amp; a.pathname + a.search == location.pathname + location.search) &amp;&amp; (evt.preventDefault(), el._kitlink?.classList.remove('busy'), el._kitlink = a, a.classList.add('busy'), el._kitshown = a.pathname + a.search,
 {%- if follows.is_none() %} history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', a.href),{% endif %} @get(a.pathname + a.search)))(evt.target.closest('[data-kit-in-place] a[href]:not([target]):not([download]):not([data-whole])'))"
-  data-on:popstate__window="(at => at != el._kitshown &amp;&amp; (el._kitshown = at, @get(at)))(location.pathname + location.search)"></div>
+  data-on:popstate__window="(at => document.getElementById('kit-navigation') == el &amp;&amp; at != el._kitshown &amp;&amp; (el._kitshown = at, @get(at)))(location.pathname + location.search)"></div>
