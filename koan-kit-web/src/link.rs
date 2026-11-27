@@ -4,6 +4,7 @@ use std::fmt;
 
 use askama::Template;
 
+use crate::action::Busy;
 use crate::arg::{Content, Flag, Markup, Text};
 use crate::attrs::{Attrs, component};
 use crate::button::in_place_attributes;
@@ -72,8 +73,17 @@ struct InPlace<'l, 'a>(&'l Link<'a>);
 
 impl fmt::Display for InPlace<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.in_place {
-            in_place_attributes(f, &self.0.busy_key)?;
+        let link = self.0;
+        if link.in_place {
+            let label = link.label.to_string();
+            let own = Busy::own(&[
+                "link",
+                link.href.as_str(),
+                link.busy_key.as_str(),
+                link.attrs.id(),
+                &label,
+            ]);
+            in_place_attributes(f, own, &link.busy_key)?;
         }
         Ok(())
     }

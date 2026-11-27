@@ -467,6 +467,19 @@ impl<'a> Button<'a> {
 }
 
 impl Button<'_> {
+    /// Its own busy signal, named by what it is: how it goes and where, the form it sends, its group, its id and its
+    /// label. Two buttons alike in all of these are told apart by an [`id`](Self::id).
+    fn own_busy(&self, method: &str, url: &str) -> Busy {
+        Busy::own(&[
+            method,
+            url,
+            self.form.as_str(),
+            self.busy_key.as_str(),
+            self.attrs.id(),
+            self.label.as_str(),
+        ])
+    }
+
     /// Busy and disabled while `signal`'s request runs. What the server set (`.busy(true)`, `.disabled(true)`) is
     /// folded into the expressions, since Datastar's class and attr plugins own the attribute once they bind and would
     /// strip a static one as the signal starts false.
@@ -518,8 +531,12 @@ history.pushState({kit: 1}, '', el.href), \
 window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; location.reload()), 1)";
 
 /// Writes the attributes that make a link load in place, busy by its own signal and ignored while its group's runs.
-pub(crate) fn in_place_attributes(f: &mut fmt::Formatter<'_>, key: &Text<'_>) -> fmt::Result {
-    let (own, group) = indicators(f, key)?;
+pub(crate) fn in_place_attributes(
+    f: &mut fmt::Formatter<'_>,
+    own: Busy,
+    key: &Text<'_>,
+) -> fmt::Result {
+    let (own, group) = indicators(f, own, key)?;
     write!(
         f,
         " data-class:busy=\"${own}\" data-on:click=\"{FOLLOW_GUARD}${group} || (@get(el.getAttribute('href'){}), {FOLLOW_HISTORY}))\"",
@@ -568,7 +585,7 @@ impl fmt::Display for Button<'_> {
             Act::Link(href) if !self.disabled => {
                 attribute(f, "href", href.as_str())?;
                 if self.in_place {
-                    in_place_attributes(f, &self.busy_key)?;
+                    in_place_attributes(f, self.own_busy("link", href.as_str()), &self.busy_key)?;
                 }
             }
             Act::Nothing | Act::Link(_) => {}
@@ -587,7 +604,11 @@ impl fmt::Display for Button<'_> {
                 ask: None,
             } => {
                 attribute(f, "data-url", url.as_str())?;
-                let (own, group) = indicators(f, &self.busy_key)?;
+                let (own, group) = indicators(
+                    f,
+                    self.own_busy(method.form(), url.as_str()),
+                    &self.busy_key,
+                )?;
                 self.busy_by(f, own, group)?;
                 // A form left invalid would start a request Datastar abandons unsettled, keeping the button busy for
                 // good, so the form is checked here first, its messages shown, as a Form's submit does.
@@ -679,8 +700,11 @@ impl fmt::Display for Button<'_> {
 
 /// Declares the signals a request is busy by, as the indicators of the element that sends it: its own, which spins
 /// it, and its group's, which disables every control in the group, or its own again when it has none.
-fn indicators(f: &mut fmt::Formatter<'_>, key: &Text<'_>) -> Result<(Busy, Busy), fmt::Error> {
-    let own = Busy::own();
+fn indicators(
+    f: &mut fmt::Formatter<'_>,
+    own: Busy,
+    key: &Text<'_>,
+) -> Result<(Busy, Busy), fmt::Error> {
     write!(f, " data-indicator=\"{own}\"")?;
     let group = match key.present() {
         Some(key) => {
@@ -699,6 +723,7 @@ component!(Button);
 mod tests {
     use super::*;
     use crate::icon;
+    use crate::link::Link;
 
     #[test]
     fn a_post_carries_its_url_as_data_and_the_expression_is_constant() {
@@ -743,6 +768,28 @@ mod tests {
             signal(&other),
             "a patch adding or removing one would clear the other's busy state"
         );
+        let twin = Button::primary("scan")
+            .post("/scan")
+            .id("scan-2")
+            .to_string();
+        assert_ne!(busy, signal(&twin), "an id tells two alike apart");
+    }
+
+    #[test]
+    fn the_same_button_draws_the_same_markup() {
+        let draw = || {
+            Button::bordered("retry")
+                .post("/jobs/1/retry")
+                .busy_key("card-1")
+                .to_string()
+        };
+        assert_eq!(
+            draw(),
+            draw(),
+            "a stream that sends a region only when it differs would resend it"
+        );
+        let link = || Link::new("next", "/p/2").in_place().to_string();
+        assert_eq!(link(), link());
     }
 
     #[test]
