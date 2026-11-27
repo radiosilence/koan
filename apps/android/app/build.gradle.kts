@@ -168,7 +168,7 @@ val koanFfi = tasks.register<KoanFfi>("koanFfi") {
  * Gradle rather than fetched by Robolectric at test time, so they come from
  * Gradle's cache and repositories like any dependency.
  */
-val robolectricSdks: Configuration by configurations.creating {
+val robolectricSdks = configurations.create("robolectricSdks") {
     isCanBeConsumed = false
     isTransitive = false
 }
