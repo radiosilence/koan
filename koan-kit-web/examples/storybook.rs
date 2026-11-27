@@ -15,7 +15,7 @@ use askama::Template;
 
 use askama_datastar::{Html, events, require_datastar_on_post, script};
 use axum::Router;
-use axum::extract::Query;
+use axum::extract::{OriginalUri, Query};
 use axum::http::header;
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
@@ -92,9 +92,13 @@ async fn moved() -> Response {
 }
 
 /// A page read in place: its answer, a moment later, says so.
-async fn place() -> Response {
+async fn place(OriginalUri(uri): OriginalUri) -> Response {
     tokio::time::sleep(Duration::from_millis(900)).await;
-    events([kit::Flash::ok("Loaded in place.").patch().into()])
+    let url = serde_json::json!({ "url": askama_datastar::address(&uri) });
+    events([
+        kit::Flash::ok("Loaded in place.").patch().into(),
+        askama_datastar::PatchSignals::new(url.to_string()).into(),
+    ])
 }
 
 async fn failed() -> Response {

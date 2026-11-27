@@ -10,7 +10,7 @@ use std::fmt;
 
 use crate::action::{Busy, Method};
 use crate::arg::{Flag, Text};
-use crate::attrs::{Attrs, Escaped, attribute, component, escape};
+use crate::attrs::{Attrs, attribute, component};
 use crate::icon::Glyph;
 use crate::sheet::{CONFIRM_ID, OPEN_CONFIRM};
 
@@ -90,7 +90,8 @@ struct Ask<'a> {
 /// [`opens`](Self::opens), [`closes`](Self::closes) or [`submit`](Self::submit). A request can ask first, with
 /// [`confirm`](Self::confirm) or [`preview`](Self::preview).
 #[must_use = "a button draws nothing until it is rendered"]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, askama::Template)]
+#[template(path = "button.html")]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each is a prop of its own, as HTML's boolean attributes are"
@@ -545,54 +546,93 @@ pub(crate) fn in_place_attributes(
     )
 }
 
-impl fmt::Display for Button<'_> {
+impl<'a> Button<'a> {
+    /// Whether it is drawn as a link.
+    fn is_link(&self) -> bool {
+        matches!(self.act, Act::Link(_))
+    }
+
+    /// Whether it sends a form's fields with its request.
+    fn sends_form(&self) -> bool {
+        !self.form.is_empty() && matches!(self.act, Act::Request { .. })
+    }
+
+    /// Its `type`: a submit when it submits or sends a form.
+    fn kind(&self) -> &'static str {
+        if self.sends_form() || matches!(self.act, Act::Submit(_)) {
+            "submit"
+        } else {
+            "button"
+        }
+    }
+
+    /// Its `class`: the kit's, then the app's.
+    fn class_attr(&self) -> Option<String> {
+        let class = format!(
+            "{}{}",
+            self.classes(self.is_link()).join(" "),
+            self.attrs.classes()
+        );
+        let class = class.trim_start();
+        (!class.is_empty()).then(|| class.to_owned())
+    }
+
+    /// The size its glyphs are drawn at.
+    fn px(&self) -> f64 {
+        if self.compact {
+            15.6
+        } else if self.icon_only {
+            18.0
+        } else {
+            self.weight.glyph_px()
+        }
+    }
+
+    /// What it does, as attributes.
+    fn wiring(&self) -> Wiring<'_, 'a> {
+        Wiring(self)
+    }
+}
+
+/// A button's attributes between its class and the common props: what it does, its name and value, and its state.
+struct Wiring<'b, 'a>(&'b Button<'a>);
+
+impl askama::filters::HtmlSafe for Wiring<'_, '_> {}
+
+impl fmt::Display for Wiring<'_, '_> {
     #[expect(
         clippy::too_many_lines,
-        reason = "one element, its attributes written in order, read top to bottom"
+        reason = "one element's attributes written in order, read top to bottom"
     )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let link = matches!(self.act, Act::Link(_));
-        let sends = !self.form.is_empty() && matches!(self.act, Act::Request { .. });
-        if link {
-            f.write_str("<a")?;
-        } else {
-            let kind = if sends || matches!(self.act, Act::Submit(_)) {
-                "submit"
-            } else {
-                "button"
-            };
-            write!(f, "<button type=\"{kind}\"")?;
-        }
-        let classes = self.classes(link);
-        if !classes.is_empty() || !self.attrs.classes().is_empty() {
-            write!(
-                f,
-                " class=\"{}{}\"",
-                Escaped(&classes.join(" ")),
-                self.attrs.classes()
-            )?;
-        }
-        if sends && let Act::Request { method, url, .. } = &self.act {
+        let button = self.0;
+        let link = button.is_link();
+        let sends = button.sends_form();
+        if sends && let Act::Request { method, url, .. } = &button.act {
             // The form's own submit, should one be made before Datastar loads: refused by `require_datastar_on_post`,
             // as a Form's is, or read as a page.
-            attribute(f, "form", self.form.as_str())?;
+            attribute(f, "form", button.form.as_str())?;
             attribute(f, "formaction", url.as_str())?;
             if *method == Method::Get {
                 f.write_str(" formmethod=\"get\"")?;
             }
         }
-        match &self.act {
+        match &button.act {
             // A disabled link has no href, so it neither navigates nor takes focus.
-            Act::Link(href) if !self.disabled => {
+            Act::Link(href) if !button.disabled => {
                 attribute(f, "href", href.as_str())?;
-                if self.in_place {
-                    in_place_attributes(f, self.own_busy("link", href.as_str()), &self.busy_key)?;
+                if button.in_place {
+                    in_place_attributes(
+                        f,
+                        button.own_busy("link", href.as_str()),
+                        &button.busy_key,
+                    )?;
                 }
             }
             Act::Nothing | Act::Link(_) => {}
             Act::Submit(signal) => {
                 if let Some(busy) = signal {
-                    self.busy_attributes(f, *busy)?;
+                    button.busy_attributes(f, *busy)?;
                 }
             }
             Act::Command { command, target } => {
@@ -607,10 +647,10 @@ impl fmt::Display for Button<'_> {
                 attribute(f, "data-url", url.as_str())?;
                 let (own, group) = indicators(
                     f,
-                    self.own_busy(method.form(), url.as_str()),
-                    &self.busy_key,
+                    button.own_busy(method.form(), url.as_str()),
+                    &button.busy_key,
                 )?;
-                self.busy_by(f, own, group)?;
+                button.busy_by(f, own, group)?;
                 // A form left invalid would start a request Datastar abandons unsettled, keeping the button busy for
                 // good, so the form is checked here first, its messages shown, as a Form's submit does.
                 let prevent = if sends {
@@ -636,10 +676,10 @@ impl fmt::Display for Button<'_> {
                 if let Some(preview) = ask.preview.present() {
                     attribute(f, "data-preview", preview)?;
                 }
-                if let Some(detail) = self.detail.present() {
+                if let Some(detail) = button.detail.present() {
                     attribute(f, "data-detail", detail)?;
                 }
-                if self.yes_bad {
+                if button.yes_bad {
                     f.write_str(" data-yes-bad")?;
                 }
                 if sends {
@@ -658,44 +698,27 @@ impl fmt::Display for Button<'_> {
                 }
             }
         }
-        if let Some((name, value)) = &self.named {
+        if let Some((name, value)) = &button.named {
             write!(f, " name=\"{name}\"")?;
             attribute(f, "value", value.as_str())?;
         }
-        if self.icon_only {
-            attribute(f, "aria-label", self.label.as_str())?;
+        if button.icon_only {
+            attribute(f, "aria-label", button.label.as_str())?;
         }
-        if let Some((_, pressed)) = self.toggle {
+        if let Some((_, pressed)) = button.toggle {
             write!(f, " aria-pressed=\"{pressed}\"")?;
         }
-        if self.disabled {
+        if button.disabled {
             f.write_str(if link {
                 " aria-disabled=\"true\""
             } else {
                 " disabled"
             })?;
         }
-        if self.autofocus {
+        if button.autofocus {
             f.write_str(" autofocus")?;
         }
-        write!(f, "{}>", self.attrs)?;
-        let px = if self.compact {
-            15.6
-        } else if self.icon_only {
-            18.0
-        } else {
-            self.weight.glyph_px()
-        };
-        if let Some(glyph) = self.icon {
-            write!(f, "{}", glyph.svg(px))?;
-        }
-        if let Some((glyph, _)) = self.toggle {
-            write!(f, "{}", glyph.svg(px).class("pressed"))?;
-        }
-        if !self.icon_only {
-            escape(f, self.label.as_str())?;
-        }
-        f.write_str(if link { "</a>" } else { "</button>" })
+        Ok(())
     }
 }
 

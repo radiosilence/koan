@@ -146,7 +146,11 @@ pub fn sections() -> Vec<Section> {
                         .action(kit::Button::quiet("close").icon_only(kit::icon::CLOSE).compact().post("/stub/slow")))
                     .tab(kit::Tab::new("Polar Bear", "/stub/place?polar").in_place())),
                 story!(Card, "story/card.html"),
-                entry!(kit::Navigation::new().follows("url")),
+                // Shown, not drawn: the page's one Navigation is in its shell, and a second would take every click.
+                Entry {
+                    code: "kit::Navigation::new().follows(\"url\") // once, in the shell",
+                    html: Html::new(),
+                },
                 story!(InPlace, "story/in_place.html"),
             ],
         },
@@ -345,7 +349,7 @@ pub fn page(live: bool) -> Html {
             .failed("That did not work. Try again.")
             .unreachable("The storybook's server could not be reached.")
             .html(),
-        navigation: kit::Navigation::new().html(),
+        navigation: kit::Navigation::new().follows("url").html(),
     };
     render(&page)
 }

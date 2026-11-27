@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="out.css">
 <link rel="icon" href="data:,">
 </head>
-<body class="mx-auto max-w-3xl px-5 py-8">
+<body class="mx-auto max-w-3xl px-5 py-8" data-signals="{url: ''}">
 <a class="skip" href="#main">skip to the kit</a>
 <main id="main">
 <h1>the kōan web kit</h1>
@@ -252,12 +252,8 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
 {% endfilter %}</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
-    <div><div hidden id="kit-navigation" data-indicator="_kitnavbusy"
-  data-init="el._kitshown = location.pathname + location.search"
-  data-effect="($_kitnavbusy || el._kitlink?.classList.remove('busy')), $url &amp;&amp; $url != location.pathname + location.search &amp;&amp; (history.state?.kit || history.replaceState({kit: 1}, ''), el._kitshown = $url, history.pushState({kit: 1}, '', $url))"
-  data-on:click__window="(a => a &amp;&amp; !evt.defaultPrevented &amp;&amp; !(evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button) &amp;&amp; a.origin == location.origin &amp;&amp; !(a.hash &amp;&amp; a.pathname + a.search == location.pathname + location.search) &amp;&amp; (evt.preventDefault(), el._kitlink?.classList.remove('busy'), el._kitlink = a, a.classList.add('busy'), el._kitshown = a.pathname + a.search, @get(a.pathname + a.search)))(evt.target.closest('[data-kit-in-place] a[href]:not([target]):not([download]):not([data-whole])'))"
-  data-on:popstate__window="(at => at != el._kitshown &amp;&amp; (el._kitshown = at, @get(at)))(location.pathname + location.search)"></div></div>
-    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Navigation::new().follows(&#34;url&#34;)</pre></figcaption>
+    <div></div>
+    <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Navigation::new().follows(&#34;url&#34;) // once, in the shell</pre></figcaption>
   </figure>
   <figure class="m-0 grid gap-2">
     <div><ul class="rows" data-kit-in-place>
@@ -878,8 +874,8 @@ None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek
   data-on:kit-flash__window="(d => (el.replaceChildren(Object.assign(document.createElement('p'), {id: 'flash-' + Date.now(), className: d.bad ? 'toast bad' : d.stays || d.href ? 'toast' : 'toast brief', textContent: d.message})), d.bad &amp;&amp; el.firstChild.setAttribute('role', 'alert'), d.href &amp;&amp; el.firstChild.append(' ', Object.assign(document.createElement('a'), {href: d.href, textContent: d.link || d.href})), (d.bad || d.stays || d.href) &amp;&amp; el.firstChild.addEventListener('click', e => e.target.closest('a') || e.currentTarget.remove())))(evt.detail)"></div>
 <div hidden id="kit-navigation" data-indicator="_kitnavbusy"
   data-init="el._kitshown = location.pathname + location.search"
-  data-effect="($_kitnavbusy || el._kitlink?.classList.remove('busy'))"
-  data-on:click__window="(a => a &amp;&amp; !evt.defaultPrevented &amp;&amp; !(evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button) &amp;&amp; a.origin == location.origin &amp;&amp; !(a.hash &amp;&amp; a.pathname + a.search == location.pathname + location.search) &amp;&amp; (evt.preventDefault(), el._kitlink?.classList.remove('busy'), el._kitlink = a, a.classList.add('busy'), el._kitshown = a.pathname + a.search, history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', a.href), @get(a.pathname + a.search)))(evt.target.closest('[data-kit-in-place] a[href]:not([target]):not([download]):not([data-whole])'))"
-  data-on:popstate__window="(at => at != el._kitshown &amp;&amp; (el._kitshown = at, @get(at)))(location.pathname + location.search)"></div>
+  data-effect="$_kitnavbusy || (el._kitlink?.classList.remove('busy'), $url &amp;&amp; $url != location.pathname + location.search &amp;&amp; (history.state?.kit || history.replaceState({kit: 1}, ''), el._kitshown = $url, history.pushState({kit: 1}, '', $url)))"
+  data-on:click__window="(a => a &amp;&amp; document.getElementById('kit-navigation') == el &amp;&amp; !evt.defaultPrevented &amp;&amp; !(evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button) &amp;&amp; a.origin == location.origin &amp;&amp; !(a.hash &amp;&amp; a.pathname + a.search == location.pathname + location.search) &amp;&amp; (evt.preventDefault(), el._kitlink?.classList.remove('busy'), el._kitlink = a, a.classList.add('busy'), el._kitshown = a.pathname + a.search, @get(a.pathname + a.search)))(evt.target.closest('[data-kit-in-place] a[href]:not([target]):not([download]):not([data-whole])'))"
+  data-on:popstate__window="(at => document.getElementById('kit-navigation') == el &amp;&amp; at != el._kitshown &amp;&amp; (el._kitshown = at, @get(at)))(location.pathname + location.search)"></div>
 </body>
 </html>
