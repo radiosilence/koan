@@ -84,15 +84,16 @@ impl From<&&u64> for Bytes {
 pub fn size(bytes: impl Into<Bytes>) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let bytes = bytes.into().0;
-    let mut unit = 0;
-    while unit < UNITS.len() - 1 && bytes >= 1024_u64.pow(unit as u32 + 1) {
+    let (mut unit, mut step) = (0, 1024_u64);
+    while unit < UNITS.len() - 1 && bytes >= step {
         unit += 1;
+        step = step.saturating_mul(1024);
     }
     if unit == 0 {
         return format!("{bytes} B");
     }
     #[allow(clippy::cast_precision_loss)]
-    let scaled = bytes as f64 / 1024_f64.powi(unit as i32);
+    let scaled = bytes as f64 / (step / 1024) as f64;
     format!("{:.1} {}", (scaled * 10.0).round() / 10.0, UNITS[unit])
 }
 
@@ -147,7 +148,7 @@ impl<'a> Transfer<'a> {
 
     /// How often the server reads it, when not once a second: a transfer moves for two of these past its reading.
     pub fn every(mut self, interval: Duration) -> Self {
-        self.every = (interval != REPORT).then(|| interval.as_millis());
+        self.every = (interval != REPORT).then_some(interval.as_millis());
         self
     }
 
@@ -202,7 +203,7 @@ mod tests {
     const AT: i64 = 1_790_000_000_000;
 
     /// The markup without the mover, whose own text names the parts it writes.
-    fn markup(transfer: Transfer<'_>) -> String {
+    fn markup(transfer: &Transfer<'_>) -> String {
         let html = transfer.to_string();
         let (head, rest) = html
             .split_once(" data-init=\"")
@@ -266,7 +267,7 @@ mod tests {
 
     #[test]
     fn a_still_transfer_has_no_rate_or_instant() {
-        let html = markup(Transfer::new(5_u64, 10_u64).rate(0_u64, AT));
+        let html = markup(&Transfer::new(5_u64, 10_u64).rate(0_u64, AT));
         assert!(html.contains("data-rate=\"0\" data-at=\"0\""), "{html}");
         assert!(!html.contains("/s<"), "{html}");
         assert!(!html.contains("data-kit-left"), "{html}");
@@ -278,7 +279,7 @@ mod tests {
 
     #[test]
     fn an_unknown_total_waits_and_counts_nothing_down() {
-        let html = markup(Transfer::new(2048_u64, 0_u64).rate(1024_u64, AT));
+        let html = markup(&Transfer::new(2048_u64, 0_u64).rate(1024_u64, AT));
         assert!(
             html.contains("<progress class=\"meter\"></progress>"),
             "{html}"
