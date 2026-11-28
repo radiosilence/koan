@@ -1,12 +1,5 @@
-{#- An instant: the UTC reading as its text, rewritten in the reader's zone and language as it starts. A relative time
-    is worked out against the reader's clock in the largest unit it fills, recomputed each minute, its title the date
-    and time. -#}
+{#- An instant: the UTC reading as its text, rewritten in the reader's zone and language by the page's one localiser,
+    which the first time to start installs. It localises a time again whenever a morph puts the server's reading back,
+    and recomputes the relative ones each minute. -#}
 {%- let utc = self.utc() -%}
-<time datetime="{{ utc.iso() }}" data-at="{{ at }}"{% if !attrs.classes().is_empty() %} class="{{ attrs.class_names() }}"{% endif %}{{ attrs }}
-{%- match style %}
-{%- when Style::Moment %} data-init="el.textContent = new Date(+el.dataset.at).toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'})"
-{%- when Style::Date %} data-init="el.textContent = new Date(+el.dataset.at).toLocaleDateString([], {dateStyle: 'medium'})"
-{%- when Style::Clock %} data-init="el.textContent = new Date(+el.dataset.at).toLocaleTimeString([], {hourCycle: 'h23'})"
-{%- when Style::Relative %}
-{%- let relative = "el.title = new Date(+el.dataset.at).toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'}), el.textContent = (s => (u => new Intl.RelativeTimeFormat([], {numeric: 'auto'}).format(Math.round(s / u[0]), u[1]))([[31536000, 'year'], [2592000, 'month'], [604800, 'week'], [86400, 'day'], [3600, 'hour']].find(u => Math.abs(s) >= u[0]) || [60, 'minute']))((+el.dataset.at - Date.now()) / 1000)" %} data-init="{{ relative }}" data-on-interval__duration.60s="{{ relative }}"
-{%- endmatch %}>{{ utc.reading(*style) }}</time>
+<time datetime="{{ utc.iso() }}" data-at="{{ at }}" data-time="{{ self.kind() }}"{% if !attrs.classes().is_empty() %} class="{{ attrs.class_names() }}"{% endif %}{{ attrs }} data-init="{{ crate::time::LOCALISE }}">{{ utc.reading(*style) }}</time>

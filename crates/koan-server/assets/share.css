@@ -1620,6 +1620,9 @@
     padding-inline: calc(var(--spacing) * 5);
     padding-bottom: calc(var(--spacing) * 5);
   }
+  dialog.sheet[data-url]:has(> section[aria-busy="true"]) > footer {
+    visibility: hidden;
+  }
   .tabs {
     display: flex;
     flex-wrap: wrap;

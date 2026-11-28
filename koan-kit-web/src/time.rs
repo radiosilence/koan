@@ -1,12 +1,37 @@
 //! An instant, shown in the reader's own zone: [`Time`].
 //!
 //! The server knows only UTC, so the page carries the instant and the UTC reading as its fallback, and the browser
-//! rewrites it in the reader's zone and language as the element starts. A relative time is computed against the
-//! reader's clock, not the server's, and kept current while the page is open.
+//! rewrites it in the reader's zone and language. A relative time is computed against the reader's clock, not the
+//! server's, and kept current while the page is open.
+//!
+//! One localiser does this for the whole page, installed by the first time to start ([`LOCALISE`]). A stream that
+//! sends a region again morphs it, and the morph keeps each `<time>` but sets its text back to the server's UTC
+//! reading without starting it again, so the localiser watches the document and rewrites any time whose text or
+//! instant a morph changed. Its one timer recomputes every relative time each minute, through formatters made once.
 
 use askama::Template;
 
 use crate::attrs::{Attrs, component};
+
+/// What every [`Time`] starts with: install the page's localiser if no time has yet, then localise this one.
+///
+/// The localiser reads an element's instant from `data-at` and its style from `data-time`, so nothing in it comes from
+/// the server. It writes only a text or title that differs from what it would write, which is how its own writes,
+/// heard by its observer, come to rest.
+pub(crate) const LOCALISE: &str = concat!(
+    "(window.kitTime ??= (f => (",
+    "new MutationObserver(ms => ms.forEach(m => (t => t && f(t))",
+    "((m.target.nodeType == 1 ? m.target : m.target.parentElement)?.closest('time[data-at][data-time]'))))",
+    ".observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: ['data-at', 'title']}),",
+    " setInterval(() => document.querySelectorAll('time[data-time=relative]').forEach(f), 60000), f))",
+    "(((m, d, c, r) => t => (k => (v => (t.textContent != v[0] && (t.textContent = v[0]), t.title != v[1] && (t.title = v[1])))",
+    "(k == 'date' ? [d.format(+t.dataset.at), ''] : k == 'clock' ? [c.format(+t.dataset.at), '']",
+    " : k == 'relative' ? [(s => (u => r.format(Math.round(s / u[0]), u[1]))",
+    "([[31536000, 'year'], [2592000, 'month'], [604800, 'week'], [86400, 'day'], [3600, 'hour']].find(u => Math.abs(s) >= u[0]) || [60, 'minute']))",
+    "((t.dataset.at - Date.now()) / 1000), m.format(+t.dataset.at)] : [m.format(+t.dataset.at), '']))(t.dataset.time))",
+    "(new Intl.DateTimeFormat([], {dateStyle: 'medium', timeStyle: 'short'}), new Intl.DateTimeFormat([], {dateStyle: 'medium'}),",
+    " new Intl.DateTimeFormat([], {timeStyle: 'medium', hourCycle: 'h23'}), new Intl.RelativeTimeFormat([], {numeric: 'auto'}))))(el)",
+);
 
 /// How a [`Time`] reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,7 +44,8 @@ enum Style {
 
 /// An instant in a `<time>` element: `kit::Time::millis(at).relative()`.
 ///
-/// Drawn with the UTC reading as its text and an ISO 8601 `datetime`, and rewritten by the browser as it starts: the
+/// Drawn with the UTC reading as its text and an ISO 8601 `datetime`, and rewritten by the browser, again after a
+/// morph puts the UTC reading back: the
 /// date and time by default, the [`date`](Self::date) alone, the [`clock`](Self::clock) to the second for a log line,
 /// or [`relative`](Self::relative) to now ("3 days ago"), which the browser recomputes each minute and whose title is
 /// the date and time.
@@ -63,6 +89,16 @@ impl Time<'_> {
     pub fn relative(mut self) -> Self {
         self.style = Style::Relative;
         self
+    }
+
+    /// The style, as `data-time` names it for the localiser.
+    fn kind(&self) -> &'static str {
+        match self.style {
+            Style::Moment => "moment",
+            Style::Date => "date",
+            Style::Clock => "clock",
+            Style::Relative => "relative",
+        }
     }
 
     fn utc(&self) -> Utc {
@@ -150,20 +186,47 @@ mod tests {
             "{html}"
         );
         assert!(html.ends_with(">2026-11-27 14:55 UTC</time>"), "{html}");
-        assert!(html.contains("new Date(+el.dataset.at)"), "{html}");
+        assert!(html.contains("data-time=\"moment\""), "{html}");
+        assert!(html.contains("window.kitTime ??="), "{html}");
         let clock = Time::millis(1_795_791_315_000).clock().to_string();
         assert!(clock.ends_with(">14:55:15</time>"), "{clock}");
-        assert!(clock.contains("hourCycle: 'h23'"), "{clock}");
+        assert!(clock.contains("data-time=\"clock\""), "{clock}");
     }
 
     #[test]
     fn a_relative_time_keeps_current() {
         let html = Time::millis(0).relative().to_string();
-        assert!(html.contains("Intl.RelativeTimeFormat"), "{html}");
-        assert!(html.contains("data-on-interval__duration.60s="), "{html}");
+        assert!(html.contains("data-time=\"relative\""), "{html}");
+        assert!(LOCALISE.contains("Intl.RelativeTimeFormat"));
+        assert!(LOCALISE.contains("time[data-time=relative]"));
+    }
+
+    #[test]
+    fn every_time_shares_one_localiser() {
+        for html in [
+            Time::millis(0).to_string(),
+            Time::millis(0).date().to_string(),
+            Time::millis(0).clock().to_string(),
+            Time::millis(0).relative().to_string(),
+        ] {
+            assert!(
+                !html.contains("on-interval"),
+                "a timer per time would start hundreds on a long list: {html}"
+            );
+            assert_eq!(html.matches("data-init=").count(), 1, "{html}");
+        }
+        assert_eq!(LOCALISE.matches("setInterval").count(), 1);
         assert!(
-            !Time::millis(0).to_string().contains("on-interval"),
-            "only a relative time changes as the clock moves"
+            LOCALISE.starts_with("(window.kitTime ??="),
+            "installed once a page"
+        );
+        assert!(
+            LOCALISE.contains("new MutationObserver"),
+            "a morph sets the text back to UTC, so the localiser has to hear it"
+        );
+        assert!(
+            !LOCALISE.contains('"'),
+            "it sits in a double-quoted attribute"
         );
     }
 }

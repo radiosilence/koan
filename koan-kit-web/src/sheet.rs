@@ -79,6 +79,10 @@ impl<'a> Sheet<'a> {
     /// depends on the server, such as a list of albums to move images into: it empties, shows the ensō, and fetches.
     /// The handler answers with [`Sheet::fill`]; an action that is done with it answers with [`Sheet::dismiss`]. The
     /// page's own script may change the address, `data-url` on the sheet, before it opens.
+    ///
+    /// Its [`actions`](Self::action) are hidden until the body arrives, so neither a press nor Tab and Return can act
+    /// on a body not yet there. If the read is answered with an error or cannot be sent, the sheet closes, and a
+    /// [`Flash::region`](crate::Flash::region) told [`failed`](crate::Flash::failed) says so.
     pub fn loads(mut self, url: impl Into<Text<'a>>) -> Self {
         self.loads = url.into();
         self
@@ -269,6 +273,29 @@ mod tests {
         assert!(fill.contains("&#60;b&#62;"), "{fill}");
         let dismiss = format!("{:?}", Sheet::dismiss("mover"));
         assert!(dismiss.contains("close()"), "{dismiss}");
+    }
+
+    #[test]
+    fn a_sheet_that_loads_closes_when_the_read_fails() {
+        let sheet = Sheet::new("mover", "move to")
+            .loads("/mover")
+            .action(Button::primary("move"))
+            .to_string();
+        assert!(
+            sheet.contains("data-on:datastar-fetch=\"evt.detail.el === el &amp;&amp; ['error', 'retries-failed'].includes(evt.detail.type) &amp;&amp; el.close()\""),
+            "a failed read must not leave the ensō turning: {sheet}"
+        );
+        assert!(
+            !Sheet::new("plain", "plain")
+                .to_string()
+                .contains("datastar-fetch"),
+            "a sheet that reads nothing hears nothing"
+        );
+        let css = include_str!("../kit.css");
+        assert!(
+            css.contains("dialog.sheet[data-url]:has(> section[aria-busy=\"true\"]) > footer {\n    visibility: hidden;"),
+            "its actions wait for the body, out of Tab's reach too"
+        );
     }
 
     #[test]
