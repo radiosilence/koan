@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, EntityId, EntityInputHandler, EventEmitter, FocusHandle,
-    Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Focusable, Font, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     ShapedLine, SharedString, Subscription, Task, UTF16Selection, Window, point, px,
 };
 use unicode_segmentation::UnicodeSegmentation as _;
@@ -113,6 +113,9 @@ pub struct FieldState {
     pub(super) bounds: Option<Bounds<Pixels>>,
     pub(super) line_height: Pixels,
     pub(super) scroll: Point<Pixels>,
+    /// The font and size the lines were shaped in, to measure text typed
+    /// since: the platform asks where the caret is before the next paint.
+    pub(super) font: Option<(Font, Pixels)>,
     /// A drag under way, by what unit, and the selection it started from.
     pub(super) drag: Option<(Unit, Range<usize>)>,
     undo: Vec<Snapshot>,
@@ -191,6 +194,7 @@ impl FieldState {
             bounds: None,
             line_height: px(0.0),
             scroll: Point::default(),
+            font: None,
             drag: None,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1282,13 +1286,18 @@ impl EntityInputHandler for FieldState {
         &mut self,
         range: Range<usize>,
         _: Bounds<Pixels>,
-        _: &mut Window,
+        window: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let range = self.utf16_range_to_text(&range);
         let bounds = self.bounds?;
-        let line = self.line_of(range.start)?;
-        let shaped = &self.lines[line];
+        let lines = self.measured(window);
+        let at = self.to_drawn(range.start);
+        let line = lines
+            .iter()
+            .rposition(|line| line.start <= at)
+            .or((!lines.is_empty()).then_some(0))?;
+        let shaped = &lines[line];
         let x = |offset: usize| {
             shaped
                 .shaped
@@ -1314,6 +1323,51 @@ impl EntityInputHandler for FieldState {
 }
 
 impl FieldState {
+    /// The lines as last painted while they still hold the text, or shaped
+    /// afresh in the painted font when an edit has changed it since: iOS
+    /// asks for the caret straight after each keystroke, before the field
+    /// paints again.
+    fn measured(&self, window: &Window) -> std::borrow::Cow<'_, [Line]> {
+        let drawn = self.drawn();
+        let current = drawn.split('\n').count() == self.lines.len()
+            && drawn
+                .split('\n')
+                .zip(&self.lines)
+                .all(|(text, line)| text == line.shaped.text.as_ref());
+        let Some((font, size)) = self.font.clone().filter(|_| !current) else {
+            return std::borrow::Cow::Borrowed(&self.lines);
+        };
+        let mut start = 0;
+        let lines = drawn
+            .split('\n')
+            .map(|text| {
+                let run = gpui::TextRun {
+                    len: text.len(),
+                    font: font.clone(),
+                    color: gpui::Hsla::default(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let runs = if text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![run]
+                };
+                let shaped = window.text_system().shape_line(
+                    SharedString::from(text.to_string()),
+                    size,
+                    &runs,
+                    None,
+                );
+                let line = Line { start, shaped };
+                start += text.len() + 1;
+                line
+            })
+            .collect();
+        std::borrow::Cow::Owned(lines)
+    }
+
     fn to_utf16(&self, offset: usize) -> usize {
         self.text[..offset.min(self.text.len())]
             .encode_utf16()

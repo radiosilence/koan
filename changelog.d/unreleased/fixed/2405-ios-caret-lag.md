@@ -1,0 +1,1 @@
+- **The caret follows the letter just typed on iOS.** The system caret was placed one keystroke behind, measured on the text as last drawn.
