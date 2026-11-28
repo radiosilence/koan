@@ -65,7 +65,7 @@ jobs:
     name: TestFlight (${{ matrix.platform }})
     needs: signable
     if: needs.signable.outputs.ready == 'true'
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 60
     # A runner per platform: one after the other, a release's uploads took
     # half an hour. A failed upload does not cancel the other platform's.
