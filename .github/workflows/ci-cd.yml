@@ -469,7 +469,7 @@ jobs:
   # koan-gui on macOS, which the job above cannot see.
   gui-mac:
     name: GUI (macOS)
-    runs-on: macos-latest
+    runs-on: xcode-27
     needs: changes
     if: needs.changes.outputs.gui_mac == 'true'
     timeout-minutes: 60
@@ -503,7 +503,7 @@ jobs:
   # (`just gui-present`). Catches the crashes no compile or unit test reaches.
   gui-smoke:
     name: GUI smoke (macOS)
-    runs-on: macos-latest
+    runs-on: xcode-27
     needs: changes
     if: needs.changes.outputs.gui_mac == 'true'
     timeout-minutes: 60
@@ -690,7 +690,7 @@ jobs:
   # push were. The release builds belong to `macos-release`.
   macos:
     name: macOS
-    runs-on: macos-latest
+    runs-on: xcode-27
     needs: changes
     if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
     timeout-minutes: 60
@@ -728,7 +728,7 @@ jobs:
   # and the Swift that calls it.
   ios:
     name: iOS
-    runs-on: macos-latest
+    runs-on: xcode-27
     needs: changes
     if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
     timeout-minutes: 60
@@ -760,7 +760,7 @@ jobs:
   # surfaces at a release. The xcodebuild is the typecheck.
   tvos:
     name: tvOS
-    runs-on: macos-latest
+    runs-on: xcode-27
     needs: changes
     if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
     timeout-minutes: 60
@@ -1092,7 +1092,7 @@ jobs:
   # publishing waits for both.
   macos-release:
     name: Release (macOS)
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 90
     needs: [changes, make-room]
     if: ${{ !cancelled() && needs.make-room.result == 'success' }}
@@ -1145,7 +1145,7 @@ jobs:
       matrix:
         include:
           - name: macos-arm64
-            runner: macos-latest
+            runner: xcode-27
           # The oldest runners, since the packages need at least the glibc
           # they were built with: 2.35, Ubuntu 22.04 and Debian 12 or later.
           - name: linux-x86_64
