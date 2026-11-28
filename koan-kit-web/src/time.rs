@@ -3,7 +3,10 @@
 //! The server knows only UTC, so the page carries the instant and the UTC reading as its fallback, and the browser
 //! rewrites it in the reader's zone and language. A relative time is computed against the reader's clock, not the
 //! server's, and kept current while the page is open. A counter of time spent or left is read against the server's
-//! clock, which the page carries beside it, and steps each second.
+//! clock, which the page learns once from [`server_clock`] on its `<body>`, and steps each second.
+//!
+//! A `<time>` renders the same markup for the same instant every time, so a stream that sends a region only when it
+//! differs sends one holding a counter only when the instant moves.
 //!
 //! One localiser does this for the whole page, installed by the first time to start ([`LOCALISE`]). A stream that
 //! sends a region again morphs it, and the morph keeps each `<time>` but sets its text back to the server's UTC
@@ -11,6 +14,7 @@
 //! instant a morph changed. One timer recomputes every relative time each minute, through formatters made once, and
 //! another steps the counters each second while any is moving.
 
+use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use askama::Template;
@@ -19,8 +23,9 @@ use crate::attrs::{Attrs, component};
 
 /// What every [`Time`] starts with: install the page's localiser if no time has yet, then localise this one.
 ///
-/// The localiser reads an element's instant from `data-at`, its style from `data-time` and, for a counter, the
-/// server's clock from `data-now`, so nothing in it comes from the server. It writes only a text or title that differs
+/// The localiser reads an element's instant from `data-at` and its style from `data-time`, and learns the server's
+/// clock once, as it installs, from the page's `data-kit-now`, so nothing in it comes from the server. Without one it
+/// reads counters against the reader's clock. It writes only a text or title that differs
 /// from what it would write, which is how its own writes, heard by its observer, come to rest. The second timer runs
 /// only while a counter is moving: an elapsed one always is, a remaining one until it reaches nought.
 pub(crate) const LOCALISE: &str = concat!(
@@ -31,8 +36,8 @@ pub(crate) const LOCALISE: &str = concat!(
     " k.r = new Intl.RelativeTimeFormat([], {numeric: 'auto'}),",
     " k.span = ms => (s => s < 60 ? s + 's' : (m => m < 60 ? m + 'm ' + String(s % 60).padStart(2, '0') + 's'",
     " : Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm')(Math.floor(s / 60)))(Math.max(0, Math.round(ms / 1000))),",
-    " k.now = t => (t._kitnow != t.dataset.now && (t._kitnow = t.dataset.now, t._kitskew = t.dataset.now ? t.dataset.now - Date.now() : 0),",
-    " Date.now() + t._kitskew),",
+    " k.skew = (n => n ? n - Date.now() : 0)(+document.querySelector('[data-kit-now]')?.dataset.kitNow || 0),",
+    " k.now = () => Date.now() + k.skew,",
     " k.read = (t, at, s) => s == 'date' ? [k.d.format(at), ''] : s == 'clock' ? [k.c.format(at), '']",
     " : s == 'elapsed' ? [k.span(k.now(t) - at), k.m.format(at)] : s == 'remaining' ? [k.span(at - k.now(t)), k.m.format(at)]",
     " : s == 'relative' ? [(x => (u => k.r.format(Math.round(x / u[0]), u[1]))",
@@ -45,7 +50,7 @@ pub(crate) const LOCALISE: &str = concat!(
     " k.go = t => k.f(t) && !k.ticking && (k.ticking = setTimeout(k.tick, 1000 - Date.now() % 1000)),",
     " new MutationObserver(ms => ms.forEach(x => (t => t && k.go(t))",
     "((x.target.nodeType == 1 ? x.target : x.target.parentElement)?.closest('time[data-at][data-time]'))))",
-    ".observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: ['data-at', 'data-now', 'title']}),",
+    ".observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: ['data-at', 'title']}),",
     " setInterval(() => document.querySelectorAll('time[data-time=relative]').forEach(k.f), 60000), k.go))({}))(el)",
 );
 
@@ -148,9 +153,10 @@ impl Time<'_> {
         self
     }
 
-    /// The server's clock when the counter was read, in milliseconds since the Unix epoch, for a reading measured
-    /// before it is drawn. Unless given, it is when the counter renders. A counter is read against it rather than the
-    /// reader's clock, so a reader whose clock is wrong still sees the right time spent or left.
+    /// When the counter's reading was taken, in milliseconds since the Unix epoch, for the words it says before the
+    /// browser starts it: "4m 07s" rather than the instant's date and time. Give it only a stable value, such as when a
+    /// measurement was made, never the time of rendering, or every render differs and a stream re-sends the region
+    /// each time. Once started, the counter reads the page's [`server_clock`].
     pub fn as_of(mut self, now: impl Into<Epoch>) -> Self {
         self.now = Some(now.into().0);
         self
@@ -168,22 +174,10 @@ impl Time<'_> {
         }
     }
 
-    /// The server's clock, which a counter is read against; `None` for any other reading.
-    fn server_now(&self) -> Option<i64> {
-        matches!(self.style, Style::Elapsed | Style::Remaining).then(|| {
-            self.now.unwrap_or_else(|| {
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_or(0, |since| {
-                        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-                    })
-            })
-        })
-    }
-
-    /// What the element says before the browser rewrites it.
+    /// What the element says before the browser rewrites it: a counter's reading when [`as_of`](Self::as_of) says
+    /// when it was taken, else the instant in UTC.
     fn reading(&self) -> String {
-        match (self.style, self.server_now()) {
+        match (self.style, self.now) {
             (Style::Elapsed, Some(now)) => span(now.saturating_sub(self.at)),
             (Style::Remaining, Some(now)) => span(self.at.saturating_sub(now)),
             (style, _) => Utc::of(self.at).reading(style),
@@ -196,6 +190,33 @@ impl Time<'_> {
 }
 
 component!(Time);
+
+/// The attribute that tells the page the server's clock, for the `<body>` of every page holding a counter:
+/// `<body{{ kit::server_clock() }}>`. Counters are read against it, so a reader whose clock is wrong still sees the
+/// right time spent or left. It belongs on the page, rendered once with it, never in a region a stream sends again.
+#[must_use]
+pub fn server_clock() -> ServerClock {
+    ServerClock(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| {
+                i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+            }),
+    )
+}
+
+/// What [`server_clock`] writes into a tag: ` data-kit-now="…"`, the server's clock in milliseconds since the Unix
+/// epoch.
+#[derive(Clone, Copy, Debug)]
+pub struct ServerClock(i64);
+
+impl fmt::Display for ServerClock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, " data-kit-now=\"{}\"", self.0)
+    }
+}
+
+impl askama::filters::HtmlSafe for ServerClock {}
 
 /// A counter's reading: seconds under a minute, minutes and seconds under an hour, then hours and minutes. Nought
 /// below nought. The localiser writes the same.
@@ -322,10 +343,31 @@ mod tests {
     }
 
     #[test]
+    fn a_counter_renders_the_same_for_the_same_instant() {
+        let first = Time::millis(1_000).elapsed().to_string();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert_eq!(
+            first,
+            Time::millis(1_000).elapsed().to_string(),
+            "a stream that sends only what differs must not re-send an unchanged counter"
+        );
+        assert!(!first.contains("data-now"), "{first}");
+        assert!(
+            first.ends_with(">1970-01-01 00:00 UTC</time>"),
+            "without a reading taken, the fallback is the instant: {first}"
+        );
+        assert!(
+            LOCALISE.contains("'[data-kit-now]'"),
+            "the clock is the page's, learned once"
+        );
+        let clock = server_clock().to_string();
+        assert!(clock.starts_with(" data-kit-now=\""), "{clock}");
+    }
+
+    #[test]
     fn a_counter_is_read_against_the_servers_clock() {
         let elapsed = Time::millis(1_000).elapsed().as_of(248_000).to_string();
         assert!(elapsed.contains("data-time=\"elapsed\""), "{elapsed}");
-        assert!(elapsed.contains("data-now=\"248000\""), "{elapsed}");
         assert!(elapsed.ends_with(">4m 07s</time>"), "{elapsed}");
         let left = Time::millis(3_901_000).remaining().as_of(1_000).to_string();
         assert!(left.ends_with(">1h 05m</time>"), "{left}");
@@ -333,20 +375,6 @@ mod tests {
         assert!(
             past.ends_with(">0s</time>"),
             "a deadline passed reads nought: {past}"
-        );
-        assert!(
-            !Time::millis(0)
-                .relative()
-                .to_string()
-                .contains("data-now=\""),
-            "only a counter needs the server's clock"
-        );
-        assert!(
-            Time::millis(0)
-                .elapsed()
-                .to_string()
-                .contains("data-now=\""),
-            "a counter carries the clock it was rendered by"
         );
     }
 

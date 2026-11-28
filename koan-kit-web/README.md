@@ -107,7 +107,7 @@ Text is escaped wherever it lands. Markup is a separate type, built from a compo
 | `Combo` | A control joined to the button it feeds |
 | `Check`, `Toggle` | A box leading its words inline, alone (`bare`), or as a row of a list with a picture and a detail; a settings row with the box trailing. Each a checkbox or a radio |
 | `RepeatField` | Rows of one input, sent under one name, which the kit adds, removes and fills from a paste of several values |
-| `Selection`, `SelectionCount`, `SelectionBar` | Rows to tick and act on together: a form whose select-all box, count and bar of actions (stuck to the window's foot while anything is ticked) follow its boxes, and which refuses to send with none ticked |
+| `Selection`, `SelectionCount`, `SelectionBar` | Rows to tick and act on together: a form whose select-all box, count and bar of actions (stuck to the window's foot while anything is ticked, an action for tagged rows only with `action_when`) follow its own boxes, and which refuses to send with none ticked |
 | `Status`, `Meter`, `Spinner` | A state in a tone, in words (`neutral` for one settled but not verified); progress as a hairline, named for a screen reader; the ensō, for anything on its way |
 | `Notice`, `Flash`, `Empty` | A message in place; one over the page; what stands where a list would be |
 | `Sheet`, `Confirm` | A dialog opened through `commandfor`, kept above an on-screen keyboard, whose body can load as it opens; the page's one sheet for asking before a change |
@@ -116,6 +116,7 @@ Text is escaped wherever it lands. Markup is a separate type, built from a compo
 | `Tabs`, `Tab` | A row of addresses, each with a count, actions, a tone and a busy state |
 | `Head`, `ImportMap`, `SkipLink`, `TopBar`, `Wordmark`, `Footer`, `Release` | The page around the content; the wordmark alone for a page without the bar |
 | `scrolls_into_view()` | The attribute that brings a region the server draws into view as it arrives |
+| `server_clock()` | The attribute for a page's `<body>` that gives counters the server's clock, once per page |
 | `icon::*` | The kōan icon set, `kit::icon::HEART.svg(15)` |
 
 The common props, on every component: `id`, `class` for the app's own layout utilities, `italic` for words set apart without a louder tone, `data`, `attr`, and `datastar` for a Datastar attribute the kit does not write. Every component also has `html` and `patch`, so a handler answers with one: `events([kit::Flash::ok("Saved.").patch().into()])`.

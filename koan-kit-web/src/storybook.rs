@@ -253,10 +253,10 @@ pub fn sections() -> Vec<Section> {
                 story!(
                     SelectionStory,
                     "story/selection.html",
-                    albums: Vec<(&'static str, &'static str)> = vec![
-                        ("/music/untrue", "Burial: Untrue"),
-                        ("/music/love", "Phace: Love Songs"),
-                        ("/music/held", "Polar Bear: Held on the Tips of Fingers"),
+                    albums: Vec<(&'static str, &'static str, &'static str)> = vec![
+                        ("/music/untrue", "Burial: Untrue", ""),
+                        ("/music/love", "Phace: Love Songs", "spare"),
+                        ("/music/held", "Polar Bear: Held on the Tips of Fingers", ""),
                     ]
                 ),
             ],

@@ -1,9 +1,9 @@
 {% filter kit::wrap(kit::Selection::new("story-selection", "path").total(240).none("Tick an album to re-file.")) %}
   {{ kit::Selection::select_all("select all 240") }}
   <ul class="rows tight">
-    {% for (path, title) in albums %}
-    <li>{{ kit::Check::new("path", title).value(path) }}</li>
+    {% for (path, title, tags) in albums %}
+    <li>{{ kit::Check::new("path", title).value(path).data("kit-tags", tags) }}</li>
     {% endfor %}
   </ul>
-  {{ kit::SelectionBar::new(kit::SelectionCount::new("{} album selected", "{} albums selected")).action(kit::Button::bordered("re-file").post("/stub/slow").sends("story-selection")) }}
+  {{ kit::SelectionBar::new(kit::SelectionCount::new("{} album selected", "{} albums selected")).action(kit::Button::bordered("re-file").post("/stub/slow").sends("story-selection")).action_when("spare", kit::Button::bordered("bin spares").bad().post("/stub/slow").sends("story-selection")) }}
 {% endfilter %}

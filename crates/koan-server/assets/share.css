@@ -1210,6 +1210,9 @@
     margin-inline-end: auto;
     color: var(--ink);
   }
+  .selectionbar > [data-kit-when]:not([hidden]) {
+    display: contents;
+  }
   ul.list {
     margin: 0px;
     list-style-type: square;
@@ -1720,6 +1723,9 @@
     color: var(--muted);
     --tw-numeric-spacing: tabular-nums;
     font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+  }
+  .tab.wait > a {
+    color: var(--muted);
   }
   .tab.ok > a {
     color: var(--ok);
