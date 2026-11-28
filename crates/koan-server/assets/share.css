@@ -1733,6 +1733,9 @@
   .tab.neutral > a {
     color: var(--ink);
   }
+  .italic {
+    font-style: italic;
+  }
   a.card {
     display: block;
     color: var(--ink);

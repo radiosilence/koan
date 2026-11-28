@@ -118,7 +118,7 @@ Text is escaped wherever it lands. Markup is a separate type, built from a compo
 | `scrolls_into_view()` | The attribute that brings a region the server draws into view as it arrives |
 | `icon::*` | The kōan icon set, `kit::icon::HEART.svg(15)` |
 
-The common props, on every component: `id`, `class` for the app's own layout utilities, `data`, `attr`, and `datastar` for a Datastar attribute the kit does not write. Every component also has `html` and `patch`, so a handler answers with one: `events([kit::Flash::ok("Saved.").patch().into()])`.
+The common props, on every component: `id`, `class` for the app's own layout utilities, `italic` for words set apart without a louder tone, `data`, `attr`, and `datastar` for a Datastar attribute the kit does not write. Every component also has `html` and `patch`, so a handler answers with one: `events([kit::Flash::ok("Saved.").patch().into()])`.
 
 Containers whose markup is one element and a class stay classes: `panel`, `rows` (`rows tight` for a dense listing), `dense`, `code`, `codes` (one-time codes to keep, selected whole), `qr` (a QR code's `<svg>`, dark on white in either scheme), `skeleton`, `prose` (Markdown rendered to HTML), `controls` (a row of controls as tall as the tallest) and `compact` (every control inside at the compact size).
 

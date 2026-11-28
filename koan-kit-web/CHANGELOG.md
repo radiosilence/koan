@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+
+### Added
+
+- **`italic()`, a common prop on every component.** Its words, and what they hold, in italic: set apart from those around them without a louder tone, such as a tab whose results have gone stale, which apps drew with a class of their own.
+
 ## 0.10.0
 
 ### Added

@@ -196,6 +196,25 @@ mod tests {
     }
 
     #[test]
+    fn a_tab_can_be_set_in_italic() {
+        let stale = Tab::new("Burial", "/search/1").italic().to_string();
+        assert!(stale.starts_with("<span class=\"tab italic\">"), "{stale}");
+        let both = Tab::new("Phace", "/search/2")
+            .tone(Tone::Bad)
+            .italic()
+            .to_string();
+        assert!(
+            both.starts_with("<span class=\"tab bad italic\">"),
+            "a slant goes with a tone: {both}"
+        );
+        let css = include_str!("../kit.css");
+        assert!(
+            css.contains(".italic {\n    @apply italic;"),
+            "the kit draws its own class"
+        );
+    }
+
+    #[test]
     fn a_tab_says_it_is_working_and_takes_a_tone() {
         let html = Tab::new("Burial", "/search/1").busy(true).to_string();
         assert!(

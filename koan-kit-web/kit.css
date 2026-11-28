@@ -948,6 +948,12 @@
     @apply text-ink;
   }
 
+  /* Words set apart without a louder tone, such as a tab whose results have gone stale: a component's `italic` prop.
+   * What it holds inherits the slant. */
+  .italic {
+    @apply italic;
+  }
+
   /* A link holding a block, such as a cover over a title: no underline, its words in the text's colour. */
   a.card {
     @apply block text-ink hover:no-underline;
