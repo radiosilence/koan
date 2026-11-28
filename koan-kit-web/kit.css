@@ -451,7 +451,7 @@
   }
 
   /* Bytes on their way: the meter, then bytes done, rate and time left on one line, each part after the first set off
-   * by a point. A part with nothing to say, such as the time left once it arrives, is left out with its point. */
+   * by a point, but for the total, which reads on from the bytes done. A part with nothing to say, such as the time left once it arrives, is left out with its point. */
   .transfer {
     @apply grid gap-1.5;
   }
@@ -464,7 +464,7 @@
     @apply hidden;
   }
 
-  .transfer > p > span + span::before {
+  .transfer > p > span:not(:empty) ~ span:not([data-kit-of])::before {
     content: "· ";
   }
 

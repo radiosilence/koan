@@ -1,8 +1,8 @@
 {#- Bytes on their way: the reading as a meter and a line, which the page's one mover advances from the rate between
     readings. The same reading renders the same markup every time. -#}
 <div class="transfer{{ attrs.classes() }}" data-kit-transfer data-bytes="{{ bytes }}" data-total="{{ total }}" data-rate="{{ rate }}" data-at="{{ at }}"
-{%- if let Some(every) = every %} data-every="{{ every }}"{% endif %}{{ attrs }} data-init="{{ crate::transfer::MOVE }}">
+{%- if let Some(every) = every %} data-every="{{ every }}"{% endif %}{{ attrs }} data-init="{{ crate::transfer::START }}">
 {{- self.meter() -}}
-<p><span><span data-kit-done>{{ crate::transfer::size(bytes) }}</span>{% if self.total > 0 %} of {{ crate::transfer::size(total) }}{% endif %}</span>
-{%- if self.moving() %}<span>{{ crate::transfer::size(rate) }}/s</span>{% endif %}
+<p><span data-kit-done>{{ self.done() }}</span>{% if self.total > 0 %}<span data-kit-of>of {{ crate::transfer::size(total) }}</span>{% endif %}
+{%- if self.moving() %}<span>{{ crate::transfer::rate(rate) }}</span>{% endif %}
 {%- if self.counts_down() %}<span data-kit-left>{{ self.left() }}</span>{% endif %}</p></div>

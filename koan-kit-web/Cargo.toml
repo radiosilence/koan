@@ -2,7 +2,7 @@
 name = "koan-kit-web"
 # The kit's own version, shared with package.json and released on its own rather than with koan: a push to main that
 # changes it publishes both (.github/workflows/koan-kit-web.yml). A test fails when the two disagree.
-version = "0.11.0"
+version = "0.11.1"
 edition = "2024"
 license = "MIT AND OFL-1.1"
 repository = "https://github.com/radiosilence/koan"

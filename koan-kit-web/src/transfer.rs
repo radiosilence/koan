@@ -23,7 +23,9 @@ use crate::time::{Epoch, span};
 /// How often a transfer is read, unless [`Transfer::every`] says otherwise.
 const REPORT: Duration = Duration::from_secs(1);
 
-/// What every [`Transfer`] starts with: install the page's mover if no transfer has yet, then move this one.
+/// The page's one mover, installed once by [`server_clock`](crate::server_clock) on the `<body>`, so a region of many
+/// transfers carries each one's reading and not the script. It draws every transfer already on the page as it installs,
+/// and each one arriving later starts itself ([`START`]).
 ///
 /// The mover reads a transfer's reading from its `data-bytes`, `data-total`, `data-rate` and `data-at`, and the report
 /// interval from `data-every`. It keeps when each reading arrived on the element itself, which a morph keeps, and
@@ -31,7 +33,7 @@ const REPORT: Duration = Duration::from_secs(1);
 /// none is moving or the page is hidden; it starts again when the page shows or a reading arrives. It writes only a
 /// value or text that differs from what it would write.
 pub(crate) const MOVE: &str = concat!(
-    "(window.kitTransfer ??= (k => (",
+    "window.kitTransfer ??= (k => (",
     "k.size = b => (u => u ? (Math.round(b / 1024 ** u * 10) / 10).toFixed(1) + ' ' + ['B', 'KB', 'MB', 'GB', 'TB'][u]",
     " : Math.floor(b) + ' B')([1, 2, 3, 4].filter(u => b >= 1024 ** u).length),",
     " k.span = ms => (s => s < 60 ? s + 's' : (m => m < 60 ? m + 'm ' + String(s % 60).padStart(2, '0') + 's'",
@@ -39,7 +41,7 @@ pub(crate) const MOVE: &str = concat!(
     " k.put = (e, v) => e && e.textContent != v && (e.textContent = v),",
     " k.f = t => (d => (b => (n => (r => (h => (seen => (s => (x => (",
     "(p => p && n && p.value != x && (p.value = x))(t.querySelector('progress')),",
-    " k.put(t.querySelector('[data-kit-done]'), k.size(x)),",
+    " k.put(t.querySelector('[data-kit-done]'), n ? k.size(x) : ''),",
     " k.put(t.querySelector('[data-kit-left]'), r > 0 && n && x < n ? k.span((n - x) / r * 1000) + ' left' : ''),",
     " r > 0 && s < h && !(n && x >= n)))",
     "(r > 0 ? (v => n ? Math.min(n, v) : v)(b + r * Math.min(s, h) / 1000) : b))",
@@ -53,8 +55,13 @@ pub(crate) const MOVE: &str = concat!(
     "((x.target.nodeType == 1 ? x.target : x.target.parentElement)?.closest('[data-kit-transfer]'))))",
     ".observe(document.documentElement, {subtree: true, characterData: true,",
     " attributeFilter: ['data-bytes', 'data-total', 'data-rate', 'data-at']}),",
-    " document.addEventListener('visibilitychange', () => !k.ticking && k.tick()), k.go))({}))(el)",
+    " document.addEventListener('visibilitychange', () => !k.ticking && k.tick()),",
+    " k.ticking = setTimeout(k.tick), k.go))({})",
 );
+
+/// What every [`Transfer`] starts with: move it, once the page's mover is installed. Without the mover it shows the
+/// server's reading, still.
+pub(crate) const START: &str = "window.kitTransfer?.(el)";
 
 /// A count of bytes, taken by value or by reference, so a template hands over a field or a loop's `&&u64` as it is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -95,6 +102,12 @@ pub fn size(bytes: impl Into<Bytes>) -> String {
     #[allow(clippy::cast_precision_loss)]
     let scaled = bytes as f64 / (step / 1024) as f64;
     format!("{:.1} {}", (scaled * 10.0).round() / 10.0, UNITS[unit])
+}
+
+/// A rate as the kit writes it: [`size`] a second, `1.3 MB/s`.
+#[must_use]
+pub fn rate(bytes_per_second: impl Into<Bytes>) -> String {
+    format!("{}/s", size(bytes_per_second))
 }
 
 /// Bytes on their way, drawn as a meter and a line of bytes done, rate and time left that move between readings:
@@ -177,6 +190,16 @@ impl<'a> Transfer<'a> {
         }
     }
 
+    /// The bytes done, drawn only against a known total: before it, nought would read as a finished download of
+    /// nothing, and the bytes of a magnet's metadata as progress.
+    fn done(&self) -> String {
+        if self.total > 0 {
+            size(self.bytes)
+        } else {
+            String::new()
+        }
+    }
+
     fn moving(&self) -> bool {
         self.rate > 0
     }
@@ -201,18 +224,6 @@ mod tests {
     use super::*;
 
     const AT: i64 = 1_790_000_000_000;
-
-    /// The markup without the mover, whose own text names the parts it writes.
-    fn markup(transfer: &Transfer<'_>) -> String {
-        let html = transfer.to_string();
-        let (head, rest) = html
-            .split_once(" data-init=\"")
-            .expect("a transfer starts its mover");
-        format!(
-            "{head}{}",
-            &rest[rest.find('"').expect("the attribute closes") + 1..]
-        )
-    }
 
     #[test]
     fn a_size_steps_in_1024s_to_one_place() {
@@ -247,7 +258,7 @@ mod tests {
             "{html}"
         );
         assert!(
-            html.contains("<span data-kit-done>10.0 MB</span> of 40.0 MB"),
+            html.contains("<span data-kit-done>10.0 MB</span><span data-kit-of>of 40.0 MB</span>"),
             "{html}"
         );
         assert!(html.contains("<span>1.0 MB/s</span>"), "{html}");
@@ -255,7 +266,10 @@ mod tests {
             html.contains("<span data-kit-left>30s left</span>"),
             "{html}"
         );
-        assert!(html.contains("window.kitTransfer ??="), "{html}");
+        assert!(
+            html.contains("data-init=\"window.kitTransfer?.(el)\""),
+            "{html}"
+        );
         assert!(!html.contains("data-every"), "{html}");
     }
 
@@ -267,30 +281,75 @@ mod tests {
 
     #[test]
     fn a_still_transfer_has_no_rate_or_instant() {
-        let html = markup(&Transfer::new(5_u64, 10_u64).rate(0_u64, AT));
+        let html = Transfer::new(5_u64, 10_u64).rate(0_u64, AT).to_string();
         assert!(html.contains("data-rate=\"0\" data-at=\"0\""), "{html}");
         assert!(!html.contains("/s<"), "{html}");
         assert!(!html.contains("data-kit-left"), "{html}");
         assert!(
-            html.contains("<span data-kit-done>5 B</span> of 10 B"),
+            html.contains("<span data-kit-done>5 B</span><span data-kit-of>of 10 B</span>"),
             "{html}"
         );
     }
 
     #[test]
     fn an_unknown_total_waits_and_counts_nothing_down() {
-        let html = markup(&Transfer::new(2048_u64, 0_u64).rate(1024_u64, AT));
+        let html = Transfer::new(2048_u64, 0_u64)
+            .rate(1024_u64, AT)
+            .to_string();
         assert!(
             html.contains("<progress class=\"meter\"></progress>"),
             "{html}"
         );
         assert!(!html.contains("value="), "{html}");
         assert!(
-            html.contains("<span data-kit-done>2.0 KB</span><"),
+            html.contains("<span data-kit-done></span><span>1.0 KB/s</span>"),
             "{html}"
         );
-        assert!(!html.contains(" of "), "{html}");
+        assert!(!html.contains("data-kit-of"), "{html}");
         assert!(!html.contains("data-kit-left"), "{html}");
+    }
+
+    #[test]
+    fn an_unknown_total_draws_no_bytes() {
+        let html = Transfer::new(0_u64, 0_u64).to_string();
+        assert!(
+            html.contains("<p><span data-kit-done></span></p>"),
+            "{html}"
+        );
+        let metadata = Transfer::new(16_384_u64, 0_u64).to_string();
+        assert!(
+            metadata.contains("<p><span data-kit-done></span></p>"),
+            "{metadata}"
+        );
+        let started = Transfer::new(0_u64, 10_u64).to_string();
+        assert!(
+            started.contains("<span data-kit-done>0 B</span>"),
+            "{started}"
+        );
+        assert!(
+            MOVE.contains("n ? k.size(x) : ''"),
+            "the mover draws the same"
+        );
+    }
+
+    #[test]
+    fn a_transfer_carries_its_reading_not_the_mover() {
+        let html = Transfer::new(5_u64, 10_u64)
+            .rate(1_u64, AT)
+            .label("download")
+            .to_string();
+        assert!(!html.contains("kitTransfer ??="), "{html}");
+        assert!(html.len() < 600, "{} bytes: {html}", html.len());
+        let clock = crate::server_clock().to_string();
+        assert!(
+            clock.contains(" data-init__kit=\"window.kitTransfer ??="),
+            "{clock}"
+        );
+    }
+
+    #[test]
+    fn a_rate_is_a_size_a_second() {
+        assert_eq!(rate(1_400_000_u64), "1.3 MB/s");
     }
 
     #[test]
@@ -310,7 +369,11 @@ mod tests {
 
     #[test]
     fn the_mover_stops_at_the_total_a_still_rate_and_two_reports_on() {
-        assert!(MOVE.starts_with("(window.kitTransfer ??="));
+        assert!(MOVE.starts_with("window.kitTransfer ??="));
+        assert!(
+            MOVE.ends_with("k.ticking = setTimeout(k.tick), k.go))({})"),
+            "draws what is already there"
+        );
         assert!(MOVE.contains("2 * (+d.every || 1000)"));
         assert!(MOVE.contains("Math.min(n, v)"));
         assert!(MOVE.contains("r > 0 && s < h && !(n && x >= n)"));
