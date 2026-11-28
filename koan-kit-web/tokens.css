@@ -96,6 +96,11 @@
   --text-display: 34px;
   --text-display--line-height: 1.1;
 
+  /* Every control's height, the border included: a field, a select and each weight of button but the link, at the two
+   * sizes. One figure each, so a row of controls lines up whatever type each sets. */
+  --control-height: 40px;
+  --control-height-compact: 28px;
+
   --container-form: 520px;
   --container-panel: 560px;
 

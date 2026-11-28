@@ -83,13 +83,20 @@
   button,
   .button,
   input:is([type="submit"], [type="button"], [type="reset"]) {
-    @apply inline-flex cursor-pointer items-center justify-center gap-1.5 border border-muted bg-transparent px-3 py-1.5 text-meta text-ink select-none hover:bg-hover/30 hover:no-underline active:bg-hover disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent;
+    @apply inline-flex min-h-(--control-height) cursor-pointer items-center justify-center gap-1.5 border border-muted bg-transparent px-3 py-0 align-middle text-meta text-ink select-none hover:bg-hover/30 hover:no-underline active:bg-hover disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent;
   }
 
   input:not([type="submit"], [type="button"], [type="reset"], [type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
   select,
   textarea {
     @apply min-w-0 border border-muted bg-transparent px-2.5 py-2 text-input text-ink normal-case;
+  }
+
+  /* A field and a select at the controls' height, set rather than left to the padding and each engine's rounding of
+   * the line, and centred on the line as a button is, so either beside a button lines up. A textarea keeps its rows. */
+  input:not([type="submit"], [type="button"], [type="reset"], [type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+  select {
+    @apply h-(--control-height) py-0 align-middle;
   }
 
   /* Taller or shorter, never wider: a textarea dragged wider breaks the layout around it. */
@@ -176,11 +183,11 @@
    * accent so it reads first among bordered controls; standard is the label alone; quiet is a bar's text button; link
    * goes somewhere, or is a lesser action inline with text. Repeated row actions in a long list stay bordered. */
   .primary {
-    @apply border-transparent bg-brand px-5 py-3 text-body text-bg hover:bg-brand hover:opacity-90 active:bg-brand active:opacity-80;
+    @apply border-transparent bg-brand px-5 text-body text-bg hover:bg-brand hover:opacity-90 active:bg-brand active:opacity-80;
   }
 
   .standard {
-    @apply border-transparent px-1 py-2 text-control hover:bg-transparent hover:text-strong;
+    @apply border-transparent px-1 text-control hover:bg-transparent hover:text-strong;
   }
 
   .quiet {
@@ -188,7 +195,7 @@
   }
 
   .link {
-    @apply border-0 bg-transparent p-0 text-muted underline hover:bg-transparent hover:text-ink active:bg-transparent;
+    @apply min-h-0 border-0 bg-transparent p-0 align-baseline text-muted underline hover:bg-transparent hover:text-ink active:bg-transparent;
   }
 
   /* Filled: the button's own tone as its ground rather than its outline. On the bordered default a quiet fill a step
@@ -218,7 +225,7 @@
 
   /* A glyph alone, with a 40px target. Its accessible name is an aria-label. */
   .icon-button {
-    @apply inline-grid size-10 place-items-center border-0 bg-transparent p-0 text-ink hover:bg-hover/30;
+    @apply inline-grid size-(--control-height) place-items-center border-0 bg-transparent p-0 text-ink hover:bg-hover/30;
   }
 
   /* A button's `pressed` glyph stands in for its other glyphs while it is pressed (play and pause, mute) or has just
@@ -938,6 +945,22 @@
     @apply -mb-px inline-flex items-center gap-1.5 border-b-2 border-transparent pb-1.5 text-control;
   }
 
+  /* A row of more tabs than fit, scrolled sideways rather than wrapped: never vertically, with no scrollbar drawn. The
+   * hairline is an inset shadow rather than the border, which the clip would cut through a current tab's underline. */
+  .tabs.scrolls {
+    @apply flex-nowrap overflow-x-auto overflow-y-clip border-b-0;
+    box-shadow: inset 0 -1px var(--rule);
+    scrollbar-width: none;
+  }
+
+  .tabs.scrolls::-webkit-scrollbar {
+    @apply hidden;
+  }
+
+  .tabs.scrolls > .tab {
+    @apply mb-0 flex-none whitespace-nowrap;
+  }
+
   .tab > a {
     @apply text-muted hover:text-ink hover:no-underline;
   }
@@ -1006,12 +1029,17 @@
   }
 
   /* The compact size, for a control in a row or a toolbar rather than a form: `meta` type and tight padding. A field,
-   * a select, a button and a glyph alone are one height at this size, a line of `meta`, the padding and the border,
-   * stated rather than left to each engine's rounding of the line, so a compact field, combo and button in one row line
-   * up. On the control itself, or on any container of controls. A textarea keeps its rows. */
+   * a select, a button and a glyph alone are one height at this size, `--control-height-compact`, so a compact field,
+   * combo and button in one row line up. On the control itself, or on any container of controls. A textarea keeps its
+   * rows. */
   :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select, textarea).compact,
   .compact :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select, textarea) {
-    @apply py-1 pl-2 text-meta;
+    @apply pl-2 text-meta;
+  }
+
+  textarea.compact,
+  .compact textarea {
+    @apply py-1;
   }
 
   :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), textarea).compact,
@@ -1020,10 +1048,18 @@
   }
 
   :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select).compact,
-  .compact :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select),
+  .compact :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select) {
+    @apply h-(--control-height-compact);
+  }
+
   :is(button, .button):not(.link).compact,
   .compact :is(button, .button):not(.link) {
-    @apply h-[calc(var(--text-meta)*1.35+10px)];
+    @apply min-h-(--control-height-compact);
+  }
+
+  .icon-button.compact,
+  .compact .icon-button {
+    @apply h-(--control-height-compact);
   }
 
   :is(select.compact, .compact select) {
@@ -1033,13 +1069,13 @@
 
   :is(button, .button):not(.link, .icon-button).compact,
   .compact :is(button, .button):not(.link, .icon-button) {
-    @apply px-2 py-1 text-meta;
+    @apply px-2 text-meta;
   }
 
   /* A glyph alone at the compact size: square. */
   .icon-button.compact,
   .compact .icon-button {
-    @apply w-[calc(var(--text-meta)*1.35+10px)];
+    @apply w-(--control-height-compact);
   }
 
   .field.compact {

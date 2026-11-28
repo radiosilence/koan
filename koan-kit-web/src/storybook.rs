@@ -117,6 +117,7 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Field::number("slots", "upload slots").value("4").compact()),
                 story!(CompactRow, "story/compact_row.html"),
                 story!(Controls, "story/controls.html"),
+                story!(Heights, "story/heights.html"),
             ],
         },
         Section {
@@ -160,6 +161,10 @@ pub fn sections() -> Vec<Section> {
                     .tab(kit::Tab::new("Moodymann", "/stub/place?moodymann").busy(true).in_place())
                     .tab(kit::Tab::new("Basic Channel", "/stub/place?basic").tone(kit::Tone::Bad).in_place())
                     .tab(kit::Tab::new("Shackleton", "/stub/place?shackleton").count(31).italic().in_place())),
+                entry!(kit::Tabs::new("pages").scrolls()
+                    .tab(kit::Tab::new("search", "/stub/place?search").current(true).in_place())
+                    .tabs(["downloads", "uploads", "library", "triage", "rooms", "messages", "users", "bans", "settings", "log"]
+                        .map(|page| kit::Tab::new(page, "/stub/place").in_place()))),
                 entry!(kit::Status::wait("last checked an hour ago").italic()),
                 story!(Card, "story/card.html"),
                 // Shown, not drawn: the page's one Navigation is in its shell, and a second would take every click.

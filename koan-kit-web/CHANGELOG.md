@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.2
+
+### Added
+
+- **`Tabs::scrolls`, a row of tabs that scrolls sideways** rather than wrapping, for a page's navigation of more tabs than fit: never vertically, with no scrollbar drawn and the current tab's underline whole. Apps scrolled their own, and the underline's overlap made the row a pixel taller than its box, so it moved vertically when dragged.
+- **`--control-height` and `--control-height-compact`, the height of every control** at the two sizes, the border included.
+
+### Changed
+
+- **Fields, selects and buttons share one height at each size**, 40px and 28px, and centre on the line, so any row of controls lines up. Each set its height from its own type and padding: a primary button stood taller than the select beside it, and a bordered one shorter than a field. A bordered or quiet button is now taller than it was, and a primary one shorter; a link keeps its line's height, and a button whose label wraps grows to hold it.
+
 ## 0.11.1
 
 ### Added
