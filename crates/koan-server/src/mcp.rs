@@ -248,7 +248,7 @@ own knowledge, and research when unsure, to list many artists and albums that fi
 them all up in a single query with aliases (`a: artists(search: \"Can\") { … } b: …`) and \
 choose from the ones present. `search` matches any part of a name, ignoring case, so check that \
 a result is the artist you meant. If most are missing, read the library's artist names once \
-(`artists(first: 500, sortBy: TRACK_COUNT, sortDir: DESC) { edges { node { id name } } \
+(`artists(first: 10000, sortBy: TRACK_COUNT, sortDir: DESC) { edges { node { id name } } \
 pageInfo { hasNextPage endCursor } }`, then `after: endCursor` while `hasNextPage`) and pick \
 from them by what you know of each. Do not guess names one round at a time.
 "

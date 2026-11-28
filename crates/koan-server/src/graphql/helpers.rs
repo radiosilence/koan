@@ -12,7 +12,11 @@ use async_graphql::connection::Edge;
 pub(super) const DEFAULT_PAGE: usize = 50;
 
 /// Ceiling on `first`, so a client cannot ask for the library in one response.
-pub(super) const MAX_PAGE: usize = 500;
+///
+/// Large enough that walking a whole library takes a handful of requests rather
+/// than a hundred (a 60,000-track library is six pages), small enough that one
+/// page of tracks stays a few megabytes of JSON.
+pub(super) const MAX_PAGE: usize = 10_000;
 
 /// Clamp a client-supplied `first` into the servable range. Negative values are
 /// floored at zero rather than wrapping to a request for the entire library.
@@ -62,4 +66,17 @@ pub(super) fn paginate_window<T: async_graphql::OutputType>(
         conn.edges.push(Edge::new(offset + i, item));
     }
     conn
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_size_defaults_clamps_and_floors() {
+        assert_eq!(page_size(None), DEFAULT_PAGE);
+        assert_eq!(page_size(Some(-5)), 0);
+        assert_eq!(page_size(Some(2_000)), 2_000);
+        assert_eq!(page_size(Some(i32::MAX)), MAX_PAGE);
+    }
 }

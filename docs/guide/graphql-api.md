@@ -185,7 +185,8 @@ wildcards.
 ### Pagination and sorting
 
 Collections are Relay connections (`edges` + `pageInfo`). **A collection with no `first` returns 50
-rows, and `first` is capped at 500** — the API will not hand back a whole library in one response.
+rows, and `first` is capped at 10,000** — the API will not hand back a whole library in one response,
+but even a large one takes only a few pages.
 Page with the cursor from `pageInfo.endCursor`:
 
 ```graphql
