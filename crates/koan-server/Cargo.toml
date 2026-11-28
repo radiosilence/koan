@@ -49,14 +49,14 @@ tower-http = { version = "0.7", features = ["catch-panic", "compression-br", "co
 uuid = { version = "1.29.0", features = ["v7"] }
 zip = { version = "9.1.3", default-features = false }
 chrono = "0.4"
-qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+qrcode = { version = "0.15.0", default-features = false, features = ["svg"] }
 askama = "0.16"
 askama_datastar = "0.3.2"
 
 # Strips the types from scripts/*.ts (build.rs). Pinned exactly: oxc's minor
 # releases break its API.
 [build-dependencies]
-oxc = { version = "=0.159.0", default-features = false, features = ["codegen", "semantic", "transformer"] }
+oxc = { version = "=0.160.0", default-features = false, features = ["codegen", "semantic", "transformer"] }
 
 [dev-dependencies]
 tempfile = "3"
