@@ -450,6 +450,24 @@
     @apply bg-transparent;
   }
 
+  /* Bytes on their way: the meter, then bytes done, rate and time left on one line, each part after the first set off
+   * by a point. A part with nothing to say, such as the time left once it arrives, is left out with its point. */
+  .transfer {
+    @apply grid gap-1.5;
+  }
+
+  .transfer > p {
+    @apply m-0 flex flex-wrap gap-x-1.5 text-meta text-muted tabular-nums;
+  }
+
+  .transfer > p > span:empty {
+    @apply hidden;
+  }
+
+  .transfer > p > span + span::before {
+    content: "· ";
+  }
+
   /* In flight: the ensō drawing itself, its head running round and then its tail following it off, looping, as
    * koan-kit's Spinner draws it (crates/koan-kit/src/components/spinner.rs: the same trace, brush and 1.6-second
    * turn, each half smooth at both ends). A mask over the text's colour, so it needs no markup and no style
