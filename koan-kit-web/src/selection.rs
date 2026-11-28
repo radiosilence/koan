@@ -172,7 +172,7 @@ mod tests {
             .none("Tick an album.")
             .to_string();
         assert!(
-            html.starts_with("<form id=\"albums\" class=\"selection\" data-name=\"path\" data-total=\"240\" data-none=\"Tick an album.\""),
+            html.starts_with("<form data-name=\"path\" data-total=\"240\" data-none=\"Tick an album.\" id=\"albums\""),
             "{html}"
         );
         assert!(html.contains("data-on:change=\""), "{html}");

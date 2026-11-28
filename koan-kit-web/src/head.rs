@@ -415,11 +415,25 @@ mod tests {
         assert!(bar.starts_with("<header class=\"topbar\">"), "{bar}");
         assert!(
             bar.contains(
-                "<a class=\"wordmark\" href=\"/\" aria-label=\"dither: your albums\">dither</a>"
+                "<a href=\"/\" class=\"wordmark\" aria-label=\"dither: your albums\">dither</a>"
             ),
             "{bar}"
         );
         assert!(bar.contains("<a href=\"/account\">jc</a>"), "{bar}");
+        assert!(
+            !bar.contains("data-in-place"),
+            "home is a whole load unless asked: {bar}"
+        );
+        let in_place = TopBar::new("dither", "/").in_place().to_string();
+        assert!(
+            in_place.contains("class=\"wordmark\" data-in-place"),
+            "{in_place}"
+        );
+        let alone = Wordmark::new("dither", "/").id("mark").to_string();
+        assert!(
+            alone.starts_with("<a href=\"/\" class=\"wordmark\" id=\"mark\""),
+            "a wordmark alone carries its own props: {alone}"
+        );
     }
 
     #[test]

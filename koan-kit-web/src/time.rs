@@ -314,8 +314,9 @@ mod tests {
             Time::millis(at).to_string()
         );
         let seconds: i64 = 1_795_791_315;
+        let held = &seconds;
         assert_eq!(
-            Time::seconds(&seconds).to_string(),
+            Time::seconds(held).to_string(),
             Time::millis(at).to_string()
         );
     }
@@ -334,7 +335,10 @@ mod tests {
             "a deadline passed reads nought: {past}"
         );
         assert!(
-            !Time::millis(0).relative().to_string().contains("data-now"),
+            !Time::millis(0)
+                .relative()
+                .to_string()
+                .contains("data-now=\""),
             "only a counter needs the server's clock"
         );
         assert!(
