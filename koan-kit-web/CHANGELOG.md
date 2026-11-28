@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.0
+
+### Added
+
+- **`Transfer`, bytes on their way that move between readings.** Given the bytes done, the total, the rate and when the reading was taken, it draws a meter and a line of bytes, rate and time left, and the page's one mover advances them from the rate four times a second. It stops at the total, at a rate of nought, and two report intervals after the reading arrived (`every` when the server reads less often than once a second), so a stalled transfer stops rather than running on. A reading is timed from when the page received it, so a reader whose clock is wrong still sees the right rate, and the same reading renders the same markup, so a stream that sends only what changed sends it only on a new reading. Apps drew this with scripts of their own.
+- **`kit::size`, a size in the words a transfer uses:** steps of 1024, one decimal place.
+
 ## 0.10.1
 
 ### Added

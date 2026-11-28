@@ -59,6 +59,12 @@ pub(crate) const LOCALISE: &str = concat!(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Epoch(i64);
 
+impl Epoch {
+    pub(crate) fn get(self) -> i64 {
+        self.0
+    }
+}
+
 impl From<i64> for Epoch {
     fn from(number: i64) -> Self {
         Self(number)
@@ -220,7 +226,7 @@ impl askama::filters::HtmlSafe for ServerClock {}
 
 /// A counter's reading: seconds under a minute, minutes and seconds under an hour, then hours and minutes. Nought
 /// below nought. The localiser writes the same.
-fn span(millis: i64) -> String {
+pub(crate) fn span(millis: i64) -> String {
     let seconds = (millis.max(0) + 500) / 1000;
     let minutes = seconds / 60;
     if seconds < 60 {

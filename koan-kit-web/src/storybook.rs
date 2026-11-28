@@ -15,6 +15,9 @@ use askama_datastar::Html;
 use crate as kit;
 use crate::attrs::render;
 
+/// When the storybook's transfers were measured: a fixed instant, so the generated page is the same every time.
+const STORY_AT: i64 = 1_795_791_315_000;
+
 /// One thing drawn, and the call that drew it.
 pub struct Entry {
     /// The call, as code.
@@ -281,7 +284,7 @@ pub fn sections() -> Vec<Section> {
         },
         Section {
             title: "state",
-            intro: "A status's word says what its colour does; a meter is named for a screen reader.",
+            intro: "A status's word says what its colour does; a meter is named for a screen reader; a transfer moves from its last reading for two seconds, as it would between a server's readings.",
             entries: vec![
                 entry!(kit::Status::ok("connected")),
                 entry!(kit::Status::warn("not configured")),
@@ -298,6 +301,11 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Meter::new(30, 100).tone(kit::Tone::Warn).label("disk")),
                 entry!(kit::Meter::new(60, 100).tone(kit::Tone::Bad).label("errors")),
                 entry!(kit::Meter::waiting().label("connecting")),
+                entry!(kit::Transfer::new(12_900_000_u64, 48_300_000_u64)
+                    .rate(1_400_000_u64, STORY_AT)
+                    .label("download")),
+                entry!(kit::Transfer::new(31_000_000_u64, 48_300_000_u64).tone(kit::Tone::Warn).label("download")),
+                entry!(kit::Transfer::new(2_400_000_u64, 0_u64).rate(310_000_u64, STORY_AT).label("upload")),
             ],
         },
         Section {

@@ -86,6 +86,7 @@ mod status;
 pub mod storybook;
 mod tabs;
 mod time;
+mod transfer;
 
 pub use askama_datastar;
 
@@ -109,6 +110,7 @@ pub use spinner::Spinner;
 pub use status::{Meter, Status, Tone};
 pub use tabs::{Tab, Tabs};
 pub use time::{Epoch, ServerClock, Time, server_clock};
+pub use transfer::{Bytes, Transfer, size};
 
 #[cfg(test)]
 mod tests {

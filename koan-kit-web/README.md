@@ -113,6 +113,7 @@ Text is escaped wherever it lands. Markup is a separate type, built from a compo
 | `Sheet`, `Confirm` | A dialog opened through `commandfor`, kept above an on-screen keyboard, whose body can load as it opens; the page's one sheet for asking before a change |
 | `Pairs`, `List`, `Disclosure`, `CopyField` | Labels and values, optional or from a template's loops; values someone else chose, each behind a marker; a summary, words or markup, that opens or loads; a value to copy, with a word or a glyph and what it is for |
 | `Time` | An instant, drawn in UTC and rewritten in the reader's zone: a date, a time, a clock or how long ago; or a counter of the time spent since it or left until it, stepping each second against the server's clock |
+| `Transfer`, `size` | Bytes on their way: a meter and a line of bytes done, rate and time left, moved from the rate between the server's readings and stopped at the total, at a rate of nought or two report intervals past the reading; timed from when the page received it, so the reader's clock does not matter. `size` writes a size in the same words |
 | `Tabs`, `Tab` | A row of addresses, each with a count, actions, a tone and a busy state |
 | `Head`, `ImportMap`, `SkipLink`, `TopBar`, `Wordmark`, `Footer`, `Release` | The page around the content; the wordmark alone for a page without the bar |
 | `scrolls_into_view()` | The attribute that brings a region the server draws into view as it arrives |
