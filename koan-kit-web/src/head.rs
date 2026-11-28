@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use crate::arg::{Content, Markup, Text};
 use crate::attrs::{Attrs, component};
 use crate::font;
+use crate::link::Link;
 use crate::slot::Wrap;
 
 /// The page's `<head>` contents, before the app's own: `<head>{{ head }}</head>`.
@@ -203,6 +204,59 @@ impl<'a> Release<'a> {
 
 component!(Release);
 
+/// The app's name as its mark, leading home: `kit::Wordmark::new("dither", "/")`. The [`TopBar`] leads with one; a page
+/// without the bar, such as a sign-in page with the name above its form, places one itself.
+#[must_use = "a wordmark draws nothing until it is rendered"]
+#[derive(Clone, Debug, Template)]
+#[template(path = "wordmark.html")]
+pub struct Wordmark<'a> {
+    name: Text<'a>,
+    home: Text<'a>,
+    home_label: Text<'a>,
+    in_place: bool,
+    attrs: Attrs<'a>,
+}
+
+impl<'a> Wordmark<'a> {
+    /// The app's `name`, linking to `home`.
+    pub fn new(name: impl Into<Text<'a>>, home: impl Into<Text<'a>>) -> Self {
+        Self {
+            name: name.into(),
+            home: home.into(),
+            home_label: Text::default(),
+            in_place: false,
+            attrs: Attrs::default(),
+        }
+    }
+
+    /// What its link is named for a screen reader, when the name alone does not say where it goes:
+    /// `"dither: your albums"`.
+    pub fn home_label(mut self, label: impl Into<Text<'a>>) -> Self {
+        self.home_label = label.into();
+        self
+    }
+
+    /// Loads home in place, as [`Link::in_place`](crate::Link::in_place) does, for an app whose other links do: with a
+    /// [`Navigation`](crate::Navigation) on the page, the link home is one of its links.
+    pub fn in_place(mut self) -> Self {
+        self.in_place = true;
+        self
+    }
+
+    fn link(&self) -> Link<'_> {
+        let mut link = Link::new(self.name.as_str(), self.home.as_str());
+        link.attrs = self.attrs.clone();
+        let link = link.class("wordmark");
+        let link = match self.home_label.present() {
+            Some(label) => link.attr("aria-label", label),
+            None => link,
+        };
+        if self.in_place { link.in_place() } else { link }
+    }
+}
+
+component!(Wordmark);
+
 /// The bar along the top of an app's pages: its name, leading home, and its navigation and actions at the far end.
 ///
 /// What follows the name is the markup of a `{% filter kit::wrap(bar) %}` block: links and buttons, laid out in a row.
@@ -211,9 +265,7 @@ component!(Release);
 #[derive(Clone, Debug, Template)]
 #[template(path = "topbar.html")]
 pub struct TopBar<'a> {
-    name: Text<'a>,
-    home: Text<'a>,
-    home_label: Text<'a>,
+    wordmark: Wordmark<'a>,
     items: Markup,
     attrs: Attrs<'a>,
 }
@@ -222,9 +274,7 @@ impl<'a> TopBar<'a> {
     /// The app's `name`, its wordmark, linking to `home`.
     pub fn new(name: impl Into<Text<'a>>, home: impl Into<Text<'a>>) -> Self {
         Self {
-            name: name.into(),
-            home: home.into(),
-            home_label: Text::default(),
+            wordmark: Wordmark::new(name, home),
             items: Markup::default(),
             attrs: Attrs::default(),
         }
@@ -233,7 +283,13 @@ impl<'a> TopBar<'a> {
     /// What the wordmark's link is named for a screen reader, when the name alone does not say where it goes:
     /// `"dither: your albums"`.
     pub fn home_label(mut self, label: impl Into<Text<'a>>) -> Self {
-        self.home_label = label.into();
+        self.wordmark = self.wordmark.home_label(label);
+        self
+    }
+
+    /// Loads home in place; see [`Wordmark::in_place`].
+    pub fn in_place(mut self) -> Self {
+        self.wordmark = self.wordmark.in_place();
         self
     }
 }

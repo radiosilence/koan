@@ -1,5 +1,7 @@
 //! Content in the kit's shapes: labelled [`Pairs`], a bulleted [`List`], a [`Disclosure`] that opens, a [`CopyField`] to
-//! take a value from.
+//! take a value from, and a region that [`scrolls_into_view`] as it is drawn.
+
+use std::fmt;
 
 use askama::Template;
 
@@ -42,6 +44,13 @@ impl<'a> Pairs<'a> {
         } else {
             self.pair(label, value)
         }
+    }
+
+    /// Its rows closer together, for a dense listing such as a release's details beside its tracks. A list of `rows`
+    /// takes the same density from `class="rows tight"`.
+    pub fn tight(mut self) -> Self {
+        self.attrs.add_class("tight");
+        self
     }
 }
 
@@ -318,8 +327,44 @@ impl<'a> CopyField<'a> {
 
 component!(CopyField);
 
+/// The attribute that scrolls a region into view as the server draws it, such as a preview drawn in answer to a
+/// request lower on the page: `<div id="preview" class="panel"{{ kit::scrolls_into_view() }}>`.
+///
+/// It runs as the element arrives, or as the attribute does when a patch morphs it into an element already there, and
+/// brings the region's top into view.
+#[must_use]
+pub fn scrolls_into_view() -> ScrollsIntoView {
+    ScrollsIntoView
+}
+
+/// What [`scrolls_into_view`] writes into a tag.
+#[derive(Clone, Copy, Debug)]
+pub struct ScrollsIntoView;
+
+impl fmt::Display for ScrollsIntoView {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(" data-init=\"el.scrollIntoView({block: 'start'})\"")
+    }
+}
+
+impl askama::filters::HtmlSafe for ScrollsIntoView {}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_region_scrolls_into_view_as_it_is_drawn() {
+        assert_eq!(
+            super::scrolls_into_view().to_string(),
+            " data-init=\"el.scrollIntoView({block: 'start'})\""
+        );
+    }
+
+    #[test]
+    fn tight_pairs_sit_closer() {
+        let html = super::Pairs::new().pair("year", "1994").tight().to_string();
+        assert!(html.starts_with("<dl class=\"pairs tight\">"), "{html}");
+    }
+
     use super::*;
 
     #[test]

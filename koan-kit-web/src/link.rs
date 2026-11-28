@@ -24,7 +24,7 @@ pub struct Link<'a> {
     busy_key: Text<'a>,
     current: bool,
     card: bool,
-    attrs: Attrs<'a>,
+    pub(crate) attrs: Attrs<'a>,
 }
 
 impl<'a> Link<'a> {

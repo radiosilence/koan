@@ -2,12 +2,16 @@
 //!
 //! The server knows only UTC, so the page carries the instant and the UTC reading as its fallback, and the browser
 //! rewrites it in the reader's zone and language. A relative time is computed against the reader's clock, not the
-//! server's, and kept current while the page is open.
+//! server's, and kept current while the page is open. A counter of time spent or left is read against the server's
+//! clock, which the page carries beside it, and steps each second.
 //!
 //! One localiser does this for the whole page, installed by the first time to start ([`LOCALISE`]). A stream that
 //! sends a region again morphs it, and the morph keeps each `<time>` but sets its text back to the server's UTC
 //! reading without starting it again, so the localiser watches the document and rewrites any time whose text or
-//! instant a morph changed. Its one timer recomputes every relative time each minute, through formatters made once.
+//! instant a morph changed. One timer recomputes every relative time each minute, through formatters made once, and
+//! another steps the counters each second while any is moving.
+
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use askama::Template;
 
@@ -15,23 +19,58 @@ use crate::attrs::{Attrs, component};
 
 /// What every [`Time`] starts with: install the page's localiser if no time has yet, then localise this one.
 ///
-/// The localiser reads an element's instant from `data-at` and its style from `data-time`, so nothing in it comes from
-/// the server. It writes only a text or title that differs from what it would write, which is how its own writes,
-/// heard by its observer, come to rest.
+/// The localiser reads an element's instant from `data-at`, its style from `data-time` and, for a counter, the
+/// server's clock from `data-now`, so nothing in it comes from the server. It writes only a text or title that differs
+/// from what it would write, which is how its own writes, heard by its observer, come to rest. The second timer runs
+/// only while a counter is moving: an elapsed one always is, a remaining one until it reaches nought.
 pub(crate) const LOCALISE: &str = concat!(
-    "(window.kitTime ??= (f => (",
-    "new MutationObserver(ms => ms.forEach(m => (t => t && f(t))",
-    "((m.target.nodeType == 1 ? m.target : m.target.parentElement)?.closest('time[data-at][data-time]'))))",
-    ".observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: ['data-at', 'title']}),",
-    " setInterval(() => document.querySelectorAll('time[data-time=relative]').forEach(f), 60000), f))",
-    "(((m, d, c, r) => t => (k => (v => (t.textContent != v[0] && (t.textContent = v[0]), t.title != v[1] && (t.title = v[1])))",
-    "(k == 'date' ? [d.format(+t.dataset.at), ''] : k == 'clock' ? [c.format(+t.dataset.at), '']",
-    " : k == 'relative' ? [(s => (u => r.format(Math.round(s / u[0]), u[1]))",
-    "([[31536000, 'year'], [2592000, 'month'], [604800, 'week'], [86400, 'day'], [3600, 'hour']].find(u => Math.abs(s) >= u[0]) || [60, 'minute']))",
-    "((t.dataset.at - Date.now()) / 1000), m.format(+t.dataset.at)] : [m.format(+t.dataset.at), '']))(t.dataset.time))",
-    "(new Intl.DateTimeFormat([], {dateStyle: 'medium', timeStyle: 'short'}), new Intl.DateTimeFormat([], {dateStyle: 'medium'}),",
-    " new Intl.DateTimeFormat([], {timeStyle: 'medium', hourCycle: 'h23'}), new Intl.RelativeTimeFormat([], {numeric: 'auto'}))))(el)",
+    "(window.kitTime ??= (k => (",
+    "k.m = new Intl.DateTimeFormat([], {dateStyle: 'medium', timeStyle: 'short'}),",
+    " k.d = new Intl.DateTimeFormat([], {dateStyle: 'medium'}),",
+    " k.c = new Intl.DateTimeFormat([], {timeStyle: 'medium', hourCycle: 'h23'}),",
+    " k.r = new Intl.RelativeTimeFormat([], {numeric: 'auto'}),",
+    " k.span = ms => (s => s < 60 ? s + 's' : (m => m < 60 ? m + 'm ' + String(s % 60).padStart(2, '0') + 's'",
+    " : Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm')(Math.floor(s / 60)))(Math.max(0, Math.round(ms / 1000))),",
+    " k.now = t => (t._kitnow != t.dataset.now && (t._kitnow = t.dataset.now, t._kitskew = t.dataset.now ? t.dataset.now - Date.now() : 0),",
+    " Date.now() + t._kitskew),",
+    " k.read = (t, at, s) => s == 'date' ? [k.d.format(at), ''] : s == 'clock' ? [k.c.format(at), '']",
+    " : s == 'elapsed' ? [k.span(k.now(t) - at), k.m.format(at)] : s == 'remaining' ? [k.span(at - k.now(t)), k.m.format(at)]",
+    " : s == 'relative' ? [(x => (u => k.r.format(Math.round(x / u[0]), u[1]))",
+    "([[31536000, 'year'], [2592000, 'month'], [604800, 'week'], [86400, 'day'], [3600, 'hour']].find(u => Math.abs(x) >= u[0]) || [60, 'minute']))",
+    "((at - Date.now()) / 1000), k.m.format(at)] : [k.m.format(at), ''],",
+    " k.f = t => (v => (t.textContent != v[0] && (t.textContent = v[0]), t.title != v[1] && (t.title = v[1]),",
+    " t.dataset.time == 'elapsed' || t.dataset.time == 'remaining' && k.now(t) < +t.dataset.at))(k.read(t, +t.dataset.at, t.dataset.time)),",
+    " k.tick = () => k.ticking = [...document.querySelectorAll('time[data-time=elapsed], time[data-time=remaining]')].map(t => k.f(t))",
+    ".some(Boolean) && setTimeout(k.tick, 1000 - Date.now() % 1000),",
+    " k.go = t => k.f(t) && !k.ticking && (k.ticking = setTimeout(k.tick, 1000 - Date.now() % 1000)),",
+    " new MutationObserver(ms => ms.forEach(x => (t => t && k.go(t))",
+    "((x.target.nodeType == 1 ? x.target : x.target.parentElement)?.closest('time[data-at][data-time]'))))",
+    ".observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: ['data-at', 'data-now', 'title']}),",
+    " setInterval(() => document.querySelectorAll('time[data-time=relative]').forEach(k.f), 60000), k.go))({}))(el)",
 );
+
+/// An instant, as an `i64` since the Unix epoch, taken by value or by reference: what [`Time::millis`] and
+/// [`Time::seconds`] take, so a template hands over a field or a loop's `&&i64` as it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Epoch(i64);
+
+impl From<i64> for Epoch {
+    fn from(number: i64) -> Self {
+        Self(number)
+    }
+}
+
+impl From<&i64> for Epoch {
+    fn from(number: &i64) -> Self {
+        Self(*number)
+    }
+}
+
+impl From<&&i64> for Epoch {
+    fn from(number: &&i64) -> Self {
+        Self(**number)
+    }
+}
 
 /// How a [`Time`] reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,37 +79,41 @@ enum Style {
     Date,
     Clock,
     Relative,
+    Elapsed,
+    Remaining,
 }
 
 /// An instant in a `<time>` element: `kit::Time::millis(at).relative()`.
 ///
 /// Drawn with the UTC reading as its text and an ISO 8601 `datetime`, and rewritten by the browser, again after a
-/// morph puts the UTC reading back: the
-/// date and time by default, the [`date`](Self::date) alone, the [`clock`](Self::clock) to the second for a log line,
-/// or [`relative`](Self::relative) to now ("3 days ago"), which the browser recomputes each minute and whose title is
-/// the date and time.
+/// morph puts the UTC reading back: the date and time by default, the [`date`](Self::date) alone, the
+/// [`clock`](Self::clock) to the second for a log line, or [`relative`](Self::relative) to now ("3 days ago"), which
+/// the browser recomputes each minute and whose title is the date and time. A counter, [`elapsed`](Self::elapsed)
+/// since the instant or [`remaining`](Self::remaining) until it, steps each second.
 #[must_use = "a time draws nothing until it is rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "time.html")]
 pub struct Time<'a> {
     at: i64,
     style: Style,
+    now: Option<i64>,
     attrs: Attrs<'a>,
 }
 
 impl Time<'_> {
     /// The instant `at`, in milliseconds since the Unix epoch.
-    pub fn millis(at: i64) -> Self {
+    pub fn millis(at: impl Into<Epoch>) -> Self {
         Self {
-            at,
+            at: at.into().0,
             style: Style::Moment,
+            now: None,
             attrs: Attrs::default(),
         }
     }
 
     /// The instant `at`, in seconds since the Unix epoch.
-    pub fn seconds(at: i64) -> Self {
-        Self::millis(at.saturating_mul(1000))
+    pub fn seconds(at: impl Into<Epoch>) -> Self {
+        Self::millis(at.into().0.saturating_mul(1000))
     }
 
     /// The date alone.
@@ -91,6 +134,28 @@ impl Time<'_> {
         self
     }
 
+    /// How long since the instant, stepping each second: the time spent on a stage, "4m 07s". Its title is the
+    /// instant's date and time.
+    pub fn elapsed(mut self) -> Self {
+        self.style = Style::Elapsed;
+        self
+    }
+
+    /// How long until the instant, stepping each second and stopping at nought: the time left before a deadline,
+    /// "1h 05m". Its title is the instant's date and time.
+    pub fn remaining(mut self) -> Self {
+        self.style = Style::Remaining;
+        self
+    }
+
+    /// The server's clock when the counter was read, in milliseconds since the Unix epoch, for a reading measured
+    /// before it is drawn. Unless given, it is when the counter renders. A counter is read against it rather than the
+    /// reader's clock, so a reader whose clock is wrong still sees the right time spent or left.
+    pub fn as_of(mut self, now: impl Into<Epoch>) -> Self {
+        self.now = Some(now.into().0);
+        self
+    }
+
     /// The style, as `data-time` names it for the localiser.
     fn kind(&self) -> &'static str {
         match self.style {
@@ -98,6 +163,30 @@ impl Time<'_> {
             Style::Date => "date",
             Style::Clock => "clock",
             Style::Relative => "relative",
+            Style::Elapsed => "elapsed",
+            Style::Remaining => "remaining",
+        }
+    }
+
+    /// The server's clock, which a counter is read against; `None` for any other reading.
+    fn server_now(&self) -> Option<i64> {
+        matches!(self.style, Style::Elapsed | Style::Remaining).then(|| {
+            self.now.unwrap_or_else(|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |since| {
+                        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+                    })
+            })
+        })
+    }
+
+    /// What the element says before the browser rewrites it.
+    fn reading(&self) -> String {
+        match (self.style, self.server_now()) {
+            (Style::Elapsed, Some(now)) => span(now.saturating_sub(self.at)),
+            (Style::Remaining, Some(now)) => span(self.at.saturating_sub(now)),
+            (style, _) => Utc::of(self.at).reading(style),
         }
     }
 
@@ -107,6 +196,20 @@ impl Time<'_> {
 }
 
 component!(Time);
+
+/// A counter's reading: seconds under a minute, minutes and seconds under an hour, then hours and minutes. Nought
+/// below nought. The localiser writes the same.
+fn span(millis: i64) -> String {
+    let seconds = (millis.max(0) + 500) / 1000;
+    let minutes = seconds / 60;
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if minutes < 60 {
+        format!("{minutes}m {:02}s", seconds % 60)
+    } else {
+        format!("{}h {:02}m", minutes / 60, minutes % 60)
+    }
+}
 
 /// An instant's reading in UTC, worked out from the day count so the kit needs no calendar crate.
 struct Utc {
@@ -158,7 +261,7 @@ impl Utc {
         match style {
             Style::Date => self.date(),
             Style::Clock => self.clock(),
-            Style::Moment | Style::Relative => {
+            Style::Moment | Style::Relative | Style::Elapsed | Style::Remaining => {
                 format!("{} {:02}:{:02} UTC", self.date(), self.hour, self.minute)
             }
         }
@@ -202,6 +305,62 @@ mod tests {
     }
 
     #[test]
+    fn a_time_takes_its_instant_as_a_template_holds_it() {
+        let at: i64 = 1_795_791_315_000;
+        let field = &at;
+        let looped = &field;
+        assert_eq!(
+            Time::millis(looped).to_string(),
+            Time::millis(at).to_string()
+        );
+        let seconds: i64 = 1_795_791_315;
+        assert_eq!(
+            Time::seconds(&seconds).to_string(),
+            Time::millis(at).to_string()
+        );
+    }
+
+    #[test]
+    fn a_counter_is_read_against_the_servers_clock() {
+        let elapsed = Time::millis(1_000).elapsed().as_of(248_000).to_string();
+        assert!(elapsed.contains("data-time=\"elapsed\""), "{elapsed}");
+        assert!(elapsed.contains("data-now=\"248000\""), "{elapsed}");
+        assert!(elapsed.ends_with(">4m 07s</time>"), "{elapsed}");
+        let left = Time::millis(3_901_000).remaining().as_of(1_000).to_string();
+        assert!(left.ends_with(">1h 05m</time>"), "{left}");
+        let past = Time::millis(0).remaining().as_of(9_000).to_string();
+        assert!(
+            past.ends_with(">0s</time>"),
+            "a deadline passed reads nought: {past}"
+        );
+        assert!(
+            !Time::millis(0).relative().to_string().contains("data-now"),
+            "only a counter needs the server's clock"
+        );
+        assert!(
+            Time::millis(0)
+                .elapsed()
+                .to_string()
+                .contains("data-now=\""),
+            "a counter carries the clock it was rendered by"
+        );
+    }
+
+    #[test]
+    fn counters_step_together_and_only_while_moving() {
+        assert_eq!(LOCALISE.matches("setTimeout(k.tick").count(), 2);
+        assert!(LOCALISE.contains("time[data-time=elapsed], time[data-time=remaining]"));
+        assert!(
+            LOCALISE.contains(".some(Boolean) && setTimeout"),
+            "the second timer stops once nothing is moving"
+        );
+        assert_eq!(span(59_400), "59s");
+        assert_eq!(span(65_000), "1m 05s");
+        assert_eq!(span(3_900_000), "1h 05m");
+        assert_eq!(span(-5), "0s");
+    }
+
+    #[test]
     fn every_time_shares_one_localiser() {
         for html in [
             Time::millis(0).to_string(),
@@ -216,6 +375,7 @@ mod tests {
             assert_eq!(html.matches("data-init=").count(), 1, "{html}");
         }
         assert_eq!(LOCALISE.matches("setInterval").count(), 1);
+        assert_eq!(LOCALISE.matches("new MutationObserver").count(), 1);
         assert!(
             LOCALISE.starts_with("(window.kitTime ??="),
             "installed once a page"

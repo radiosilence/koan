@@ -11,6 +11,7 @@ use askama::Template;
 use crate::arg::{Amount, AsText, Content, Flag, Markup, Text};
 use crate::attrs::{Attrs, attribute, component};
 use crate::button::Button;
+use crate::choice::Check;
 use crate::slot::Wrap;
 
 /// What an [`Input`] takes.
@@ -93,9 +94,14 @@ struct Common<'a> {
     disabled: bool,
     autofocus: bool,
     compact: bool,
+    short: bool,
+    submits: bool,
     bind: Option<&'static str>,
     attrs: Attrs<'a>,
 }
+
+/// What a control that [`submits`](Input::submits) does on `change`.
+const SUBMITS: &str = "el.form?.requestSubmit()";
 
 impl Common<'_> {
     /// `name`, the state props, the binding and the aria the control's field gives it.
@@ -126,6 +132,9 @@ impl Common<'_> {
         if let Some(signal) = self.bind {
             write!(f, " data-bind=\"{signal}\"")?;
         }
+        if self.submits {
+            write!(f, " data-on:change=\"{SUBMITS}\"")?;
+        }
         for (on, flag) in [
             (self.required, " required"),
             (self.disabled, " disabled"),
@@ -140,7 +149,8 @@ impl Common<'_> {
 
     fn class(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let compact = if self.compact { " compact" } else { "" };
-        let classes = format!("{compact}{}", self.attrs.classes());
+        let short = if self.short { " short" } else { "" };
+        let classes = format!("{compact}{short}{}", self.attrs.classes());
         if !classes.is_empty() {
             write!(f, " class=\"{}\"", classes.trim_start())?;
         }
@@ -180,6 +190,15 @@ macro_rules! control {
             /// compact button beside it. A `compact` class on any container does the same for every control inside.
             pub fn compact(mut self) -> Self {
                 self.common.compact = true;
+                self
+            }
+
+            /// Sends its form when its value changes, as a filter's select or date does: `requestSubmit`, so the
+            /// form's own submit handler and its checks run. [`Form::live`](crate::Form::live) is the form sending as
+            /// the person types; this is one control sending when it is changed. A control that sends only on some
+            /// values writes its own `on:change` with [`datastar`](Self::datastar) instead.
+            pub fn submits(mut self) -> Self {
+                self.common.submits = true;
                 self
             }
 
@@ -381,6 +400,12 @@ impl<'a> Input<'a> {
     /// The steps a number or range moves in.
     pub fn step(mut self, step: impl Into<Amount>) -> Self {
         self.bounds[2] = Some(step.into());
+        self
+    }
+
+    /// As wide as a few digits, for a number such as a limit or a port, rather than the width of its row.
+    pub fn short(mut self) -> Self {
+        self.common.short = true;
         self
     }
 
@@ -699,8 +724,14 @@ pub struct Field<'a> {
     scope: Text<'a>,
     /// Where it fetches itself from as the page starts.
     loads: Text<'a>,
+    /// The box that sends it as cleared: its name and its words.
+    clear: Option<(Text<'a>, Text<'a>)>,
     attrs: Attrs<'a>,
 }
+
+/// What a clearable field's box does as it is ticked or unticked: every other control in the field is disabled while
+/// it is ticked, so the form sends the box and none of the values.
+const CLEARS: &str = "(on => el.closest('.field').querySelectorAll('input, select, textarea').forEach(c => c.closest('.check') == el || (c.disabled = on)))(evt.target.checked)";
 
 impl<'a> Field<'a> {
     /// `control`, labelled `label`.
@@ -713,8 +744,18 @@ impl<'a> Field<'a> {
             warning: Text::default(),
             scope: Text::default(),
             loads: Text::default(),
+            clear: None,
             attrs: Attrs::default(),
         }
+    }
+
+    /// A box after the control, named `name` and saying `label`, that sends the field as cleared rather than left
+    /// unchanged, as a batch edit's fields do: while it is ticked the field's other controls are disabled, so the form
+    /// sends `name=1` and no value. The field is then drawn as a group named by its label, since a `<label>` cannot
+    /// hold a second control.
+    pub fn clearable(mut self, name: impl Into<Text<'a>>, label: impl Into<Text<'a>>) -> Self {
+        self.clear = Some((name.into(), label.into()));
+        self
     }
 
     /// Fetches itself from `url` as the page starts, for a control whose choices or value the server takes a moment to
@@ -911,6 +952,21 @@ impl<'a> Field<'a> {
         self.input("step", |input| input.step(step))
     }
 
+    /// Sends its form when its value changes; see [`Input::submits`].
+    pub fn submits(self) -> Self {
+        self.each(
+            "submits",
+            Input::submits,
+            Select::submits,
+            Textarea::submits,
+        )
+    }
+
+    /// As wide as a few digits; see [`Input::short`].
+    pub fn short(self) -> Self {
+        self.input("short", Input::short)
+    }
+
     /// How many lines tall a textarea is.
     pub fn rows(mut self, rows: impl Into<Amount>) -> Self {
         let rows = rows.into();
@@ -1025,7 +1081,21 @@ impl<'a> Field<'a> {
 
     /// The element it is drawn as: a `<label>`, or a `div` round a control of the app's own.
     fn element(&self) -> &'static str {
-        if self.is_custom() { "div" } else { "label" }
+        if self.is_group() { "div" } else { "label" }
+    }
+
+    /// Whether it is drawn as a group: round a control of the app's own, or round a control and its clearing box.
+    fn is_group(&self) -> bool {
+        self.is_custom() || self.clear.is_some()
+    }
+
+    /// The box that clears it, after its control.
+    fn clear_box(&self) -> Option<Check<'_>> {
+        self.clear.as_ref().map(|(name, label)| {
+            Check::new(name.as_str(), label.as_str())
+                .value("1")
+                .datastar("on:change", CLEARS)
+        })
     }
 
     /// Whether its control is the app's own, which may be a group a `<label>` cannot hold.

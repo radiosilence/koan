@@ -102,22 +102,25 @@ Text is escaped wherever it lands. Markup is a separate type, built from a compo
 | `Button` | Every action. Its weight is its constructor (`primary`, `bordered`, `standard`, `quiet`, `link`); `bad`, `fill`, `icon`, `icon_only`, `toggles`, `compact`, `busy`, `disabled` qualify it; one action says what it does: `post`, `get`, `href`, `opens`, `closes`, `submit`; `sends` makes a request submit a form's fields, and `in_place` makes a link load its page in place |
 | `Link` | A link in the page's look, which can load its page in place and mark the page shown |
 | `Form` | A form's attributes for the app's own `<form>` (`post`, `get`, `plain`, `live`), and its submit |
-| `Field` | A label, a control and a note under it, linked by `aria-describedby`: `text`, `password`, `email`, `url`, `number`, `select`, `textarea`, `custom`; `hint`, `error`, `warning` |
+| `Field` | A label, a control and a note under it, linked by `aria-describedby`: `text`, `password`, `email`, `url`, `number`, `select`, `textarea`, `custom`; `hint`, `error`, `warning`; `short` for a few digits, `submits` to send its form on change, `clearable` for a box that sends it as cleared |
 | `Input`, `Select`, `Textarea` | The controls, alone or in a field |
 | `Combo` | A control joined to the button it feeds |
 | `Check`, `Toggle` | A box leading its words inline, alone (`bare`), or as a row of a list with a picture and a detail; a settings row with the box trailing. Each a checkbox or a radio |
 | `RepeatField` | Rows of one input, sent under one name, which the kit adds, removes and fills from a paste of several values |
+| `Selection`, `SelectionCount`, `SelectionBar` | Rows to tick and act on together: a form whose select-all box, count and bar of actions (stuck to the window's foot while anything is ticked) follow its boxes, and which refuses to send with none ticked |
 | `Status`, `Meter`, `Spinner` | A state in a tone, in words (`neutral` for one settled but not verified); progress as a hairline, named for a screen reader; the ensō, for anything on its way |
 | `Notice`, `Flash`, `Empty` | A message in place; one over the page; what stands where a list would be |
 | `Sheet`, `Confirm` | A dialog opened through `commandfor`, kept above an on-screen keyboard, whose body can load as it opens; the page's one sheet for asking before a change |
 | `Pairs`, `List`, `Disclosure`, `CopyField` | Labels and values, optional or from a template's loops; values someone else chose, each behind a marker; a summary, words or markup, that opens or loads; a value to copy, with a word or a glyph and what it is for |
-| `Time` | An instant, drawn in UTC and rewritten in the reader's zone: a date, a time, a clock or how long ago |
-| `Head`, `ImportMap`, `SkipLink`, `TopBar`, `Footer`, `Release` | The page around the content |
+| `Time` | An instant, drawn in UTC and rewritten in the reader's zone: a date, a time, a clock or how long ago; or a counter of the time spent since it or left until it, stepping each second against the server's clock |
+| `Tabs`, `Tab` | A row of addresses, each with a count, actions, a tone and a busy state |
+| `Head`, `ImportMap`, `SkipLink`, `TopBar`, `Wordmark`, `Footer`, `Release` | The page around the content; the wordmark alone for a page without the bar |
+| `scrolls_into_view()` | The attribute that brings a region the server draws into view as it arrives |
 | `icon::*` | The kōan icon set, `kit::icon::HEART.svg(15)` |
 
 The common props, on every component: `id`, `class` for the app's own layout utilities, `data`, `attr`, and `datastar` for a Datastar attribute the kit does not write. Every component also has `html` and `patch`, so a handler answers with one: `events([kit::Flash::ok("Saved.").patch().into()])`.
 
-Containers whose markup is one element and a class stay classes: `panel`, `rows`, `dense`, `code`, `codes` (one-time codes to keep, selected whole), `qr` (a QR code's `<svg>`, dark on white in either scheme), `skeleton`, `prose` (Markdown rendered to HTML), `controls` (a row of controls as tall as the tallest) and `compact` (every control inside at the compact size).
+Containers whose markup is one element and a class stay classes: `panel`, `rows` (`rows tight` for a dense listing), `dense`, `code`, `codes` (one-time codes to keep, selected whole), `qr` (a QR code's `<svg>`, dark on white in either scheme), `skeleton`, `prose` (Markdown rendered to HTML), `controls` (a row of controls as tall as the tallest) and `compact` (every control inside at the compact size).
 
 ### The compact size
 

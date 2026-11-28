@@ -141,6 +141,7 @@ pub fn sections() -> Vec<Section> {
             intro: "The bar over an app's pages and the foot under them, each clear of a phone's notch and home indicator.",
             entries: vec![
                 story!(Frame, "story/topbar.html"),
+                entry!(kit::Wordmark::new("dither", "/").home_label("dither: your albums")),
                 entry!(kit::Footer::new().body(kit::Release::new("koan-kit-web", "0.9.0", "https://github.com/radiosilence/koan"))),
             ],
         },
@@ -152,7 +153,9 @@ pub fn sections() -> Vec<Section> {
                     .tab(kit::Tab::new("Burial", "/stub/place?burial").current(true).in_place())
                     .tab(kit::Tab::new("Phace", "/stub/place?phace").count(12).in_place()
                         .action(kit::Button::quiet("close").icon_only(kit::icon::CLOSE).compact().post("/stub/slow")))
-                    .tab(kit::Tab::new("Polar Bear", "/stub/place?polar").in_place())),
+                    .tab(kit::Tab::new("Polar Bear", "/stub/place?polar").in_place())
+                    .tab(kit::Tab::new("Moodymann", "/stub/place?moodymann").busy(true).in_place())
+                    .tab(kit::Tab::new("Basic Channel", "/stub/place?basic").tone(kit::Tone::Bad).in_place())),
                 story!(Card, "story/card.html"),
                 // Shown, not drawn: the page's one Navigation is in its shell, and a second would take every click.
                 Entry {
@@ -213,7 +216,9 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Field::textarea("notes", "notes")
                     .value("Text a person wrote keeps its Case.")
                     .warning("Saved on this device only.")),
-                entry!(kit::Field::number("slots", "upload slots").value("4").min(0).max(20)),
+                entry!(kit::Field::number("slots", "upload slots").value("4").min(0).max(20).short()),
+                entry!(kit::Field::text("a-genre", "genre").placeholder("leave as is").clearable("clear-genre", "clear")),
+                entry!(kit::Field::select("show", "which albums", [("", "every album"), ("dups", "held more than once")]).submits()),
                 entry!(kit::Field::select("model", "model", ["…"]).loads("/stub/model").id("story-model")),
                 entry!(kit::Combo::new(
                     kit::Input::text("split").placeholder("split on").label("separator"),
@@ -233,7 +238,7 @@ pub fn sections() -> Vec<Section> {
         },
         Section {
             title: "choices",
-            intro: "A box leading its words inline, or a settings row with the box where a switch would be.",
+            intro: "A box leading its words inline, or a settings row with the box where a switch would be, and a list of rows to tick and act on together.",
             entries: vec![
                 entry!(kit::Check::new("lossless", "lossless only").checked(true)),
                 entry!(kit::Check::radio("quality", "lossless", "lossless").checked(true)),
@@ -243,6 +248,15 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Check::new("path", "select Untrue").bare().value("/music/untrue")),
                 entry!(kit::Check::radio("to", "", "a new album").picture_icon(kit::icon::PLUS).checked(true)),
                 entry!(kit::Check::radio("to", "a1", "Holiday, 2024").picture("").detail("12 images · 48 MB")),
+                story!(
+                    SelectionStory,
+                    "story/selection.html",
+                    albums: Vec<(&'static str, &'static str)> = vec![
+                        ("/music/untrue", "Burial: Untrue"),
+                        ("/music/love", "Phace: Love Songs"),
+                        ("/music/held", "Polar Bear: Held on the Tips of Fingers"),
+                    ]
+                ),
             ],
         },
         Section {
@@ -301,13 +315,14 @@ pub fn sections() -> Vec<Section> {
         },
         Section {
             title: "content",
-            intro: "Labelled pairs, a bulleted list of values, times in the reader's zone, rendered Markdown, a disclosure that opens or loads, and a value to copy.",
+            intro: "Labelled pairs, a bulleted list of values, times in the reader's zone and counters of time spent or left, rendered Markdown, a disclosure that opens or loads, and a value to copy.",
             entries: vec![
                 entry!(kit::Pairs::new()
                     .pair("format", "FLAC 24/96")
                     .pair("size", "1.2 GB")
                     .optional("label", None::<&str>)
                     .pair("source", kit::Button::link("soulseek").href("#content"))),
+                entry!(kit::Pairs::new().pair("released", "2007").pair("label", "Hyperdub").tight()),
                 story!(
                     PairsStory,
                     "story/pairs.html",
@@ -319,6 +334,8 @@ pub fn sections() -> Vec<Section> {
                 entry!(kit::Time::millis(1_795_791_315_000).date()),
                 entry!(kit::Time::millis(1_795_791_315_000).clock()),
                 entry!(kit::Time::millis(1_795_791_315_000).relative()),
+                entry!(kit::Time::millis(1_795_791_315_000).elapsed().as_of(1_795_791_562_000)),
+                entry!(kit::Time::millis(1_795_795_215_000).remaining().as_of(1_795_791_315_000)),
                 story!(Prose, "story/prose.html"),
                 entry!(kit::Disclosure::new("connection details").body("What only some readers need.")),
                 entry!(kit::Disclosure::new("files").loads("/stub/files", "Reading…").id("story-files")),

@@ -7,6 +7,7 @@ use crate::attrs::{Attrs, component};
 use crate::button::Button;
 use crate::link::Link;
 use crate::slot::Wrap;
+use crate::status::Tone;
 
 /// A row of tabs, named for a screen reader: `kit::Tabs::new("searches").tab(kit::Tab::new("Burial", url))`.
 ///
@@ -68,6 +69,8 @@ component!(Tabs);
 pub struct Tab<'a> {
     link: Option<Link<'a>>,
     current: bool,
+    busy: bool,
+    tone: Option<Tone>,
     count: Text<'a>,
     actions: Vec<Button<'a>>,
     /// Tabs a template wrote, standing in for this one.
@@ -81,6 +84,8 @@ impl<'a> Tab<'a> {
         Self {
             link: Some(Link::new(label, href)),
             current: false,
+            busy: false,
+            tone: None,
             count: Text::default(),
             actions: Vec::new(),
             markup: Markup::default(),
@@ -92,6 +97,8 @@ impl<'a> Tab<'a> {
         Self {
             link: None,
             current: false,
+            busy: false,
+            tone: None,
             count: Text::default(),
             actions: Vec::new(),
             markup,
@@ -117,6 +124,30 @@ impl<'a> Tab<'a> {
     pub fn busy_key(mut self, key: impl Into<Text<'a>>) -> Self {
         self.link = self.link.map(|link| link.busy_key(key));
         self
+    }
+
+    /// Its page is still working, such as a search still running: the ensō turns after its words, and the tab is
+    /// busy to a screen reader.
+    pub fn busy(mut self, on: impl Into<Flag>) -> Self {
+        self.busy = on.into().get();
+        self
+    }
+
+    /// Its words in a tone: `Bad` for a search that failed, `Warn` for one that needs attention, `Ok` for one that
+    /// is done. `Wait` is a tab's own muted words.
+    pub fn tone(mut self, tone: Tone) -> Self {
+        self.tone = Some(tone);
+        self
+    }
+
+    fn tone_class(&self) -> &'static str {
+        match self.tone {
+            Some(Tone::Wait) | None => "",
+            Some(Tone::Ok) => " ok",
+            Some(Tone::Warn) => " warn",
+            Some(Tone::Bad) => " bad",
+            Some(Tone::Neutral) => " neutral",
+        }
     }
 
     /// A figure after its words: how many results it holds.
@@ -162,5 +193,25 @@ mod tests {
         assert!(html.contains("@get(el.getAttribute('href')"), "{html}");
         assert!(html.contains("<small>12</small>"), "{html}");
         assert!(html.contains("data-url=\"/search/2/close\""), "{html}");
+    }
+
+    #[test]
+    fn a_tab_says_it_is_working_and_takes_a_tone() {
+        let html = Tab::new("Burial", "/search/1").busy(true).to_string();
+        assert!(
+            html.starts_with("<span class=\"tab\" aria-busy=\"true\">"),
+            "{html}"
+        );
+        assert!(html.contains("class=\"spinner\""), "{html}");
+        let failed = Tab::new("Phace", "/search/2").tone(Tone::Bad).to_string();
+        assert!(failed.starts_with("<span class=\"tab bad\">"), "{failed}");
+        assert!(!failed.contains("spinner"), "{failed}");
+        assert!(
+            Tab::new("Phace", "/")
+                .tone(Tone::Wait)
+                .to_string()
+                .starts_with("<span class=\"tab\">"),
+            "a tab's words are muted already"
+        );
     }
 }

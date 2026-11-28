@@ -1,6 +1,8 @@
-{#- One tab: its link, a count, and its actions after it. Tabs a template wrote stand in its place as they are. -#}
+{#- One tab: its link, the ensō while its page works, a count, and its actions after it. Tabs a template wrote stand
+    in its place as they are. -#}
 {%- if let Some(link) = link -%}
-<span class="tab{% if current %} current{% endif %}{{ attrs.classes() }}"{{ attrs }}>{{ link }}
+<span class="tab{% if current %} current{% endif %}{{ self.tone_class() }}{{ attrs.classes() }}"{% if busy %} aria-busy="true"{% endif %}{{ attrs }}>{{ link }}
+{%- if busy %}<span class="spinner" aria-hidden="true"></span>{% endif %}
 {%- if let Some(count) = count.present() %}<small>{{ count }}</small>{% endif %}
 {%- for action in actions %}{{ action }}{% endfor -%}
 </span>

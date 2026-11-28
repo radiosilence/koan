@@ -92,6 +92,11 @@
     @apply min-w-0 border border-muted bg-transparent px-2.5 py-2 text-input text-ink normal-case;
   }
 
+  /* Taller or shorter, never wider: a textarea dragged wider breaks the layout around it. */
+  textarea {
+    @apply resize-y;
+  }
+
   /* Drawn rather than native, which on Safari is a rounded menu button whatever the border says. */
   select {
     @apply cursor-pointer appearance-none pr-8;
@@ -255,6 +260,21 @@
 
   .field.bad :is(input, select, textarea) {
     @apply border-bad;
+  }
+
+  /* A number of a few digits, such as a limit or a port: as wide as it needs, not as wide as its row. */
+  input.short,
+  .field input.short {
+    @apply w-[7em];
+  }
+
+  /* A control and the box that clears it, on one line, the control taking the room. */
+  .field > .clearable {
+    @apply flex flex-wrap items-center gap-x-3 gap-y-1;
+  }
+
+  .field > .clearable > :is(input, select, textarea) {
+    @apply flex-1;
   }
 
   .field > small.warn,
@@ -537,6 +557,26 @@
     @apply flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 py-2;
   }
 
+  /* Rows closer together, for a dense listing beside another. */
+  .rows.tight > li {
+    @apply py-1;
+  }
+
+  /* The actions on what a selection has ticked: stuck to the window's foot while its rows scroll by, clear of a phone's
+   * home indicator, and gone while nothing is ticked. The count leads, the actions at the far end. */
+  .selectionbar {
+    @apply sticky bottom-0 z-10 mt-2 flex flex-wrap items-center gap-2 border border-rule bg-bg px-3 py-2.5 text-meta;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+
+  .selectionbar[hidden] {
+    @apply hidden;
+  }
+
+  .selectionbar > [data-kit-count] {
+    @apply me-auto text-ink;
+  }
+
   /* Values someone else chose, each behind a square marker and wrapped anywhere, so where one ends and the next begins
    * is never in doubt. */
   ul.list {
@@ -757,6 +797,10 @@
     @apply m-0 wrap-anywhere;
   }
 
+  dl.pairs.tight {
+    @apply gap-y-0;
+  }
+
   /* Where a list would be, when it has nothing: quiet and centred, the title a step stronger than why. */
   .empty {
     @apply grid justify-items-center gap-2 py-12 text-center text-control text-muted;
@@ -787,8 +831,13 @@
     padding-top: max(12px, env(safe-area-inset-top));
   }
 
+  /* The app's name as its mark, wherever it stands: leading the bar, or above a sign-in form. */
+  .wordmark {
+    @apply text-title-sm font-extralight text-strong lowercase hover:no-underline;
+  }
+
   .topbar > .wordmark {
-    @apply me-auto text-title-sm font-extralight text-strong lowercase hover:no-underline;
+    @apply me-auto;
   }
 
   /* The foot of an app's pages: centred fine print, padded clear of a phone's home indicator. */
@@ -880,6 +929,23 @@
 
   .tab > small {
     @apply text-fine text-muted tabular-nums;
+  }
+
+  /* A tab's words in its tone: a search that failed, one that needs a look, one that is done. */
+  .tab.ok > a {
+    @apply text-ok;
+  }
+
+  .tab.warn > a {
+    @apply text-warn;
+  }
+
+  .tab.bad > a {
+    @apply text-bad;
+  }
+
+  .tab.neutral > a {
+    @apply text-ink;
   }
 
   /* A link holding a block, such as a cover over a title: no underline, its words in the text's colour. */

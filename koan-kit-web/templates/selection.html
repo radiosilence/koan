@@ -1,0 +1,6 @@
+{#- Rows to tick, as a form: the boxes sent under its name, and the counts and bars it keeps in step with them. -#}
+<form class="selection{{ attrs.classes() }}" data-name="{{ name }}"
+{%- if let Some(total) = total %} data-total="{{ total }}"{% endif %}
+{%- if let Some(none) = none.present() %} data-none="{{ none }}"{% endif %}{{ attrs }} data-init="{{ crate::selection::COUNT }}" data-on:change="{{ crate::selection::CHANGE }}">
+{{- rows -}}
+</form>

@@ -1,0 +1,6 @@
+{#- The actions on what is ticked, stuck to the window's foot and hidden while nothing is. -#}
+<div class="selectionbar{{ attrs.classes() }}" hidden data-kit-selected{{ attrs }}>
+  {{- count -}}
+  {%- for action in actions %}{{ action }}{% endfor -%}
+  {{- markup -}}
+</div>
