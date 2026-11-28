@@ -57,6 +57,7 @@ pub(super) struct Prepaint {
     scroll: Point<Pixels>,
     selection: Vec<Bounds<Pixels>>,
     caret: Option<Bounds<Pixels>>,
+    font: (gpui::Font, Pixels),
 }
 
 impl gpui::Element for FieldElement {
@@ -237,6 +238,7 @@ impl gpui::Element for FieldElement {
             scroll,
             selection,
             caret,
+            font: (style.font(), font_size),
         }
     }
 
@@ -338,8 +340,10 @@ impl gpui::Element for FieldElement {
         });
         let lines = std::mem::take(&mut prepaint.lines);
         let scroll = prepaint.scroll;
+        let font = prepaint.font.clone();
         self.state.update(cx, |state, _| {
             state.lines = lines;
+            state.font = Some(font);
             state.bounds = Some(bounds);
             state.line_height = line_height;
             state.scroll = scroll;
