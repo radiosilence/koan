@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.77.4
+
+### Changed
+
+- **The GraphQL API pages up to 10,000 rows.** `first` was capped at 500, so walking a large library took over a hundred requests; it now takes a handful.
+
+### Internal
+
+- **The Apple apps are built with Xcode 27.** App Store Connect requires the 27 SDKs for uploads from April 2027; the apps still run on 26.
+- **Releases publish to crates.io through trusted publishing.** The publish job exchanges its OIDC identity for a short-lived crates.io token, so no registry credential is stored in the repository.
+
 ## 0.77.3
 
 ### Fixed
