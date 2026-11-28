@@ -81,8 +81,9 @@ impl<'a> Sheet<'a> {
     /// page's own script may change the address, `data-url` on the sheet, before it opens.
     ///
     /// Its [`actions`](Self::action) are hidden until the body arrives, so neither a press nor Tab and Return can act
-    /// on a body not yet there. If the read is answered with an error or cannot be sent, the sheet closes, and a
-    /// [`Flash::region`](crate::Flash::region) told [`failed`](crate::Flash::failed) says so.
+    /// on a body not yet there. If the read is answered with an error, or cannot be sent twice in a row, the sheet
+    /// closes, and a [`Flash::region`](crate::Flash::region) told [`failed`](crate::Flash::failed) or
+    /// [`unreachable`](crate::Flash::unreachable) says so.
     pub fn loads(mut self, url: impl Into<Text<'a>>) -> Self {
         self.loads = url.into();
         self
@@ -266,7 +267,10 @@ mod tests {
             sheet.contains("data-on:command=\"evt.command == 'show-modal' &amp;&amp;"),
             "{sheet}"
         );
-        assert!(sheet.contains("@get(el.dataset.url)"), "{sheet}");
+        assert!(
+            sheet.contains("@get(el.dataset.url, {retryMaxCount: 1})"),
+            "a sheet the person just opened gives up after a second attempt: {sheet}"
+        );
         assert!(sheet.contains("<section></section>"), "{sheet}");
         let fill = format!("{:?}", Sheet::fill("mover", "<b>"));
         assert!(fill.contains("#mover > section"), "{fill}");

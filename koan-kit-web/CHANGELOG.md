@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.10.0
+
+### Added
+
+- **`Time::elapsed` and `Time::remaining`, counters that step each second.** The time spent on a stage or left until a deadline, read against the server's clock (`data-now`, the render time unless `as_of` gives the reading's), so a reader whose clock is wrong still sees the right count. One timer steps every counter on the page and stops once none is moving.
+- **`Selection`, `SelectionCount` and `SelectionBar`, for rows to tick and act on together.** A form whose `select_all` box, counts and bar of actions follow its boxes as they change and as rows arrive. The bar sticks to the window's foot, clear of a phone's home indicator, and shows only while anything is ticked; with `none`, a request sending the form with nothing ticked says so instead of sending.
+- **`Field::clearable`, a box that sends a field as cleared** rather than left unchanged, as a batch edit's fields need: while it is ticked the field's other controls are disabled, so only the box is sent.
+- **`submits()` on every control and on `Field`,** which sends its form when its value changes, as a filter's select or date does.
+- **`Input::short` and `Field::short`, a number field as wide as a few digits,** such as a limit or a port.
+- **`Tab::busy` and `Tab::tone`.** A tab whose page is still working shows the ensō and is busy to a screen reader; a tone draws its words as failed, needing attention or done.
+- **`Wordmark`, the app's name as its mark outside the top bar,** for a page such as sign-in that has no bar. `.wordmark` is styled wherever it stands.
+- **`TopBar::in_place` and `Wordmark::in_place`,** so the link home loads in place like the app's other links.
+- **`scrolls_into_view()`, the attribute that brings a region into view as the server draws it,** such as a preview drawn in answer to a request lower on the page.
+- **`Pairs::tight` and `rows tight`, for a dense listing.**
+
+### Changed
+
+- **`Time::millis` and `Time::seconds` take their instant by value or by reference,** as the kit's other props do, so a template holding `&&i64` from a loop or a field builds a time itself.
+- **A textarea resizes vertically only,** since one dragged wider breaks the layout around it.
+- **`Sheet::loads` gives up after a second attempt** when the server cannot be reached, rather than staying busy for the three minutes Datastar's retries take, and closes with the unreachable flash.
+
 ## 0.9.1
 
 ### Fixed

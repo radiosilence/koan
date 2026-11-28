@@ -77,6 +77,7 @@ mod message;
 mod navigation;
 mod qr;
 mod repeat;
+mod selection;
 mod sheet;
 mod slot;
 mod spinner;
@@ -91,22 +92,23 @@ pub use askama_datastar;
 pub use arg::{Amount, AsText, Content, Flag, Markup, Text};
 pub use button::{Button, Weight};
 pub use choice::{Check, Toggle};
-pub use content::{CopyField, Disclosure, List, Pairs};
+pub use content::{CopyField, Disclosure, List, Pairs, ScrollsIntoView, scrolls_into_view};
 pub use cover::Cover;
 pub use field::{Choice, Combo, Control, Field, Input, InputKind, Select, Textarea};
 pub use form::{Form, FormAttrs};
-pub use head::{Footer, Head, ImportMap, Release, SkipLink, TopBar};
+pub use head::{Footer, Head, ImportMap, Release, SkipLink, TopBar, Wordmark};
 pub use link::Link;
 pub use message::{Empty, Flash, Notice};
 pub use navigation::Navigation;
 pub use qr::Qr;
 pub use repeat::RepeatField;
+pub use selection::{Selection, SelectionBar, SelectionCount};
 pub use sheet::{CONFIRMED, Confirm, Sheet};
 pub use slot::{Wrap, wrap};
 pub use spinner::Spinner;
 pub use status::{Meter, Status, Tone};
 pub use tabs::{Tab, Tabs};
-pub use time::Time;
+pub use time::{Epoch, Time};
 
 #[cfg(test)]
 mod tests {

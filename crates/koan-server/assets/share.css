@@ -595,6 +595,9 @@
     color: var(--ink);
     text-transform: none;
   }
+  textarea {
+    resize: vertical;
+  }
   select {
     cursor: pointer;
     appearance: none;
@@ -877,6 +880,19 @@
   }
   .field.bad :is(input, select, textarea) {
     border-color: var(--bad);
+  }
+  input.short, .field input.short {
+    width: 7em;
+  }
+  .field > .clearable {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: calc(var(--spacing) * 3);
+    row-gap: var(--spacing);
+  }
+  .field > .clearable > :is(input, select, textarea) {
+    flex: 1;
   }
   .field > small.warn, .field.warn > small {
     color: var(--warn);
@@ -1165,6 +1181,35 @@
     row-gap: var(--spacing);
     padding-block: calc(var(--spacing) * 2);
   }
+  .rows.tight > li {
+    padding-block: var(--spacing);
+  }
+  .selectionbar {
+    position: sticky;
+    bottom: 0px;
+    z-index: 10;
+    margin-top: calc(var(--spacing) * 2);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    border-style: var(--tw-border-style);
+    border-width: 1px;
+    border-color: var(--rule);
+    background-color: var(--bg);
+    padding-inline: calc(var(--spacing) * 3);
+    padding-block: calc(var(--spacing) * 2.5);
+    font-size: var(--text-meta);
+    line-height: var(--tw-leading, var(--text-meta--line-height));
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+  .selectionbar[hidden] {
+    display: none;
+  }
+  .selectionbar > [data-kit-count] {
+    margin-inline-end: auto;
+    color: var(--ink);
+  }
   ul.list {
     margin: 0px;
     list-style-type: square;
@@ -1446,6 +1491,9 @@
     margin: 0px;
     overflow-wrap: anywhere;
   }
+  dl.pairs.tight {
+    row-gap: 0px;
+  }
   .empty {
     display: grid;
     justify-items: center;
@@ -1531,8 +1579,7 @@
     }
     padding-top: max(12px, env(safe-area-inset-top));
   }
-  .topbar > .wordmark {
-    margin-inline-end: auto;
+  .wordmark {
     font-size: var(--text-title-sm);
     line-height: var(--tw-leading, var(--text-title-sm--line-height));
     --tw-font-weight: var(--font-weight-extralight);
@@ -1544,6 +1591,9 @@
         text-decoration-line: none;
       }
     }
+  }
+  .topbar > .wordmark {
+    margin-inline-end: auto;
   }
   .footer {
     padding-top: calc(var(--spacing) * 6);
@@ -1670,6 +1720,18 @@
     color: var(--muted);
     --tw-numeric-spacing: tabular-nums;
     font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
+  }
+  .tab.ok > a {
+    color: var(--ok);
+  }
+  .tab.warn > a {
+    color: var(--warn);
+  }
+  .tab.bad > a {
+    color: var(--bad);
+  }
+  .tab.neutral > a {
+    color: var(--ink);
   }
   a.card {
     display: block;

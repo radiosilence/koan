@@ -1,5 +1,5 @@
 {#- The bar over an app's pages: the wordmark leading home, and the app's links and actions after it at the far end. -#}
 <header class="topbar{{ attrs.classes() }}"{{ attrs }}>
-  <a class="wordmark" href="{{ home }}"{% if let Some(label) = home_label.present() %} aria-label="{{ label }}"{% endif %}>{{ name }}</a>
+  {{ wordmark }}
   {{ items }}
 </header>
