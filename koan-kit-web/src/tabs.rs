@@ -143,8 +143,7 @@ impl<'a> Tab<'a> {
 
     fn tone_class(&self) -> String {
         self.tone
-            .map(|tone| format!(" {}", tone.class()))
-            .unwrap_or_default()
+            .map_or_default(|tone| format!(" {}", tone.class()))
     }
 
     /// A figure after its words: how many results it holds.
