@@ -30,9 +30,9 @@ const COUNT: &str = concat!(
 /// What a selection does when a box changes: "all" ticks or unticks every row, a row unticked unticks "all", and the
 /// counts follow.
 const CHANGE: &str = concat!(
-    "(t => t.name == 'all' ? el.querySelectorAll('input').forEach(c => c.name == el.dataset.name && (c.checked = t.checked))",
+    "(t => (t.name == 'all' ? el.querySelectorAll('input').forEach(c => c.name == el.dataset.name && (c.checked = t.checked))",
     " : t.name == el.dataset.name && !t.checked && (a => a && (a.checked = false))(el.querySelector('input[name=all]')),",
-    " el._kitsel())(evt.target)",
+    " el._kitsel()))(evt.target)",
 );
 
 /// Rows to tick and act on together: `kit::Selection::new("albums", "path")` round a list whose rows each hold a box

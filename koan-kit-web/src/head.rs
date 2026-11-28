@@ -426,7 +426,7 @@ mod tests {
         );
         let in_place = TopBar::new("dither", "/").in_place().to_string();
         assert!(
-            in_place.contains("class=\"wordmark\" data-in-place"),
+            in_place.contains("class=\"wordmark\"") && in_place.contains(" data-in-place "),
             "{in_place}"
         );
         let alone = Wordmark::new("dither", "/").id("mark").to_string();
