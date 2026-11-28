@@ -1,0 +1,1 @@
+- **Releases publish to crates.io through trusted publishing.** The publish job exchanges its OIDC identity for a short-lived crates.io token, so no registry credential is stored in the repository.

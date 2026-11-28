@@ -1255,6 +1255,9 @@ jobs:
     # re-run after a later failure passes straight through.
     needs: [check-version, linux-build, macos-release]
     if: ${{ !cancelled() && needs.check-version.outputs.should_release == 'true' && needs.linux-build.result == 'success' && needs.macos-release.result == 'success' }}
+    permissions:
+      contents: read
+      id-token: write
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
     steps:
@@ -1262,9 +1265,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
+      # A short-lived token from crates.io's trusted publishing, exchanged for
+      # this workflow's OIDC identity, so no registry secret is kept.
+      - id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
       - name: Publish crates
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         # `cargo publish --workspace` resolves dependency order itself and waits
         # for each crate to appear in the index before publishing its dependents.
         # No verification build: `Linux` and `macOS` built this commit already,
