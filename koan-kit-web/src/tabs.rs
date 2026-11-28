@@ -40,7 +40,8 @@ impl<'a> Tabs<'a> {
     }
 
     /// Scrolled sideways rather than wrapped when the tabs do not fit, as a page's navigation of many tabs is: never
-    /// vertically, with no scrollbar drawn and the current tab's underline whole.
+    /// vertically, with no scrollbar drawn and the current tab's underline whole. In a grid, its column must be free to
+    /// shrink (`minmax(0, 1fr)`, Tailwind's `grid-cols-1`), or the column widens to hold every tab and nothing scrolls.
     pub fn scrolls(mut self) -> Self {
         self.attrs.add_class("scrolls");
         self

@@ -1729,6 +1729,8 @@
     line-height: var(--tw-leading, var(--text-control--line-height));
   }
   .tabs.scrolls {
+    max-width: 100%;
+    min-width: 0px;
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: clip;

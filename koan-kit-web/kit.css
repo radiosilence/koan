@@ -948,7 +948,7 @@
   /* A row of more tabs than fit, scrolled sideways rather than wrapped: never vertically, with no scrollbar drawn. The
    * hairline is an inset shadow rather than the border, which the clip would cut through a current tab's underline. */
   .tabs.scrolls {
-    @apply flex-nowrap overflow-x-auto overflow-y-clip border-b-0;
+    @apply max-w-full min-w-0 flex-nowrap overflow-x-auto overflow-y-clip border-b-0;
     box-shadow: inset 0 -1px var(--rule);
     scrollbar-width: none;
   }

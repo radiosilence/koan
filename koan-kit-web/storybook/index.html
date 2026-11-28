@@ -49,73 +49,73 @@
 <h2 id="buttons">buttons</h2>
 <p class="text-meta text-muted">One type draws every action. Its weight is its constructor; bad, fill and a glyph qualify it.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="primary">connect</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;connect&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button">bordered</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;bordered&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="standard">standard</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::standard(&#34;standard&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="quiet">quiet</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;quiet&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="link">link</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::link(&#34;link&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><a class="button primary" href="#buttons">sign in</a></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;sign in&#34;).href(&#34;#buttons&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="bad">disconnect</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;disconnect&#34;).bad()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="quiet bad">remove</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;remove&#34;).bad()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="bad fill">delete</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;delete&#34;).bad().fill()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="fill">filled</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;filled&#34;).fill()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="primary busy">connecting</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;connecting&#34;).busy(true)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" disabled>disabled</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;disabled&#34;).disabled(true)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button"><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M4 13L4 20L20 20L20 13M12 15.5L12 3.5M8 7.5L12 3.5L16 7.5"/></svg>export</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;export&#34;).icon(kit::icon::EXPORT)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="icon-button" aria-label="more"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M5.25 12L5.75 12M11.75 12L12.25 12M18.25 12L18.75 12"/></svg></button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;more&#34;).icon_only(kit::icon::MORE)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="icon-button" aria-label="play" aria-pressed="false"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M7 5L19 12L7 19Z"/></svg><svg class="icon pressed" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M8.5 5L8.5 19M15.5 5L15.5 19"/></svg></button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;play&#34;).icon_only(kit::icon::PLAY).toggles(kit::icon::PAUSE,
 false)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="icon-button" aria-label="mute" aria-pressed="true"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M3.5 9L7 9L12 4.5L12 19.5L7 15L3.5 15ZM13.89 8.11C14.922 9.142 15.502 10.541 15.502 12C15.502 13.459 14.922 14.858 13.89 15.89M16.36 5.64C19.869 9.154 19.869 14.846 16.36 18.36"/></svg><svg class="icon pressed" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M3.5 9L7 9L12 4.5L12 19.5L7 15L3.5 15ZM15 9.5L20 14.5M20 9.5L15 14.5"/></svg></button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;mute&#34;).icon_only(kit::icon::VOLUME).toggles(kit::icon::MUTED,
 true)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="icon-button compact" aria-label="pin"><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M8 3.5L16 3.5M9.5 3.5L9.5 9L6.5 13.5L17.5 13.5L14.5 9L14.5 3.5M12 13.5L12 20.5"/></svg></button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;pin&#34;).icon_only(kit::icon::PIN).compact()</pre></figcaption>
   </figure>
@@ -123,31 +123,31 @@ true)</pre></figcaption>
 <h2 id="compact">compact</h2>
 <p class="text-meta text-muted">The compact size, for controls in a row or a toolbar: a field, a combo and a button at this size line up exactly. A compact class on a container compacts everything inside it.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><input type="text" class="compact" placeholder="split on" name="split" aria-label="separator"></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Input::text(&#34;split&#34;).placeholder(&#34;split on&#34;).label(&#34;separator&#34;).compact()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="combo compact"><input type="search" placeholder="filter" name="q" aria-label="filter"><button type="button">go</button></span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Combo::new(kit::Input::search(&#34;q&#34;).placeholder(&#34;filter&#34;).label(&#34;filter&#34;),
 kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="compact">re-tag</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;re-tag&#34;).compact()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="primary compact">apply</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;apply&#34;).compact()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="field compact">
   <span id="slots-label">upload slots</span>
   <input type="number" value="4" name="slots" aria-labelledby="slots-label">
 </label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::number(&#34;slots&#34;, &#34;upload slots&#34;).value(&#34;4&#34;).compact()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="compact controls">
   <input type="text" placeholder="split on" name="split" aria-label="separator">
   <span class="combo"><select name="sort" aria-label="sort"><option value="newest">newest</option><option value="oldest">oldest</option></select><button type="button">sort</button></span>
@@ -161,7 +161,7 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
   {{ kit::Button::quiet(&#34;pin&#34;).icon_only(kit::icon::PIN) }}
 &#60;/div&#62;</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="controls">
   <input type="text" placeholder="room name" name="room" aria-label="room">
   <button type="button">join</button>
@@ -171,7 +171,7 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
   {{ kit::Button::bordered(&#34;join&#34;) }}
 &#60;/div&#62;</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="controls" data-heights="normal">
   <input type="text" placeholder="artist album" name="height-q" aria-label="query">
   <select name="height-kind" aria-label="kind"><option value="album">album</option><option value="single">single</option></select>
@@ -217,49 +217,49 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
 <h2 id="requests">requests</h2>
 <p class="text-meta text-muted">A request carries its URL as data, and the button is busy for exactly as long as its own request runs.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="primary" data-url="/stub/slow" data-indicator="_busyfc1e434ea2e6" data-class:busy="$_busyfc1e434ea2e6" data-attr:disabled="$_busyfc1e434ea2e6" data-on:click="@post(el.dataset.url)">rescan</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;rescan&#34;).post(&#34;/stub/slow&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" data-url="/stub/slow" data-indicator="_busyc39ddf476a3e" data-indicator:_busyfb539b5f8e0c data-class:busy="$_busyc39ddf476a3e" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url, {requestCancellation: 'disabled'})">retry</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;retry&#34;).post(&#34;/stub/slow&#34;).busy_key(&#34;card-1&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" data-url="/stub/slow?next" data-indicator="_busyb4dd3c109e4a" data-indicator:_busyfb539b5f8e0c data-class:busy="$_busyb4dd3c109e4a" data-attr:disabled="$_busyfb539b5f8e0c" data-on:click="@post(el.dataset.url, {requestCancellation: 'disabled'})">next copy</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;next copy&#34;).post(&#34;/stub/slow?next&#34;).busy_key(&#34;card-1&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" data-url="/stub/flash" data-indicator="_busy1426f53fa3f7" data-class:busy="$_busy1426f53fa3f7" data-attr:disabled="$_busy1426f53fa3f7" data-on:click="@get(el.dataset.url)">say saved</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;say saved&#34;).get(&#34;/stub/flash&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" data-url="/stub/failed" data-indicator="_busy13515e7b50da" data-class:busy="$_busy13515e7b50da" data-attr:disabled="$_busy13515e7b50da" data-on:click="@get(el.dataset.url)">say it failed</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;say it failed&#34;).get(&#34;/stub/failed&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" data-url="/stub/moved" data-indicator="_busye938008c5726" data-class:busy="$_busye938008c5726" data-attr:disabled="$_busye938008c5726" data-on:click="@get(el.dataset.url)">move with a link</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;move with a link&#34;).get(&#34;/stub/moved&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" data-on:click="dispatchEvent(new CustomEvent(&#39;kit-flash&#39;, {detail: {message: &#39;Raised by the page.&#39;, stays: true}}))">raise from script</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;raise from script&#34;).datastar(&#34;on:click&#34;,
 &#34;dispatchEvent(new CustomEvent(&#39;kit-flash&#39;, {detail: {message: &#39;Raised by the page.&#39;, stays: true}}))&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><a href="/stub/place" data-indicator="_busy4192d2309b7f" data-indicator:_busyc0ae98eb474f data-in-place data-class:busy="$_busy4192d2309b7f" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc0ae98eb474f || (@get(el.getAttribute('href'), {requestCancellation: 'disabled'}), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">load in place</a></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Link::new(&#34;load in place&#34;,
 &#34;/stub/place&#34;).in_place().busy_key(&#34;story-place&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="status wait" data-class:busy="$_busyfb539b5f8e0c" data-attr:aria-busy="$_busyfb539b5f8e0c ? 'true' : 'false'">queued</span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::wait(&#34;queued&#34;).busy_with(&#34;card-1&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" data-url="/stub/error" data-indicator="_busycc7a3f51c6d7" data-class:busy="$_busycc7a3f51c6d7" data-attr:disabled="$_busycc7a3f51c6d7" data-on:click="@get(el.dataset.url)">fail on the server</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;fail on the server&#34;).get(&#34;/stub/error&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="cover" data-attr:aria-busy="$_busy41230052f3fe ? 'true' : 'false'" data-attr:inert="$_busy41230052f3fe">
   <ul class="rows">
     <li><button type="button" class="link" data-url="/stub/place?music" data-indicator="_busye543a3d09be0" data-indicator:_busy41230052f3fe data-class:busy="$_busye543a3d09be0" data-attr:disabled="$_busy41230052f3fe" data-on:click="@get(el.dataset.url, {requestCancellation: 'disabled'})">music</button></li>
@@ -277,7 +277,7 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
 <h2 id="frame">frame</h2>
 <p class="text-meta text-muted">The bar over an app&#39;s pages and the foot under them, each clear of a phone&#39;s notch and home indicator.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><header class="topbar">
   <a href="#frame" class="wordmark" aria-label="dither: your albums">dither</a>
   
@@ -292,11 +292,11 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
   {{ kit::Link::new(&#34;sign out&#34;, &#34;#frame&#34;) }}
 {% endfilter %}</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><a href="/" class="wordmark" aria-label="dither: your albums">dither</a></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Wordmark::new(&#34;dither&#34;, &#34;/&#34;).home_label(&#34;dither: your albums&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><footer class="footer"><a class="release" href="https://github.com/radiosilence/koan/releases/tag/v0.9.0">koan-kit-web 0.9.0</a></footer></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Footer::new().body(kit::Release::new(&#34;koan-kit-web&#34;, &#34;0.9.0&#34;,
 &#34;https://github.com/radiosilence/koan&#34;))</pre></figcaption>
@@ -305,7 +305,7 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
 <h2 id="navigation">navigation</h2>
 <p class="text-meta text-muted">Tabs, cards and lists whose links load in place. One Navigation in the shell loads every link of a marked region in place, and Back and Forward with them.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><nav class="tabs" aria-label="searches"><span class="tab current"><a href="/stub/place?burial" aria-current="page" data-indicator="_busy2119b1dc5bfc" data-in-place data-class:busy="$_busy2119b1dc5bfc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busy2119b1dc5bfc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">Burial</a></span><span class="tab"><a href="/stub/place?phace" data-indicator="_busy99ce1c8e9c2c" data-in-place data-class:busy="$_busy99ce1c8e9c2c" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busy99ce1c8e9c2c || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">Phace</a><small>12</small><button type="button" class="icon-button compact" data-url="/stub/slow" data-indicator="_busyfc1e434ea2e6" data-class:busy="$_busyfc1e434ea2e6" data-attr:disabled="$_busyfc1e434ea2e6" data-on:click="@post(el.dataset.url)" aria-label="close"><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M6 6L18 18M18 6L6 18"/></svg></button></span><span class="tab"><a href="/stub/place?polar" data-indicator="_busy71ff913e3cb9" data-in-place data-class:busy="$_busy71ff913e3cb9" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busy71ff913e3cb9 || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">Polar Bear</a></span><span class="tab" aria-busy="true"><a href="/stub/place?moodymann" data-indicator="_busyafabb2e31575" data-in-place data-class:busy="$_busyafabb2e31575" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyafabb2e31575 || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">Moodymann</a><span class="spinner" aria-hidden="true"></span></span><span class="tab bad"><a href="/stub/place?basic" data-indicator="_busyf2ce983767eb" data-in-place data-class:busy="$_busyf2ce983767eb" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyf2ce983767eb || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">Basic Channel</a></span><span class="tab italic"><a href="/stub/place?shackleton" data-indicator="_busy8f0bcf2fe9fb" data-in-place data-class:busy="$_busy8f0bcf2fe9fb" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busy8f0bcf2fe9fb || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">Shackleton</a><small>31</small></span></nav></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Tabs::new(&#34;searches&#34;).tab(kit::Tab::new(&#34;Burial&#34;,
 &#34;/stub/place?burial&#34;).current(true).in_place()).tab(kit::Tab::new(&#34;Phace&#34;,
@@ -315,18 +315,18 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
 &#34;/stub/place?basic&#34;).tone(kit::Tone::Bad).in_place()).tab(kit::Tab::new(&#34;Shackleton&#34;,
 &#34;/stub/place?shackleton&#34;).count(31).italic().in_place())</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><nav class="tabs scrolls" aria-label="pages"><span class="tab current"><a href="/stub/place?search" aria-current="page" data-indicator="_busy5b6262afee3f" data-in-place data-class:busy="$_busy5b6262afee3f" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busy5b6262afee3f || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">search</a></span><span class="tab"><a href="/stub/place" data-indicator="_busyc96ffd29e1cc" data-in-place data-class:busy="$_busyc96ffd29e1cc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc96ffd29e1cc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">downloads</a></span><span class="tab"><a href="/stub/place" data-indicator="_busyc96ffd29e1cc" data-in-place data-class:busy="$_busyc96ffd29e1cc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc96ffd29e1cc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">uploads</a></span><span class="tab"><a href="/stub/place" data-indicator="_busyc96ffd29e1cc" data-in-place data-class:busy="$_busyc96ffd29e1cc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc96ffd29e1cc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">library</a></span><span class="tab"><a href="/stub/place" data-indicator="_busyc96ffd29e1cc" data-in-place data-class:busy="$_busyc96ffd29e1cc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc96ffd29e1cc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">triage</a></span><span class="tab"><a href="/stub/place" data-indicator="_busyc96ffd29e1cc" data-in-place data-class:busy="$_busyc96ffd29e1cc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc96ffd29e1cc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">rooms</a></span><span class="tab"><a href="/stub/place" data-indicator="_busyc96ffd29e1cc" data-in-place data-class:busy="$_busyc96ffd29e1cc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc96ffd29e1cc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">messages</a></span><span class="tab"><a href="/stub/place" data-indicator="_busyc96ffd29e1cc" data-in-place data-class:busy="$_busyc96ffd29e1cc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc96ffd29e1cc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">users</a></span><span class="tab"><a href="/stub/place" data-indicator="_busyc96ffd29e1cc" data-in-place data-class:busy="$_busyc96ffd29e1cc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc96ffd29e1cc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">bans</a></span><span class="tab"><a href="/stub/place" data-indicator="_busyc96ffd29e1cc" data-in-place data-class:busy="$_busyc96ffd29e1cc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc96ffd29e1cc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">settings</a></span><span class="tab"><a href="/stub/place" data-indicator="_busyc96ffd29e1cc" data-in-place data-class:busy="$_busyc96ffd29e1cc" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busyc96ffd29e1cc || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">log</a></span></nav></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Tabs::new(&#34;pages&#34;).scrolls().tab(kit::Tab::new(&#34;search&#34;,
 &#34;/stub/place?search&#34;).current(true).in_place()).tabs([&#34;downloads&#34;, &#34;uploads&#34;,
 &#34;library&#34;, &#34;triage&#34;, &#34;rooms&#34;, &#34;messages&#34;, &#34;users&#34;, &#34;bans&#34;, &#34;settings&#34;,
 &#34;log&#34;].map(|page| kit::Tab::new(page, &#34;/stub/place&#34;).in_place()))</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="status wait italic">last checked an hour ago</span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::wait(&#34;last checked an hour ago&#34;).italic()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><a href="/stub/place?untrue" class="card" data-indicator="_busye9b3fb4f832e" data-in-place data-class:busy="$_busye9b3fb4f832e" data-on:click="document.getElementById('kit-navigation') || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || evt.button || (evt.preventDefault(), $_busye9b3fb4f832e || (@get(el.getAttribute('href')), history.state?.kit || history.replaceState({kit: 1}, ''), history.pushState({kit: 1}, '', el.href), window._kithistory ??= (addEventListener('popstate', e => e.state?.kit &amp;&amp; !document.getElementById('kit-navigation') &amp;&amp; location.reload()), 1)))">
   <strong>Untrue</strong>
   <small>Burial · 13 tracks</small>
@@ -336,11 +336,11 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
   &#60;small&#62;Burial · 13 tracks&#60;/small&#62;
 {% endfilter %}</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Navigation::new().follows(&#34;url&#34;) // once, in the shell</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><ul class="rows" data-kit-in-place>
   <li><a href="/stub/place?held">Held on the Tips of Fingers</a></li>
   <li><a href="/stub/place?peepers">Peepers</a></li>
@@ -358,22 +358,22 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
 <h2 id="asking-first">asking first</h2>
 <p class="text-meta text-muted">A question, or the server&#39;s preview of a change, in the page&#39;s one Confirm. Yes waits for its own preview.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="bad" data-url="/stub/slow" data-ask="remove Held on the Tips of Fingers from the library?" data-yes="remove" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask, $_kitconfirm.yes = el.dataset.yes, $_kitconfirm.url = el.dataset.url, $_kitconfirm.preview = el.dataset.preview || '', $_kitconfirm.detail = el.dataset.detail || '', $_kitconfirm.form = el.getAttribute('form') || '', $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset, $_kitconfirm.ready = !el.dataset.preview, $_kitconfirm.done = false, document.getElementById('kit-confirm')._kitopener = el, $_kitconfirm.open = true, $_kitconfirm.n++">remove album</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;remove album&#34;).bad().post(&#34;/stub/slow&#34;).confirm(&#34;remove Held on the Tips of Fingers from the library?&#34;,
 &#34;remove&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="quiet" data-url="/stub/slow" data-ask="close every unpinned search?" data-yes="close them" data-detail="Pinned searches stay open; the rest lose their results." data-yes-bad commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask, $_kitconfirm.yes = el.dataset.yes, $_kitconfirm.url = el.dataset.url, $_kitconfirm.preview = el.dataset.preview || '', $_kitconfirm.detail = el.dataset.detail || '', $_kitconfirm.form = el.getAttribute('form') || '', $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset, $_kitconfirm.ready = !el.dataset.preview, $_kitconfirm.done = false, document.getElementById('kit-confirm')._kitopener = el, $_kitconfirm.open = true, $_kitconfirm.n++">close unpinned</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::quiet(&#34;close unpinned&#34;).post(&#34;/stub/slow&#34;).confirm(&#34;close every unpinned search?&#34;,
 &#34;close them&#34;).detail(&#34;Pinned searches stay open; the rest lose their results.&#34;).yes_bad()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="primary" data-url="/stub/slow" data-ask="rename three files?" data-yes="rename" data-preview="/stub/preview" commandfor="kit-confirm" command="show-modal" data-on:click="$_kitconfirm.ask = el.dataset.ask, $_kitconfirm.yes = el.dataset.yes, $_kitconfirm.url = el.dataset.url, $_kitconfirm.preview = el.dataset.preview || '', $_kitconfirm.detail = el.dataset.detail || '', $_kitconfirm.form = el.getAttribute('form') || '', $_kitconfirm.bad = el.classList.contains('bad') || 'yesBad' in el.dataset, $_kitconfirm.ready = !el.dataset.preview, $_kitconfirm.done = false, document.getElementById('kit-confirm')._kitopener = el, $_kitconfirm.open = true, $_kitconfirm.n++">rename files</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;rename files&#34;).post(&#34;/stub/slow&#34;).preview(&#34;/stub/preview&#34;,
 &#34;rename three files?&#34;, &#34;rename&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div>
 <form  action="/stub/slow" method="post" data-indicator="_busy4305a06810e9" data-on:submit="(el.noValidate || el.checkValidity()) && @post(el.getAttribute('action'), {contentType: 'form'})" id="story-ban" class="controls">
   <input type="text" placeholder="username" name="username" aria-label="username to ban" required>
@@ -389,11 +389,11 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
 <h2 id="sheets">sheets</h2>
 <p class="text-meta text-muted">A dialog opened and closed through commandfor, with no script: rising from the bottom on a phone.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" class="primary" commandfor="story-sheet" command="show-modal">add a server</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::primary(&#34;add a server&#34;).opens(&#34;story-sheet&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><dialog class="sheet" closedby="any" aria-labelledby="story-sheet-title" id="story-sheet" data-init="(r =&#62; !r || r._kitkeyboard || (r._kitkeyboard = () =&#62; (n =&#62; n != r._kitinset &#38;&#38; (r._kitinset = n, r.style.setProperty(&#39;--keyboard-inset&#39;, n + &#39;px&#39;)))(Math.round(Math.max(0, r.clientHeight - visualViewport.height - visualViewport.offsetTop))), visualViewport.addEventListener(&#39;resize&#39;, r._kitkeyboard), visualViewport.addEventListener(&#39;scroll&#39;, r._kitkeyboard), r._kitkeyboard()))(window.visualViewport &#38;&#38; document.documentElement)">
   <header>
     <h2 id="story-sheet-title">add a server</h2>
@@ -408,11 +408,11 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Sheet::new(&#34;story-sheet&#34;,
 &#34;add a server&#34;).close(&#34;close&#34;).body(&#34;A dialog that rises from the bottom on a phone and is a centred panel elsewhere.&#34;).action(kit::Button::quiet(&#34;cancel&#34;).closes(&#34;story-sheet&#34;)).action(kit::Button::primary(&#34;add&#34;).closes(&#34;story-sheet&#34;))</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" commandfor="story-wrapped" command="show-modal">open a wrapped sheet</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;open a wrapped sheet&#34;).opens(&#34;story-wrapped&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><dialog class="sheet" closedby="any" aria-labelledby="story-wrapped-title" id="story-wrapped" data-init="(r =&#62; !r || r._kitkeyboard || (r._kitkeyboard = () =&#62; (n =&#62; n != r._kitinset &#38;&#38; (r._kitinset = n, r.style.setProperty(&#39;--keyboard-inset&#39;, n + &#39;px&#39;)))(Math.round(Math.max(0, r.clientHeight - visualViewport.height - visualViewport.offsetTop))), visualViewport.addEventListener(&#39;resize&#39;, r._kitkeyboard), visualViewport.addEventListener(&#39;scroll&#39;, r._kitkeyboard), r._kitkeyboard()))(window.visualViewport &#38;&#38; document.documentElement)">
   <header>
     <h2 id="story-wrapped-title">rename</h2>
@@ -426,11 +426,11 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
   &#60;p&#62;The sheet holds whatever the block renders.&#60;/p&#62;
 {% endfilter %}</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><button type="button" commandfor="story-loads" command="show-modal">move to…</button></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Button::bordered(&#34;move to…&#34;).opens(&#34;story-loads&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><dialog class="sheet" closedby="any" aria-labelledby="story-loads-title" id="story-loads" data-init="(r =&#62; !r || r._kitkeyboard || (r._kitkeyboard = () =&#62; (n =&#62; n != r._kitinset &#38;&#38; (r._kitinset = n, r.style.setProperty(&#39;--keyboard-inset&#39;, n + &#39;px&#39;)))(Math.round(Math.max(0, r.clientHeight - visualViewport.height - visualViewport.offsetTop))), visualViewport.addEventListener(&#39;resize&#39;, r._kitkeyboard), visualViewport.addEventListener(&#39;scroll&#39;, r._kitkeyboard), r._kitkeyboard()))(window.visualViewport &#38;&#38; document.documentElement)" data-url="/stub/sheet" data-on:command="evt.command == 'show-modal' &amp;&amp; (s => (s.replaceChildren(), s.ariaBusy = 'true', @get(el.dataset.url, {retryMaxCount: 1})))(el.querySelector(':scope > section'))" data-on:datastar-fetch="evt.detail.el === el &amp;&amp; ['error', 'retries-failed'].includes(evt.detail.type) &amp;&amp; el.close()">
   <header>
     <h2 id="story-loads-title">move to</h2>
@@ -447,7 +447,7 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
 <h2 id="fields">fields</h2>
 <p class="text-meta text-muted">A label leading, the control filling the width, and a note under it that describes the control.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="field">
   <span id="token-label">api token</span>
   <input type="password" placeholder="paste the token" name="token" aria-labelledby="token-label" aria-describedby="token-note">
@@ -456,7 +456,7 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::password(&#34;token&#34;,
 &#34;api token&#34;).placeholder(&#34;paste the token&#34;).hint(&#34;Stored sealed; the gateway never shows it again.&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="field">
   <span id="region-label">region</span>
   <select name="region" aria-labelledby="region-label"><option value="eu-west">eu-west</option><option value="us-east" selected>us-east</option></select>
@@ -464,7 +464,7 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::select(&#34;region&#34;, &#34;region&#34;,
 [(&#34;eu-west&#34;, &#34;eu-west&#34;), (&#34;us-east&#34;, &#34;us-east&#34;)]).value(&#34;us-east&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="field bad">
   <span id="server-label">server url</span>
   <input type="url" value="htp://example" name="server" aria-labelledby="server-label" aria-describedby="server-note" aria-invalid="true">
@@ -473,7 +473,7 @@ kit::Button::bordered(&#34;go&#34;)).compact()</pre></figcaption>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::url(&#34;server&#34;,
 &#34;server url&#34;).value(&#34;htp://example&#34;).error(&#34;Not a URL: it must start with https://.&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="field warn">
   <span id="notes-label">notes</span>
   <textarea name="notes" aria-labelledby="notes-label" aria-describedby="notes-note">
@@ -483,14 +483,14 @@ Text a person wrote keeps its Case.</textarea>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::textarea(&#34;notes&#34;,
 &#34;notes&#34;).value(&#34;Text a person wrote keeps its Case.&#34;).warning(&#34;Saved on this device only.&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="field">
   <span id="slots-label">upload slots</span>
   <input type="number" class="short" value="4" min="0" max="20" name="slots" aria-labelledby="slots-label">
 </label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::number(&#34;slots&#34;, &#34;upload slots&#34;).value(&#34;4&#34;).min(0).max(20).short()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="field" role="group" aria-labelledby="a-genre-label">
   <span id="a-genre-label">genre</span>
   <span class="clearable"><input type="text" placeholder="leave as is" name="a-genre" aria-labelledby="a-genre-label"><label class="check" data-on:change="(on =&#62; el.closest(&#39;.field&#39;).querySelectorAll(&#39;input, select, textarea&#39;).forEach(c =&#62; c.closest(&#39;.check&#39;) == el || (c.disabled = on)))(evt.target.checked)"><input type="checkbox" name="clear-genre" value="1"> clear</label></span>
@@ -498,7 +498,7 @@ Text a person wrote keeps its Case.</textarea>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::text(&#34;a-genre&#34;,
 &#34;genre&#34;).placeholder(&#34;leave as is&#34;).clearable(&#34;clear-genre&#34;, &#34;clear&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="field">
   <span id="show-label">which albums</span>
   <select name="show" aria-labelledby="show-label" data-on:change="el.form?.requestSubmit()"><option value="" selected>every album</option><option value="dups">held more than once</option></select>
@@ -506,7 +506,7 @@ Text a person wrote keeps its Case.</textarea>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::select(&#34;show&#34;, &#34;which albums&#34;,
 [(&#34;&#34;, &#34;every album&#34;), (&#34;dups&#34;, &#34;held more than once&#34;)]).submits()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="field" data-url="/stub/model" data-init="@get(el.dataset.url)" aria-busy="true" id="story-model">
   <span id="story-model-label">model</span>
   <span class="skeleton" inert><select name="model" aria-labelledby="story-model-label" disabled><option value="…">…</option></select></span>
@@ -514,17 +514,17 @@ Text a person wrote keeps its Case.</textarea>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Field::select(&#34;model&#34;, &#34;model&#34;,
 [&#34;…&#34;]).loads(&#34;/stub/model&#34;).id(&#34;story-model&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="combo"><input type="text" placeholder="split on" name="split" aria-label="separator"><button type="button">credit artists</button></span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Combo::new(kit::Input::text(&#34;split&#34;).placeholder(&#34;split on&#34;).label(&#34;separator&#34;),
 kit::Button::bordered(&#34;credit artists&#34;))</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="combo"><input type="search" value="Artist Album" name="query" aria-label="search"><button type="button" class="primary">grab</button></span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Combo::new(kit::Input::search(&#34;query&#34;).value(&#34;Artist Album&#34;).label(&#34;search&#34;),
 kit::Button::primary(&#34;grab&#34;))</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="field repeat" role="group" aria-labelledby="magnet-label" aria-describedby="magnet-note"
   data-split="words"
   data-init="el._kitrow = r => (n => (n.querySelector('input').value = '', r.after(n), n))(r.cloneNode(true)), el._kitsplit = t => t.split(el.dataset.split == 'words' ? /\s+/ : /\r?\n/).map(v => v.trim()).filter(Boolean), el._kitfill = (r, v) => v.slice(1).reduce((p, x) => (p = el._kitrow(p), p.querySelector('input').value = x, p), (r.querySelector('input').value = v[0] ?? '', r))"
@@ -547,41 +547,41 @@ kit::Input::url(&#34;magnet&#34;).placeholder(&#34;paste a magnet link&#34;), &#
 <h2 id="choices">choices</h2>
 <p class="text-meta text-muted">A box leading its words inline, or a settings row with the box where a switch would be, and a list of rows to tick and act on together.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="check"><input type="checkbox" name="lossless" checked> lossless only</label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::new(&#34;lossless&#34;, &#34;lossless only&#34;).checked(true)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="check"><input type="radio" name="quality" value="lossless" checked> lossless</label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::radio(&#34;quality&#34;, &#34;lossless&#34;, &#34;lossless&#34;).checked(true)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="check"><input type="radio" name="quality" value="any"> any</label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::radio(&#34;quality&#34;, &#34;any&#34;, &#34;any&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="toggle"><span>notify when done</span><input type="checkbox" name="notify" checked></label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Toggle::new(&#34;notify&#34;, &#34;notify when done&#34;).checked(true)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="toggle"><span>include lossy copies</span><input type="checkbox" name="lossy"></label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Toggle::new(&#34;lossy&#34;, &#34;include lossy copies&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><input type="checkbox" name="path" value="/music/untrue" aria-label="select Untrue"></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::new(&#34;path&#34;, &#34;select Untrue&#34;).bare().value(&#34;/music/untrue&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="check choice"><input type="radio" name="to" value="" checked><span class="picture"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.60" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 4.5L12 19.5M4.5 12L19.5 12"/></svg></span><span class="words"><span>a new album</span></span></label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::radio(&#34;to&#34;, &#34;&#34;,
 &#34;a new album&#34;).picture_icon(kit::icon::PLUS).checked(true)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><label class="check choice"><input type="radio" name="to" value="a1"><span class="picture"></span><span class="words"><span>Holiday, 2024</span><small>12 images · 48 MB</small></span></label></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Check::radio(&#34;to&#34;, &#34;a1&#34;,
 &#34;Holiday, 2024&#34;).picture(&#34;&#34;).detail(&#34;12 images · 48 MB&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><form data-kit-selection data-name="path" data-total="240" data-none="Tick an album to re-file." id="story-selection" data-init="(el._kitsel = () =&#62; (e =&#62; (b =&#62; (a =&#62; (t =&#62; (n =&#62; (has =&#62; (el.querySelectorAll(&#39;[data-kit-count], [data-kit-selected], [data-kit-when]&#39;).forEach(c =&#62; c.closest(&#39;[data-kit-selection]&#39;) == el &#38;&#38; (c.dataset.kitWhen ? c.hidden = !(n &#38;&#38; has(c.dataset.kitWhen)) : &#39;one&#39; in c.dataset ? (w =&#62; c.textContent != w &#38;&#38; (c.textContent = w))((n == 1 ? c.dataset.one : c.dataset.many).replace(&#39;{}&#39;, n)) : c.hidden = !n)), b[0]?.setCustomValidity(n || !el.dataset.none ? &#39;&#39; : el.dataset.none)))(g =&#62; (a?.checked ? b : t).some(c =&#62; (c.closest(&#39;[data-kit-tags]&#39;)?.dataset.kitTags || &#39;&#39;).split(&#39; &#39;).includes(g)) || !!a?.checked &#38;&#38; (el.dataset.allTags || &#39;&#39;).split(&#39; &#39;).includes(g)))(a?.checked ? +(el.dataset.total || b.length) : t.length))(b.filter(c =&#62; c.checked)))(e.find(c =&#62; c.name == &#39;all&#39;)))(e.filter(c =&#62; c.name == el.dataset.name)))([...el.elements]), el._kitsoon = () =&#62; el._kitq || (el._kitq = requestAnimationFrame(() =&#62; (el._kitq = 0, el._kitsel()))), new MutationObserver(ms =&#62; ms.some(m =&#62; [...m.addedNodes, ...m.removedNodes].some(x =&#62; x.nodeType == 1 &#38;&#38; (x.matches(&#39;input&#39;) || !!x.querySelector(&#39;input&#39;)))) &#38;&#38; el._kitsoon()).observe(el, {childList: true, subtree: true}), el._kitsel())" data-on:change="(t =&#62; t.form == el &#38;&#38; (t.name == &#39;all&#39; ? [...el.elements].forEach(c =&#62; c.name == el.dataset.name &#38;&#38; (c.checked = t.checked)) : t.name == el.dataset.name &#38;&#38; !t.checked &#38;&#38; [...el.elements].forEach(c =&#62; c.name == &#39;all&#39; &#38;&#38; (c.checked = false)), el._kitsel()))(evt.target)" data-on:datastar-fetch__document="evt.detail.type == &#39;datastar-patch-elements&#39; &#38;&#38; el._kitsoon?.()">
   <label class="check"><input type="checkbox" name="all" value="1"> select all 240</label>
   <ul class="rows tight">
@@ -609,7 +609,7 @@ kit::Input::url(&#34;magnet&#34;).placeholder(&#34;paste a magnet link&#34;), &#
 <h2 id="forms">forms</h2>
 <p class="text-meta text-muted">A form keeps its method and action, and its submit is busy while the form&#39;s request runs.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div>
 <form  action="/stub/slow" method="post" data-indicator="_busybd00a6b5fb78" data-on:submit="(el.noValidate || el.checkValidity()) && @post(el.getAttribute('action'), {contentType: 'form'})" id="story-form">
   <label class="field">
@@ -627,7 +627,7 @@ kit::Input::url(&#34;magnet&#34;).placeholder(&#34;paste a magnet link&#34;), &#
   {{ form.submit(kit::Button::primary(&#34;save&#34;)) }}
 &#60;/form&#62;</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div>
 <form  action="/stub/search" method="get" data-indicator="_busy87e21c9e1837" data-on:submit="(el.noValidate || el.checkValidity()) && @get(el.getAttribute('action'), {contentType: 'form'})" data-on:input__debounce.300ms="(el.noValidate || el.checkValidity()) && @get(el.getAttribute('action'), {contentType: 'form'})">
   <input type="search" placeholder="polar bear" name="q" aria-label="search">
@@ -639,7 +639,7 @@ kit::Input::url(&#34;magnet&#34;).placeholder(&#34;paste a magnet link&#34;), &#
 &#60;/form&#62;
 &#60;ul id=&#34;story-results&#34; class=&#34;rows&#34;&#62;&#60;/ul&#62;</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div>
 <form  action="/stub/slow" method="post" data-indicator="_busy1d690278a2df" data-on:submit="(el.noValidate || el.checkValidity()) && @post(el.getAttribute('action'), {contentType: 'form'})" id="story-actions" class="controls">
   <input type="text" placeholder="tag" name="tag" aria-label="tag" required>
@@ -653,7 +653,7 @@ kit::Input::url(&#34;magnet&#34;).placeholder(&#34;paste a magnet link&#34;), &#
   {{ kit::Button::bordered(&#34;remove&#34;).post(&#34;/stub/slow?remove&#34;).sends(&#34;story-actions&#34;).busy_key(&#34;story-actions&#34;) }}
 &#60;/form&#62;</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="field" role="group" aria-labelledby="field-release-type-label" aria-describedby="field-release-type-note">
   <span id="field-release-type-label">release type</span>
   
@@ -671,7 +671,7 @@ kit::Input::url(&#34;magnet&#34;).placeholder(&#34;paste a magnet link&#34;), &#
   &#60;/span&#62;
 {% endfilter %}</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div>
 
 <form  action="/stub/slow?github" method="post" data-indicator="_busyb0dd49db5f9c" data-on:submit="(el.noValidate || el.checkValidity()) && @post(el.getAttribute('action'), {contentType: 'form'})" id="story-cred-github">
@@ -705,77 +705,77 @@ kit::Input::url(&#34;magnet&#34;).placeholder(&#34;paste a magnet link&#34;), &#
 <h2 id="state">state</h2>
 <p class="text-meta text-muted">A status&#39;s word says what its colour does; a meter is named for a screen reader; a transfer moves from its last reading for two seconds, as it would between a server&#39;s readings.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="status ok">connected</span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::ok(&#34;connected&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="status warn">not configured</span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::warn(&#34;not configured&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="status bad">rejected</span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::bad(&#34;rejected&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="status wait">queued</span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::wait(&#34;queued&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="status neutral">configured</span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::neutral(&#34;configured&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="status wait busy">checking</span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::wait(&#34;checking&#34;).busy(true)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="status wait busy" data-url="/stub/status" data-init="@get(el.dataset.url)" aria-busy="true" id="story-status">checking</span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Status::wait(&#34;checking&#34;).loads(&#34;/stub/status&#34;).id(&#34;story-status&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="spinner" aria-hidden="true"></span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Spinner::new()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="spinner" role="status"><span class="label">loading the album</span></span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Spinner::new().label(&#34;loading the album&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><span class="spinner large" role="status"><span class="label">buffering</span></span></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Spinner::new().large().label(&#34;buffering&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><progress class="meter" value="40" max="100" aria-label="download"></progress></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Meter::new(40, 100).label(&#34;download&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><progress class="meter ok" value="80" max="100" aria-label="scan"></progress></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Meter::new(80, 100).tone(kit::Tone::Ok).label(&#34;scan&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><progress class="meter warn" value="30" max="100" aria-label="disk"></progress></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Meter::new(30, 100).tone(kit::Tone::Warn).label(&#34;disk&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><progress class="meter bad" value="60" max="100" aria-label="errors"></progress></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Meter::new(60, 100).tone(kit::Tone::Bad).label(&#34;errors&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><progress class="meter" aria-label="connecting"></progress></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Meter::waiting().label(&#34;connecting&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="transfer" data-kit-transfer data-bytes="12900000" data-total="48300000" data-rate="1400000" data-at="1795791315000" data-init="window.kitTransfer?.(el)"><progress class="meter" value="12900000" max="48300000" aria-label="download"></progress><p><span data-kit-done>12.3 MB</span><span data-kit-of>of 46.1 MB</span><span>1.3 MB/s</span><span data-kit-left>25s left</span></p></div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Transfer::new(12_900_000_u64,
 48_300_000_u64).rate(1_400_000_u64, STORY_AT).label(&#34;download&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="transfer" data-kit-transfer data-bytes="31000000" data-total="48300000" data-rate="0" data-at="0" data-init="window.kitTransfer?.(el)"><progress class="meter warn" value="31000000" max="48300000" aria-label="download"></progress><p><span data-kit-done>29.6 MB</span><span data-kit-of>of 46.1 MB</span></p></div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Transfer::new(31_000_000_u64,
 48_300_000_u64).tone(kit::Tone::Warn).label(&#34;download&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="transfer" data-kit-transfer data-bytes="2400000" data-total="0" data-rate="310000" data-at="1795791315000" data-init="window.kitTransfer?.(el)"><progress class="meter" aria-label="upload"></progress><p><span data-kit-done></span><span>302.7 KB/s</span></p></div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Transfer::new(2_400_000_u64,
 0_u64).rate(310_000_u64, STORY_AT).label(&#34;upload&#34;)</pre></figcaption>
@@ -784,29 +784,29 @@ kit::Input::url(&#34;magnet&#34;).placeholder(&#34;paste a magnet link&#34;), &#
 <h2 id="messages">messages</h2>
 <p class="text-meta text-muted">A notice says something about the page in place; an empty state stands where a list would be.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="notice" role="status">Saved. The next sign-in uses it.</div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::new(&#34;Saved. The next sign-in uses it.&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="notice warn" role="status">The token expires in two days.</div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::warn(&#34;The token expires in two days.&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="notice bad" role="alert">The server refused the token: 401. <button type="button" data-url="/stub/slow" data-indicator="_busyfc1e434ea2e6" data-class:busy="$_busyfc1e434ea2e6" data-attr:disabled="$_busyfc1e434ea2e6" data-on:click="@post(el.dataset.url)">retry</button></div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::bad(&#34;The server refused the token: 401.&#34;).action(kit::Button::bordered(&#34;retry&#34;).post(&#34;/stub/slow&#34;))</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="notice warn" role="status"><svg class="icon" width="15.6" height="15.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.72" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 3.5L21 19.5L3 19.5ZM12 9L12 14M11.75 16.75L12.25 16.75"/></svg>Unreachable since 14:02.</div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Notice::warn(&#34;Unreachable since 14:02.&#34;).icon(kit::icon::WARNING)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="empty compact">
   <strong>no rooms joined</strong>
 </div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Empty::new(&#34;no rooms joined&#34;).compact()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="empty">
   <svg class="icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.22" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 4L12 15M7.5 10.5L12 15L16.5 10.5M5 19.5L19 19.5"/></svg>
   <strong>nothing downloading</strong>
@@ -818,7 +818,7 @@ kit::Input::url(&#34;magnet&#34;).placeholder(&#34;paste a magnet link&#34;), &#
 <h2 id="content">content</h2>
 <p class="text-meta text-muted">Labelled pairs, a bulleted list of values, times in the reader&#39;s zone and counters of time spent or left, rendered Markdown, a disclosure that opens or loads, and a value to copy.</p>
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><dl class="pairs"><dt>format</dt><dd>FLAC 24/96</dd><dt>size</dt><dd>1.2 GB</dd><dt>source</dt><dd><a class="button link" href="#content">soulseek</a></dd>
 </dl></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Pairs::new().pair(&#34;format&#34;,
@@ -826,12 +826,12 @@ kit::Input::url(&#34;magnet&#34;).placeholder(&#34;paste a magnet link&#34;), &#
 &#34;1.2 GB&#34;).optional(&#34;label&#34;,
 None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek&#34;).href(&#34;#content&#34;))</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><dl class="pairs tight"><dt>released</dt><dd>2007</dd><dt>label</dt><dd>Hyperdub</dd>
 </dl></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Pairs::new().pair(&#34;released&#34;, &#34;2007&#34;).pair(&#34;label&#34;, &#34;Hyperdub&#34;).tight()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><dl class="pairs"><dt>last 30 days</dt><dd>42 views</dd>
   <dt>linked from</dt>
   <dd>example.com 30 · other sites 12</dd>
@@ -842,40 +842,40 @@ None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek
   &#60;dd&#62;{% for (host, n) in referrers %}{% if !loop.first %} · {% endif %}{{ host }} {{ n }}{% endfor %}&#60;/dd&#62;
 {% endfilter %}</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><ul class="list"><li><strong>mail.example.com</strong></li><li><strong>calendar.read</strong></li><li><strong>an.unbroken.value.that.wraps.anywhere.rather.than.running.off.the.page</strong></li></ul></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::List::new([&#34;mail.example.com&#34;, &#34;calendar.read&#34;,
 &#34;an.unbroken.value.that.wraps.anywhere.rather.than.running.off.the.page&#34;]).strong()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="empty compact"><strong>no scopes asked for</strong></div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::List::new(Vec::&#60;&#38;str&#62;::new()).empty(&#34;no scopes asked for&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><time datetime="2026-11-27T14:55:15Z" data-at="1795791315000" data-time="moment" data-init="(window.kitTime ??= (k =&#62; (k.m = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;, timeStyle: &#39;short&#39;}), k.d = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;}), k.c = new Intl.DateTimeFormat([], {timeStyle: &#39;medium&#39;, hourCycle: &#39;h23&#39;}), k.r = new Intl.RelativeTimeFormat([], {numeric: &#39;auto&#39;}), k.span = ms =&#62; (s =&#62; s &#60; 60 ? s + &#39;s&#39; : (m =&#62; m &#60; 60 ? m + &#39;m &#39; + String(s % 60).padStart(2, &#39;0&#39;) + &#39;s&#39; : Math.floor(m / 60) + &#39;h &#39; + String(m % 60).padStart(2, &#39;0&#39;) + &#39;m&#39;)(Math.floor(s / 60)))(Math.max(0, Math.round(ms / 1000))), k.skew = (n =&#62; n ? n - Date.now() : 0)(+document.querySelector(&#39;[data-kit-now]&#39;)?.dataset.kitNow || 0), k.now = () =&#62; Date.now() + k.skew, k.read = (t, at, s) =&#62; s == &#39;date&#39; ? [k.d.format(at), &#39;&#39;] : s == &#39;clock&#39; ? [k.c.format(at), &#39;&#39;] : s == &#39;elapsed&#39; ? [k.span(k.now(t) - at), k.m.format(at)] : s == &#39;remaining&#39; ? [k.span(at - k.now(t)), k.m.format(at)] : s == &#39;relative&#39; ? [(x =&#62; (u =&#62; k.r.format(Math.round(x / u[0]), u[1]))([[31536000, &#39;year&#39;], [2592000, &#39;month&#39;], [604800, &#39;week&#39;], [86400, &#39;day&#39;], [3600, &#39;hour&#39;]].find(u =&#62; Math.abs(x) &#62;= u[0]) || [60, &#39;minute&#39;]))((at - Date.now()) / 1000), k.m.format(at)] : [k.m.format(at), &#39;&#39;], k.f = t =&#62; (v =&#62; (t.textContent != v[0] &#38;&#38; (t.textContent = v[0]), t.title != v[1] &#38;&#38; (t.title = v[1]), t.dataset.time == &#39;elapsed&#39; || t.dataset.time == &#39;remaining&#39; &#38;&#38; k.now(t) &#60; +t.dataset.at))(k.read(t, +t.dataset.at, t.dataset.time)), k.tick = () =&#62; k.ticking = [...document.querySelectorAll(&#39;time[data-time=elapsed], time[data-time=remaining]&#39;)].map(t =&#62; k.f(t)).some(Boolean) &#38;&#38; setTimeout(k.tick, 1000 - Date.now() % 1000), k.go = t =&#62; k.f(t) &#38;&#38; !k.ticking &#38;&#38; (k.ticking = setTimeout(k.tick, 1000 - Date.now() % 1000)), new MutationObserver(ms =&#62; ms.forEach(x =&#62; (t =&#62; t &#38;&#38; k.go(t))((x.target.nodeType == 1 ? x.target : x.target.parentElement)?.closest(&#39;time[data-at][data-time]&#39;)))).observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: [&#39;data-at&#39;, &#39;title&#39;]}), setInterval(() =&#62; document.querySelectorAll(&#39;time[data-time=relative]&#39;).forEach(k.f), 60000), k.go))({}))(el)">2026-11-27 14:55 UTC</time></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Time::millis(1_795_791_315_000)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><time datetime="2026-11-27T14:55:15Z" data-at="1795791315000" data-time="date" data-init="(window.kitTime ??= (k =&#62; (k.m = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;, timeStyle: &#39;short&#39;}), k.d = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;}), k.c = new Intl.DateTimeFormat([], {timeStyle: &#39;medium&#39;, hourCycle: &#39;h23&#39;}), k.r = new Intl.RelativeTimeFormat([], {numeric: &#39;auto&#39;}), k.span = ms =&#62; (s =&#62; s &#60; 60 ? s + &#39;s&#39; : (m =&#62; m &#60; 60 ? m + &#39;m &#39; + String(s % 60).padStart(2, &#39;0&#39;) + &#39;s&#39; : Math.floor(m / 60) + &#39;h &#39; + String(m % 60).padStart(2, &#39;0&#39;) + &#39;m&#39;)(Math.floor(s / 60)))(Math.max(0, Math.round(ms / 1000))), k.skew = (n =&#62; n ? n - Date.now() : 0)(+document.querySelector(&#39;[data-kit-now]&#39;)?.dataset.kitNow || 0), k.now = () =&#62; Date.now() + k.skew, k.read = (t, at, s) =&#62; s == &#39;date&#39; ? [k.d.format(at), &#39;&#39;] : s == &#39;clock&#39; ? [k.c.format(at), &#39;&#39;] : s == &#39;elapsed&#39; ? [k.span(k.now(t) - at), k.m.format(at)] : s == &#39;remaining&#39; ? [k.span(at - k.now(t)), k.m.format(at)] : s == &#39;relative&#39; ? [(x =&#62; (u =&#62; k.r.format(Math.round(x / u[0]), u[1]))([[31536000, &#39;year&#39;], [2592000, &#39;month&#39;], [604800, &#39;week&#39;], [86400, &#39;day&#39;], [3600, &#39;hour&#39;]].find(u =&#62; Math.abs(x) &#62;= u[0]) || [60, &#39;minute&#39;]))((at - Date.now()) / 1000), k.m.format(at)] : [k.m.format(at), &#39;&#39;], k.f = t =&#62; (v =&#62; (t.textContent != v[0] &#38;&#38; (t.textContent = v[0]), t.title != v[1] &#38;&#38; (t.title = v[1]), t.dataset.time == &#39;elapsed&#39; || t.dataset.time == &#39;remaining&#39; &#38;&#38; k.now(t) &#60; +t.dataset.at))(k.read(t, +t.dataset.at, t.dataset.time)), k.tick = () =&#62; k.ticking = [...document.querySelectorAll(&#39;time[data-time=elapsed], time[data-time=remaining]&#39;)].map(t =&#62; k.f(t)).some(Boolean) &#38;&#38; setTimeout(k.tick, 1000 - Date.now() % 1000), k.go = t =&#62; k.f(t) &#38;&#38; !k.ticking &#38;&#38; (k.ticking = setTimeout(k.tick, 1000 - Date.now() % 1000)), new MutationObserver(ms =&#62; ms.forEach(x =&#62; (t =&#62; t &#38;&#38; k.go(t))((x.target.nodeType == 1 ? x.target : x.target.parentElement)?.closest(&#39;time[data-at][data-time]&#39;)))).observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: [&#39;data-at&#39;, &#39;title&#39;]}), setInterval(() =&#62; document.querySelectorAll(&#39;time[data-time=relative]&#39;).forEach(k.f), 60000), k.go))({}))(el)">2026-11-27</time></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Time::millis(1_795_791_315_000).date()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><time datetime="2026-11-27T14:55:15Z" data-at="1795791315000" data-time="clock" data-init="(window.kitTime ??= (k =&#62; (k.m = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;, timeStyle: &#39;short&#39;}), k.d = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;}), k.c = new Intl.DateTimeFormat([], {timeStyle: &#39;medium&#39;, hourCycle: &#39;h23&#39;}), k.r = new Intl.RelativeTimeFormat([], {numeric: &#39;auto&#39;}), k.span = ms =&#62; (s =&#62; s &#60; 60 ? s + &#39;s&#39; : (m =&#62; m &#60; 60 ? m + &#39;m &#39; + String(s % 60).padStart(2, &#39;0&#39;) + &#39;s&#39; : Math.floor(m / 60) + &#39;h &#39; + String(m % 60).padStart(2, &#39;0&#39;) + &#39;m&#39;)(Math.floor(s / 60)))(Math.max(0, Math.round(ms / 1000))), k.skew = (n =&#62; n ? n - Date.now() : 0)(+document.querySelector(&#39;[data-kit-now]&#39;)?.dataset.kitNow || 0), k.now = () =&#62; Date.now() + k.skew, k.read = (t, at, s) =&#62; s == &#39;date&#39; ? [k.d.format(at), &#39;&#39;] : s == &#39;clock&#39; ? [k.c.format(at), &#39;&#39;] : s == &#39;elapsed&#39; ? [k.span(k.now(t) - at), k.m.format(at)] : s == &#39;remaining&#39; ? [k.span(at - k.now(t)), k.m.format(at)] : s == &#39;relative&#39; ? [(x =&#62; (u =&#62; k.r.format(Math.round(x / u[0]), u[1]))([[31536000, &#39;year&#39;], [2592000, &#39;month&#39;], [604800, &#39;week&#39;], [86400, &#39;day&#39;], [3600, &#39;hour&#39;]].find(u =&#62; Math.abs(x) &#62;= u[0]) || [60, &#39;minute&#39;]))((at - Date.now()) / 1000), k.m.format(at)] : [k.m.format(at), &#39;&#39;], k.f = t =&#62; (v =&#62; (t.textContent != v[0] &#38;&#38; (t.textContent = v[0]), t.title != v[1] &#38;&#38; (t.title = v[1]), t.dataset.time == &#39;elapsed&#39; || t.dataset.time == &#39;remaining&#39; &#38;&#38; k.now(t) &#60; +t.dataset.at))(k.read(t, +t.dataset.at, t.dataset.time)), k.tick = () =&#62; k.ticking = [...document.querySelectorAll(&#39;time[data-time=elapsed], time[data-time=remaining]&#39;)].map(t =&#62; k.f(t)).some(Boolean) &#38;&#38; setTimeout(k.tick, 1000 - Date.now() % 1000), k.go = t =&#62; k.f(t) &#38;&#38; !k.ticking &#38;&#38; (k.ticking = setTimeout(k.tick, 1000 - Date.now() % 1000)), new MutationObserver(ms =&#62; ms.forEach(x =&#62; (t =&#62; t &#38;&#38; k.go(t))((x.target.nodeType == 1 ? x.target : x.target.parentElement)?.closest(&#39;time[data-at][data-time]&#39;)))).observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: [&#39;data-at&#39;, &#39;title&#39;]}), setInterval(() =&#62; document.querySelectorAll(&#39;time[data-time=relative]&#39;).forEach(k.f), 60000), k.go))({}))(el)">14:55:15</time></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Time::millis(1_795_791_315_000).clock()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><time datetime="2026-11-27T14:55:15Z" data-at="1795791315000" data-time="relative" data-init="(window.kitTime ??= (k =&#62; (k.m = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;, timeStyle: &#39;short&#39;}), k.d = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;}), k.c = new Intl.DateTimeFormat([], {timeStyle: &#39;medium&#39;, hourCycle: &#39;h23&#39;}), k.r = new Intl.RelativeTimeFormat([], {numeric: &#39;auto&#39;}), k.span = ms =&#62; (s =&#62; s &#60; 60 ? s + &#39;s&#39; : (m =&#62; m &#60; 60 ? m + &#39;m &#39; + String(s % 60).padStart(2, &#39;0&#39;) + &#39;s&#39; : Math.floor(m / 60) + &#39;h &#39; + String(m % 60).padStart(2, &#39;0&#39;) + &#39;m&#39;)(Math.floor(s / 60)))(Math.max(0, Math.round(ms / 1000))), k.skew = (n =&#62; n ? n - Date.now() : 0)(+document.querySelector(&#39;[data-kit-now]&#39;)?.dataset.kitNow || 0), k.now = () =&#62; Date.now() + k.skew, k.read = (t, at, s) =&#62; s == &#39;date&#39; ? [k.d.format(at), &#39;&#39;] : s == &#39;clock&#39; ? [k.c.format(at), &#39;&#39;] : s == &#39;elapsed&#39; ? [k.span(k.now(t) - at), k.m.format(at)] : s == &#39;remaining&#39; ? [k.span(at - k.now(t)), k.m.format(at)] : s == &#39;relative&#39; ? [(x =&#62; (u =&#62; k.r.format(Math.round(x / u[0]), u[1]))([[31536000, &#39;year&#39;], [2592000, &#39;month&#39;], [604800, &#39;week&#39;], [86400, &#39;day&#39;], [3600, &#39;hour&#39;]].find(u =&#62; Math.abs(x) &#62;= u[0]) || [60, &#39;minute&#39;]))((at - Date.now()) / 1000), k.m.format(at)] : [k.m.format(at), &#39;&#39;], k.f = t =&#62; (v =&#62; (t.textContent != v[0] &#38;&#38; (t.textContent = v[0]), t.title != v[1] &#38;&#38; (t.title = v[1]), t.dataset.time == &#39;elapsed&#39; || t.dataset.time == &#39;remaining&#39; &#38;&#38; k.now(t) &#60; +t.dataset.at))(k.read(t, +t.dataset.at, t.dataset.time)), k.tick = () =&#62; k.ticking = [...document.querySelectorAll(&#39;time[data-time=elapsed], time[data-time=remaining]&#39;)].map(t =&#62; k.f(t)).some(Boolean) &#38;&#38; setTimeout(k.tick, 1000 - Date.now() % 1000), k.go = t =&#62; k.f(t) &#38;&#38; !k.ticking &#38;&#38; (k.ticking = setTimeout(k.tick, 1000 - Date.now() % 1000)), new MutationObserver(ms =&#62; ms.forEach(x =&#62; (t =&#62; t &#38;&#38; k.go(t))((x.target.nodeType == 1 ? x.target : x.target.parentElement)?.closest(&#39;time[data-at][data-time]&#39;)))).observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: [&#39;data-at&#39;, &#39;title&#39;]}), setInterval(() =&#62; document.querySelectorAll(&#39;time[data-time=relative]&#39;).forEach(k.f), 60000), k.go))({}))(el)">2026-11-27 14:55 UTC</time></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Time::millis(1_795_791_315_000).relative()</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><time datetime="2026-11-27T14:55:15Z" data-at="1795791315000" data-time="elapsed" data-init="(window.kitTime ??= (k =&#62; (k.m = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;, timeStyle: &#39;short&#39;}), k.d = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;}), k.c = new Intl.DateTimeFormat([], {timeStyle: &#39;medium&#39;, hourCycle: &#39;h23&#39;}), k.r = new Intl.RelativeTimeFormat([], {numeric: &#39;auto&#39;}), k.span = ms =&#62; (s =&#62; s &#60; 60 ? s + &#39;s&#39; : (m =&#62; m &#60; 60 ? m + &#39;m &#39; + String(s % 60).padStart(2, &#39;0&#39;) + &#39;s&#39; : Math.floor(m / 60) + &#39;h &#39; + String(m % 60).padStart(2, &#39;0&#39;) + &#39;m&#39;)(Math.floor(s / 60)))(Math.max(0, Math.round(ms / 1000))), k.skew = (n =&#62; n ? n - Date.now() : 0)(+document.querySelector(&#39;[data-kit-now]&#39;)?.dataset.kitNow || 0), k.now = () =&#62; Date.now() + k.skew, k.read = (t, at, s) =&#62; s == &#39;date&#39; ? [k.d.format(at), &#39;&#39;] : s == &#39;clock&#39; ? [k.c.format(at), &#39;&#39;] : s == &#39;elapsed&#39; ? [k.span(k.now(t) - at), k.m.format(at)] : s == &#39;remaining&#39; ? [k.span(at - k.now(t)), k.m.format(at)] : s == &#39;relative&#39; ? [(x =&#62; (u =&#62; k.r.format(Math.round(x / u[0]), u[1]))([[31536000, &#39;year&#39;], [2592000, &#39;month&#39;], [604800, &#39;week&#39;], [86400, &#39;day&#39;], [3600, &#39;hour&#39;]].find(u =&#62; Math.abs(x) &#62;= u[0]) || [60, &#39;minute&#39;]))((at - Date.now()) / 1000), k.m.format(at)] : [k.m.format(at), &#39;&#39;], k.f = t =&#62; (v =&#62; (t.textContent != v[0] &#38;&#38; (t.textContent = v[0]), t.title != v[1] &#38;&#38; (t.title = v[1]), t.dataset.time == &#39;elapsed&#39; || t.dataset.time == &#39;remaining&#39; &#38;&#38; k.now(t) &#60; +t.dataset.at))(k.read(t, +t.dataset.at, t.dataset.time)), k.tick = () =&#62; k.ticking = [...document.querySelectorAll(&#39;time[data-time=elapsed], time[data-time=remaining]&#39;)].map(t =&#62; k.f(t)).some(Boolean) &#38;&#38; setTimeout(k.tick, 1000 - Date.now() % 1000), k.go = t =&#62; k.f(t) &#38;&#38; !k.ticking &#38;&#38; (k.ticking = setTimeout(k.tick, 1000 - Date.now() % 1000)), new MutationObserver(ms =&#62; ms.forEach(x =&#62; (t =&#62; t &#38;&#38; k.go(t))((x.target.nodeType == 1 ? x.target : x.target.parentElement)?.closest(&#39;time[data-at][data-time]&#39;)))).observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: [&#39;data-at&#39;, &#39;title&#39;]}), setInterval(() =&#62; document.querySelectorAll(&#39;time[data-time=relative]&#39;).forEach(k.f), 60000), k.go))({}))(el)">4m 07s</time></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Time::millis(1_795_791_315_000).elapsed().as_of(1_795_791_562_000)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><time datetime="2026-11-27T16:00:15Z" data-at="1795795215000" data-time="remaining" data-init="(window.kitTime ??= (k =&#62; (k.m = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;, timeStyle: &#39;short&#39;}), k.d = new Intl.DateTimeFormat([], {dateStyle: &#39;medium&#39;}), k.c = new Intl.DateTimeFormat([], {timeStyle: &#39;medium&#39;, hourCycle: &#39;h23&#39;}), k.r = new Intl.RelativeTimeFormat([], {numeric: &#39;auto&#39;}), k.span = ms =&#62; (s =&#62; s &#60; 60 ? s + &#39;s&#39; : (m =&#62; m &#60; 60 ? m + &#39;m &#39; + String(s % 60).padStart(2, &#39;0&#39;) + &#39;s&#39; : Math.floor(m / 60) + &#39;h &#39; + String(m % 60).padStart(2, &#39;0&#39;) + &#39;m&#39;)(Math.floor(s / 60)))(Math.max(0, Math.round(ms / 1000))), k.skew = (n =&#62; n ? n - Date.now() : 0)(+document.querySelector(&#39;[data-kit-now]&#39;)?.dataset.kitNow || 0), k.now = () =&#62; Date.now() + k.skew, k.read = (t, at, s) =&#62; s == &#39;date&#39; ? [k.d.format(at), &#39;&#39;] : s == &#39;clock&#39; ? [k.c.format(at), &#39;&#39;] : s == &#39;elapsed&#39; ? [k.span(k.now(t) - at), k.m.format(at)] : s == &#39;remaining&#39; ? [k.span(at - k.now(t)), k.m.format(at)] : s == &#39;relative&#39; ? [(x =&#62; (u =&#62; k.r.format(Math.round(x / u[0]), u[1]))([[31536000, &#39;year&#39;], [2592000, &#39;month&#39;], [604800, &#39;week&#39;], [86400, &#39;day&#39;], [3600, &#39;hour&#39;]].find(u =&#62; Math.abs(x) &#62;= u[0]) || [60, &#39;minute&#39;]))((at - Date.now()) / 1000), k.m.format(at)] : [k.m.format(at), &#39;&#39;], k.f = t =&#62; (v =&#62; (t.textContent != v[0] &#38;&#38; (t.textContent = v[0]), t.title != v[1] &#38;&#38; (t.title = v[1]), t.dataset.time == &#39;elapsed&#39; || t.dataset.time == &#39;remaining&#39; &#38;&#38; k.now(t) &#60; +t.dataset.at))(k.read(t, +t.dataset.at, t.dataset.time)), k.tick = () =&#62; k.ticking = [...document.querySelectorAll(&#39;time[data-time=elapsed], time[data-time=remaining]&#39;)].map(t =&#62; k.f(t)).some(Boolean) &#38;&#38; setTimeout(k.tick, 1000 - Date.now() % 1000), k.go = t =&#62; k.f(t) &#38;&#38; !k.ticking &#38;&#38; (k.ticking = setTimeout(k.tick, 1000 - Date.now() % 1000)), new MutationObserver(ms =&#62; ms.forEach(x =&#62; (t =&#62; t &#38;&#38; k.go(t))((x.target.nodeType == 1 ? x.target : x.target.parentElement)?.closest(&#39;time[data-at][data-time]&#39;)))).observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributeFilter: [&#39;data-at&#39;, &#39;title&#39;]}), setInterval(() =&#62; document.querySelectorAll(&#39;time[data-time=relative]&#39;).forEach(k.f), 60000), k.go))({}))(el)">1h 05m</time></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Time::millis(1_795_795_215_000).remaining().as_of(1_795_791_315_000)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="prose">
   <h2>Holiday, 2024</h2>
   <p>Markdown rendered to HTML: <a href="#content">a link</a>, <code>code</code> and <strong>emphasis</strong>.</p>
@@ -895,14 +895,14 @@ None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek
   &#60;blockquote&#62;A quote.&#60;/blockquote&#62;
 &#60;/div&#62;</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><details class="disclosure">
   <summary>connection details</summary>
   <div>What only some readers need.</div>
 </details></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Disclosure::new(&#34;connection details&#34;).body(&#34;What only some readers need.&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><details class="disclosure" data-preserve-attr="open" data-url="/stub/files" data-init="el.open &amp;&amp; @get(el.dataset.url)" data-on:toggle="el.open &amp;&amp; @get(el.dataset.url)" id="story-files">
   <summary>files</summary>
   <div aria-busy="true">Reading…</div>
@@ -910,7 +910,7 @@ None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Disclosure::new(&#34;files&#34;).loads(&#34;/stub/files&#34;,
 &#34;Reading…&#34;).id(&#34;story-files&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><details class="disclosure">
   <summary><span>3. Held on the Tips of Fingers</span> <small>4:12</small></summary>
   <div><p>Polar Bear · FLAC 16/44.1</p>
@@ -921,7 +921,7 @@ None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek
   &#60;p&#62;Polar Bear · FLAC 16/44.1&#60;/p&#62;
 {% endfilter %}</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div>
 <span class="combo">
   <input readonly value="https://mcp.example.com/mcp/github" aria-label="mcp url" data-on:focus="el.select()">
@@ -931,7 +931,7 @@ None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::CopyField::new(&#34;mcp url&#34;, &#34;https://mcp.example.com/mcp/github&#34;,
 &#34;copy&#34;).copied(&#34;copied&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div>
 <div class="copy" id="story-connector">
 <p id="story-connector-description" class="description">Settings → Connectors → Add custom connector, paste this URL, and sign in when prompted.</p>
@@ -944,11 +944,11 @@ None::&#60;&#38;str&#62;).pair(&#34;source&#34;, kit::Button::link(&#34;soulseek
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::CopyField::new(&#34;connector url&#34;, &#34;https://mcp.example.com/mcp/github&#34;,
 &#34;copy&#34;).copied(&#34;copied&#34;).description(&#34;Settings → Connectors → Add custom connector, paste this URL, and sign in when prompted.&#34;).id(&#34;story-connector&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div><div class="qr"><svg viewBox="0 0 33 33" shape-rendering="crispEdges" role="img" aria-label="invite link"><rect width="33" height="33" fill="#fff"/><path d="M4 4h7v1h-7zM15 4h2v1h-2zM19 4h1v1h-1zM22 4h7v1h-7zM4 5h1v1h-1zM10 5h1v1h-1zM12 5h2v1h-2zM15 5h1v1h-1zM19 5h2v1h-2zM22 5h1v1h-1zM28 5h1v1h-1zM4 6h1v1h-1zM6 6h3v1h-3zM10 6h1v1h-1zM15 6h2v1h-2zM19 6h2v1h-2zM22 6h1v1h-1zM24 6h3v1h-3zM28 6h1v1h-1zM4 7h1v1h-1zM6 7h3v1h-3zM10 7h1v1h-1zM13 7h1v1h-1zM16 7h1v1h-1zM22 7h1v1h-1zM24 7h3v1h-3zM28 7h1v1h-1zM4 8h1v1h-1zM6 8h3v1h-3zM10 8h1v1h-1zM12 8h1v1h-1zM15 8h1v1h-1zM17 8h3v1h-3zM22 8h1v1h-1zM24 8h3v1h-3zM28 8h1v1h-1zM4 9h1v1h-1zM10 9h1v1h-1zM13 9h2v1h-2zM16 9h1v1h-1zM18 9h3v1h-3zM22 9h1v1h-1zM28 9h1v1h-1zM4 10h7v1h-7zM12 10h1v1h-1zM14 10h1v1h-1zM16 10h1v1h-1zM18 10h1v1h-1zM20 10h1v1h-1zM22 10h7v1h-7zM13 11h1v1h-1zM16 11h3v1h-3zM4 12h1v1h-1zM6 12h1v1h-1zM8 12h1v1h-1zM10 12h1v1h-1zM13 12h1v1h-1zM16 12h2v1h-2zM20 12h1v1h-1zM24 12h1v1h-1zM27 12h1v1h-1zM4 13h3v1h-3zM9 13h1v1h-1zM11 13h1v1h-1zM15 13h1v1h-1zM20 13h3v1h-3zM28 13h1v1h-1zM4 14h2v1h-2zM10 14h2v1h-2zM14 14h2v1h-2zM17 14h2v1h-2zM21 14h1v1h-1zM23 14h1v1h-1zM26 14h3v1h-3zM7 15h1v1h-1zM11 15h1v1h-1zM14 15h1v1h-1zM16 15h2v1h-2zM20 15h1v1h-1zM22 15h3v1h-3zM27 15h1v1h-1zM6 16h2v1h-2zM9 16h2v1h-2zM13 16h1v1h-1zM15 16h3v1h-3zM19 16h4v1h-4zM25 16h1v1h-1zM27 16h2v1h-2zM5 17h2v1h-2zM8 17h2v1h-2zM11 17h5v1h-5zM20 17h3v1h-3zM25 17h1v1h-1zM28 17h1v1h-1zM4 18h1v1h-1zM9 18h4v1h-4zM17 18h1v1h-1zM20 18h1v1h-1zM22 18h2v1h-2zM26 18h3v1h-3zM5 19h1v1h-1zM9 19h1v1h-1zM11 19h5v1h-5zM17 19h2v1h-2zM24 19h1v1h-1zM27 19h1v1h-1zM4 20h1v1h-1zM6 20h6v1h-6zM14 20h1v1h-1zM17 20h1v1h-1zM20 20h6v1h-6zM12 21h2v1h-2zM20 21h1v1h-1zM24 21h2v1h-2zM27 21h2v1h-2zM4 22h7v1h-7zM13 22h2v1h-2zM16 22h1v1h-1zM18 22h3v1h-3zM22 22h1v1h-1zM24 22h2v1h-2zM27 22h2v1h-2zM4 23h1v1h-1zM10 23h1v1h-1zM13 23h1v1h-1zM15 23h1v1h-1zM17 23h2v1h-2zM20 23h1v1h-1zM24 23h2v1h-2zM27 23h2v1h-2zM4 24h1v1h-1zM6 24h3v1h-3zM10 24h1v1h-1zM12 24h1v1h-1zM15 24h1v1h-1zM17 24h1v1h-1zM20 24h6v1h-6zM4 25h1v1h-1zM6 25h3v1h-3zM10 25h1v1h-1zM13 25h1v1h-1zM16 25h1v1h-1zM19 25h2v1h-2zM23 25h4v1h-4zM4 26h1v1h-1zM6 26h3v1h-3zM10 26h1v1h-1zM12 26h2v1h-2zM17 26h1v1h-1zM19 26h1v1h-1zM24 26h1v1h-1zM28 26h1v1h-1zM4 27h1v1h-1zM10 27h1v1h-1zM14 27h1v1h-1zM16 27h2v1h-2zM19 27h2v1h-2zM22 27h1v1h-1zM24 27h2v1h-2zM27 27h1v1h-1zM4 28h7v1h-7zM12 28h1v1h-1zM14 28h5v1h-5zM20 28h1v1h-1zM23 28h1v1h-1zM27 28h2v1h-2z" fill="#000"/></svg></div></div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">kit::Qr::new(&#34;https://koan.rocks/join/x1&#34;).expect(&#34;fits&#34;).label(&#34;invite link&#34;)</pre></figcaption>
   </figure>
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div>
 <span class="combo" id="story-share">
   <input readonly value="https://dither.example/a/x1" id="story-share-value" name="link" aria-label="share link" data-on:focus="el.select()">
