@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.11.1
+
+### Added
+
+- **`kit::rate`, a rate in the words a transfer uses** (`1.3 MB/s`), beside `kit::size`.
+
+### Changed
+
+- **The transfers' mover is installed once per page, by `kit::server_clock()` on the `<body>`.** Each `Transfer` carried the whole script in its own `data-init`, so a region of twenty transfers sent some 30 KB of it with every patch; each now carries its reading and a call to start it. A page holding a transfer needs `server_clock()` on its `<body>`, without which transfers show the server's reading, still. `server_clock()` writes the installer as `data-init__kit`, leaving the body's own `data-init` free.
+
+### Fixed
+
+- **A transfer with an unknown total draws no bytes.** It wrote "0 B" beside the waiting meter, which read as a finished download of nothing, and a magnet's metadata as progress; the bytes are drawn once the total is known.
+
 ## 0.11.0
 
 ### Added

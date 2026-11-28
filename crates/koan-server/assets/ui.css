@@ -1580,7 +1580,7 @@
   .transfer > p > span:empty {
     display: none;
   }
-  .transfer > p > span + span::before {
+  .transfer > p > span:not(:empty) ~ span:not([data-kit-of])::before {
     content: "· ";
   }
   :root {

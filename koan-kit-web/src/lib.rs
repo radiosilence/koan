@@ -110,7 +110,7 @@ pub use spinner::Spinner;
 pub use status::{Meter, Status, Tone};
 pub use tabs::{Tab, Tabs};
 pub use time::{Epoch, ServerClock, Time, server_clock};
-pub use transfer::{Bytes, Transfer, size};
+pub use transfer::{Bytes, Transfer, rate, size};
 
 #[cfg(test)]
 mod tests {

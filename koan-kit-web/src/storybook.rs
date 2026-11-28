@@ -382,6 +382,7 @@ struct Page {
     confirm: Html,
     flash: Html,
     navigation: Html,
+    clock: kit::ServerClock,
 }
 
 /// The storybook: static, for ui.koan.rocks, or `live` with Datastar from `/datastar.js` for `--serve`.
@@ -407,6 +408,7 @@ pub fn page(live: bool) -> Html {
             .unreachable("The storybook's server could not be reached.")
             .html(),
         navigation: kit::Navigation::new().follows("url").html(),
+        clock: kit::ServerClock(STORY_AT),
     };
     render(&page)
 }

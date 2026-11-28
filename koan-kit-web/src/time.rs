@@ -197,9 +197,10 @@ impl Time<'_> {
 
 component!(Time);
 
-/// The attribute that tells the page the server's clock, for the `<body>` of every page holding a counter:
-/// `<body{{ kit::server_clock() }}>`. Counters are read against it, so a reader whose clock is wrong still sees the
-/// right time spent or left. It belongs on the page, rendered once with it, never in a region a stream sends again.
+/// What the kit needs once per page, for the `<body>` of every page holding a counter or a [`Transfer`](crate::Transfer):
+/// `<body{{ kit::server_clock() }}>`. It tells the page the server's clock, which counters are read against, so a
+/// reader whose clock is wrong still sees the right time spent or left, and installs the one script that moves every
+/// transfer. It belongs on the page, rendered once with it, never in a region a stream sends again.
 #[must_use]
 pub fn server_clock() -> ServerClock {
     ServerClock(
@@ -212,13 +213,16 @@ pub fn server_clock() -> ServerClock {
 }
 
 /// What [`server_clock`] writes into a tag: ` data-kit-now="…"`, the server's clock in milliseconds since the Unix
-/// epoch.
+/// epoch, and ` data-init__kit="…"`, which installs the transfers' mover. The `__kit` modifier, which Datastar ignores,
+/// leaves the tag's own `data-init` free.
 #[derive(Clone, Copy, Debug)]
-pub struct ServerClock(i64);
+pub struct ServerClock(pub(crate) i64);
 
 impl fmt::Display for ServerClock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, " data-kit-now=\"{}\"", self.0)
+        write!(f, " data-kit-now=\"{}\" data-init__kit=\"", self.0)?;
+        crate::attrs::escape(f, crate::transfer::MOVE)?;
+        f.write_str("\"")
     }
 }
 
