@@ -1,0 +1,1 @@
+- **The GraphQL API pages up to 10,000 rows.** `first` was capped at 500, so walking a large library took over a hundred requests; it now takes a handful.
