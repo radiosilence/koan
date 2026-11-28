@@ -41,7 +41,7 @@
 {%- else %}
 <div class="grid gap-6 [&_form]:grid [&_form]:max-w-form [&_form]:gap-4">
   {%- for entry in section.entries %}
-  <figure class="m-0 grid gap-2">
+  <figure class="m-0 grid grid-cols-1 gap-2">
     <div>{{ entry.html }}</div>
     <figcaption><pre class="overflow-x-auto text-fine whitespace-pre-wrap text-muted">{{ entry.code }}</pre></figcaption>
   </figure>

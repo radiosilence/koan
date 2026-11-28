@@ -1,0 +1,20 @@
+<div class="controls" data-heights="normal">
+  {{ kit::Input::text("height-q").label("query").placeholder("artist album") }}
+  {{ kit::Select::new("height-kind").options(["album", "single"]).label("kind") }}
+  {{ kit::Combo::new(kit::Input::text("height-credit").label("credit"), kit::Button::bordered("credit artists")) }}
+  {{ kit::Button::primary("find") }}
+  {{ kit::Button::bordered("enrich") }}
+  {{ kit::Button::standard("standard") }}
+  {{ kit::Button::quiet("quiet") }}
+  {{ kit::Button::quiet("pin").icon_only(kit::icon::PIN) }}
+</div>
+<div class="compact controls" data-heights="compact">
+  {{ kit::Input::text("height-q-small").label("query").placeholder("artist album") }}
+  {{ kit::Select::new("height-kind-small").options(["album", "single"]).label("kind") }}
+  {{ kit::Combo::new(kit::Input::text("height-credit-small").label("credit"), kit::Button::bordered("credit artists")) }}
+  {{ kit::Button::primary("find") }}
+  {{ kit::Button::bordered("enrich") }}
+  {{ kit::Button::standard("standard") }}
+  {{ kit::Button::quiet("quiet") }}
+  {{ kit::Button::quiet("pin").icon_only(kit::icon::PIN) }}
+</div>

@@ -13,7 +13,7 @@ use crate::status::Tone;
 ///
 /// Each tab is an address, so it is a link: the one shown carries `aria-current="page"`, a modified click opens a tab
 /// of the browser's, and an [`in_place`](Tab::in_place) tab loads its page in place. The row wraps when it runs out of
-/// room.
+/// room, or with [`scrolls`](Tabs::scrolls) scrolls sideways.
 #[must_use = "tabs draw nothing until they are rendered"]
 #[derive(Clone, Debug, Template)]
 #[template(path = "tabs.html")]
@@ -36,6 +36,14 @@ impl<'a> Tabs<'a> {
     /// A tab, after those already given.
     pub fn tab(mut self, tab: Tab<'a>) -> Self {
         self.each.push(tab);
+        self
+    }
+
+    /// Scrolled sideways rather than wrapped when the tabs do not fit, as a page's navigation of many tabs is: never
+    /// vertically, with no scrollbar drawn and the current tab's underline whole. In a grid, its column must be free to
+    /// shrink (`minmax(0, 1fr)`, Tailwind's `grid-cols-1`), or the column widens to hold every tab and nothing scrolls.
+    pub fn scrolls(mut self) -> Self {
+        self.attrs.add_class("scrolls");
         self
     }
 
@@ -166,6 +174,15 @@ component!(Tab);
 mod tests {
     use super::*;
     use crate::icon;
+
+    #[test]
+    fn a_row_of_many_tabs_scrolls_rather_than_wraps() {
+        let html = Tabs::new("pages")
+            .scrolls()
+            .tab(Tab::new("search", "/"))
+            .to_string();
+        assert!(html.starts_with("<nav class=\"tabs scrolls\""), "{html}");
+    }
 
     #[test]
     fn the_tab_shown_is_marked_and_each_is_a_link() {
