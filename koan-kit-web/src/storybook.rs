@@ -155,7 +155,9 @@ pub fn sections() -> Vec<Section> {
                         .action(kit::Button::quiet("close").icon_only(kit::icon::CLOSE).compact().post("/stub/slow")))
                     .tab(kit::Tab::new("Polar Bear", "/stub/place?polar").in_place())
                     .tab(kit::Tab::new("Moodymann", "/stub/place?moodymann").busy(true).in_place())
-                    .tab(kit::Tab::new("Basic Channel", "/stub/place?basic").tone(kit::Tone::Bad).in_place())),
+                    .tab(kit::Tab::new("Basic Channel", "/stub/place?basic").tone(kit::Tone::Bad).in_place())
+                    .tab(kit::Tab::new("Shackleton", "/stub/place?shackleton").count(31).italic().in_place())),
+                entry!(kit::Status::wait("last checked an hour ago").italic()),
                 story!(Card, "story/card.html"),
                 // Shown, not drawn: the page's one Navigation is in its shell, and a second would take every click.
                 Entry {
@@ -251,10 +253,10 @@ pub fn sections() -> Vec<Section> {
                 story!(
                     SelectionStory,
                     "story/selection.html",
-                    albums: Vec<(&'static str, &'static str)> = vec![
-                        ("/music/untrue", "Burial: Untrue"),
-                        ("/music/love", "Phace: Love Songs"),
-                        ("/music/held", "Polar Bear: Held on the Tips of Fingers"),
+                    albums: Vec<(&'static str, &'static str, &'static str)> = vec![
+                        ("/music/untrue", "Burial: Untrue", ""),
+                        ("/music/love", "Phace: Love Songs", "spare"),
+                        ("/music/held", "Polar Bear: Held on the Tips of Fingers", ""),
                     ]
                 ),
             ],

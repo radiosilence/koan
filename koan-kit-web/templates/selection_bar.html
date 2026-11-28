@@ -1,6 +1,9 @@
-{#- The actions on what is ticked, stuck to the window's foot and hidden while nothing is. -#}
+{#- The actions on what is ticked, stuck to the window's foot and hidden while nothing is; an action for some rows
+    only, hidden until a ticked row carries its tag. -#}
 <div class="selectionbar{{ attrs.classes() }}" hidden data-kit-selected{{ attrs }}>
   {{- count -}}
-  {%- for action in actions %}{{ action }}{% endfor -%}
+  {%- for (when, action) in actions %}
+  {%- if let Some(tag) = when %}<span data-kit-when="{{ tag }}" hidden>{{ action }}</span>{% else %}{{ action }}{% endif %}
+  {%- endfor -%}
   {{- markup -}}
 </div>

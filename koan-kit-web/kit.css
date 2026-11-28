@@ -577,6 +577,11 @@
     @apply me-auto text-ink;
   }
 
+  /* An action for some rows only stands in the bar as its button does, once shown. */
+  .selectionbar > [data-kit-when]:not([hidden]) {
+    @apply contents;
+  }
+
   /* Values someone else chose, each behind a square marker and wrapped anywhere, so where one ends and the next begins
    * is never in doubt. */
   ul.list {
@@ -931,7 +936,11 @@
     @apply text-fine text-muted tabular-nums;
   }
 
-  /* A tab's words in its tone: a search that failed, one that needs a look, one that is done. */
+  /* A tab's words in its tone: a search that failed, one that needs a look, one that is done, one still waiting. */
+  .tab.wait > a {
+    @apply text-muted;
+  }
+
   .tab.ok > a {
     @apply text-ok;
   }
@@ -946,6 +955,12 @@
 
   .tab.neutral > a {
     @apply text-ink;
+  }
+
+  /* Words set apart without a louder tone, such as a tab whose results have gone stale: a component's `italic` prop.
+   * What it holds inherits the slant. */
+  .italic {
+    @apply italic;
   }
 
   /* A link holding a block, such as a cover over a title: no underline, its words in the text's colour. */

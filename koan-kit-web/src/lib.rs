@@ -108,7 +108,7 @@ pub use slot::{Wrap, wrap};
 pub use spinner::Spinner;
 pub use status::{Meter, Status, Tone};
 pub use tabs::{Tab, Tabs};
-pub use time::{Epoch, Time};
+pub use time::{Epoch, ServerClock, Time, server_clock};
 
 #[cfg(test)]
 mod tests {

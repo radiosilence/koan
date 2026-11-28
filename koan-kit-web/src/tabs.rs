@@ -133,21 +133,17 @@ impl<'a> Tab<'a> {
         self
     }
 
-    /// Its words in a tone: `Bad` for a search that failed, `Warn` for one that needs attention, `Ok` for one that
-    /// is done. `Wait` is a tab's own muted words.
-    pub fn tone(mut self, tone: Tone) -> Self {
-        self.tone = Some(tone);
+    /// Its words in a tone, as a [`Status`](crate::Status) of that tone draws its own: `Bad` for a search that failed,
+    /// `Warn` for one that needs attention, `Ok` for one that is done, `Wait` for one queued. `None`, or a tone never
+    /// given, leaves its words as a tab's are, so a view passes the `Option` it worked out as it is.
+    pub fn tone(mut self, tone: impl Into<Option<Tone>>) -> Self {
+        self.tone = tone.into();
         self
     }
 
-    fn tone_class(&self) -> &'static str {
-        match self.tone {
-            Some(Tone::Wait) | None => "",
-            Some(Tone::Ok) => " ok",
-            Some(Tone::Warn) => " warn",
-            Some(Tone::Bad) => " bad",
-            Some(Tone::Neutral) => " neutral",
-        }
+    fn tone_class(&self) -> String {
+        self.tone
+            .map_or_default(|tone| format!(" {}", tone.class()))
     }
 
     /// A figure after its words: how many results it holds.
@@ -196,6 +192,25 @@ mod tests {
     }
 
     #[test]
+    fn a_tab_can_be_set_in_italic() {
+        let stale = Tab::new("Burial", "/search/1").italic().to_string();
+        assert!(stale.starts_with("<span class=\"tab italic\">"), "{stale}");
+        let both = Tab::new("Phace", "/search/2")
+            .tone(Tone::Bad)
+            .italic()
+            .to_string();
+        assert!(
+            both.starts_with("<span class=\"tab bad italic\">"),
+            "a slant goes with a tone: {both}"
+        );
+        let css = include_str!("../kit.css");
+        assert!(
+            css.contains(".italic {\n    @apply italic;"),
+            "the kit draws its own class"
+        );
+    }
+
+    #[test]
     fn a_tab_says_it_is_working_and_takes_a_tone() {
         let html = Tab::new("Burial", "/search/1").busy(true).to_string();
         assert!(
@@ -210,8 +225,17 @@ mod tests {
             Tab::new("Phace", "/")
                 .tone(Tone::Wait)
                 .to_string()
-                .starts_with("<span class=\"tab\">"),
-            "a tab's words are muted already"
+                .starts_with("<span class=\"tab wait\">"),
+            "Wait is a tone like the others, not a way to say none"
         );
+        assert!(
+            Tab::new("Phace", "/")
+                .tone(None)
+                .to_string()
+                .starts_with("<span class=\"tab\">"),
+            "None is no tone"
+        );
+        let css = include_str!("../kit.css");
+        assert!(css.contains(".tab.wait > a {"), "every tone has a rule");
     }
 }

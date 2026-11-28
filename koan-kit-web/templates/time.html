@@ -1,6 +1,6 @@
 {#- An instant: the UTC reading as its text, rewritten in the reader's zone and language by the page's one localiser,
     which the first time to start installs. It localises a time again whenever a morph puts the server's reading back,
-    recomputes the relative ones each minute and steps the counters each second, read against the server's clock in
-    `data-now`. -#}
+    recomputes the relative ones each minute and steps the counters each second, read against the server's clock the
+    page carries once in `data-kit-now`. The same instant renders the same markup every time. -#}
 {%- let utc = self.utc() -%}
-<time datetime="{{ utc.iso() }}" data-at="{{ at }}" data-time="{{ self.kind() }}"{% if !attrs.classes().is_empty() %} class="{{ attrs.class_names() }}"{% endif %}{{ attrs }}{% if let Some(now) = self.server_now() %} data-now="{{ now }}"{% endif %} data-init="{{ crate::time::LOCALISE }}">{{ self.reading() }}</time>
+<time datetime="{{ utc.iso() }}" data-at="{{ at }}" data-time="{{ self.kind() }}"{% if !attrs.classes().is_empty() %} class="{{ attrs.class_names() }}"{% endif %}{{ attrs }} data-init="{{ crate::time::LOCALISE }}">{{ self.reading() }}</time>

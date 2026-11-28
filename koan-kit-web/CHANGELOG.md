@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.1
+
+### Added
+
+- **`italic()`, a common prop on every component.** Its words, and what they hold, in italic: set apart from those around them without a louder tone, such as a tab whose results have gone stale, which apps drew with a class of their own.
+- **`kit::server_clock()`, the server's clock for a page's `<body>`,** which counters are read against, learned once per page.
+- **`SelectionBar::action_when` and `Selection::all_have`, for an action that applies to only some rows:** shown while a ticked row carries its tag (`data-kit-tags` on the box or its row), or while "all" is ticked and every match includes some.
+
+### Fixed
+
+- **A counter renders the same markup for the same instant.** `Time::elapsed` and `remaining` wrote the render time and a reading worked out from it, so every render of a region holding one differed and a stream that sends only what changed re-sent it each pass. A counter now carries only its instant, and the page's one timer reads it against the clock `server_clock` gives once per page. `as_of` gives the words it says before it starts and should be a stable value; without it they are the instant in UTC.
+- **A selection counts only its own boxes.** One nested inside another, or a box naming it with `form=`, was counted by the wrong one, and "select all" ticked the inner rows. It now acts on its form's own elements and its own counts and bars.
+- **A selection recounts after a morph.** A patch that reset a box without adding or removing one left the count, the bar and the validity stale, so an action could send rows no longer ticked. It recounts after every patch, and folds recounts into one a frame, looking only at changes that add or remove a box, so a long streamed list is not counted whole on every patch.
+
+### Changed
+
+- **`Tab::tone` takes an `Option<Tone>`,** so `None` is no tone, and `Tone::Wait` draws a tab muted as it draws a status, rather than standing for no tone.
+
 ## 0.10.0
 
 ### Added

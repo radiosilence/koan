@@ -272,6 +272,14 @@ macro_rules! component {
                 self
             }
 
+            /// Its words in italic, set apart from those around them without a louder tone: a tab whose results
+            /// have gone stale, a title, a word quoted. Everything inside it inherits the slant. Plain words in a
+            /// template take `<i>` or `<em>`, which the stylesheet leaves italic.
+            pub fn italic(mut self) -> Self {
+                self.attrs.add_class("italic");
+                self
+            }
+
             /// A `data-{key}` attribute, its value escaped: something for a Datastar expression to read with
             /// `el.dataset`, or for the page's own script. A key naming a Datastar attribute is refused, since its
             /// value would run as an expression; that goes through [`datastar`](Self::datastar).
