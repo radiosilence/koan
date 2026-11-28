@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.77.3
+
+### Fixed
+
+- **The caret follows the letter just typed on iOS.** The system caret was placed one keystroke behind, measured on the text as last drawn.
+
+### Internal
+
+- **koan-kit-web 0.9.0.** What the apps still drew themselves: `Time` in the reader's zone, a bulleted `List`, `.prose`, `RepeatField`, a described `CopyField`, a neutral `Status`, `TopBar` and `Footer`, sheets that load their body as they open, and the keyboard inset set by the kit.
+- **Android unit tests no longer download at test time.** Gradle resolves the Robolectric framework jars as a dependency and the tests run Robolectric offline, so an unreachable Maven Central no longer fails the Android job.
+
 ## 0.77.2
 
 ### Fixed
